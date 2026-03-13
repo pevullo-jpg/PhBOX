@@ -1,0 +1,34 @@
+import '../../core/constants/app_constants.dart';
+import '../datasources/firestore_datasource.dart';
+import '../models/patient.dart';
+
+class PatientsRepository {
+  final FirestoreDatasource datasource;
+
+  const PatientsRepository({required this.datasource});
+
+  Future<void> savePatient(Patient patient) {
+    return datasource.setDocument(
+      collectionPath: AppCollections.patients,
+      documentId: patient.fiscalCode,
+      data: patient.toMap(),
+    );
+  }
+
+  Future<Patient?> getPatientByFiscalCode(String fiscalCode) async {
+    final Map<String, dynamic>? map = await datasource.getDocument(
+      collectionPath: AppCollections.patients,
+      documentId: fiscalCode,
+    );
+    if (map == null) return null;
+    return Patient.fromMap(map);
+  }
+
+  Future<List<Patient>> getAllPatients() async {
+    final List<Map<String, dynamic>> maps = await datasource.getCollection(
+      collectionPath: AppCollections.patients,
+      orderBy: 'fullName',
+    );
+    return maps.map(Patient.fromMap).toList();
+  }
+}
