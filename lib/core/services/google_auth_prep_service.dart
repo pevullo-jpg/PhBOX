@@ -1,5 +1,4 @@
 import 'package:google_sign_in/google_sign_in.dart';
-import '../constants/google_oauth_config.dart';
 
 class GoogleAuthPrepResult {
   final String email;
@@ -14,30 +13,34 @@ class GoogleAuthPrepResult {
 }
 
 class GoogleAuthPrepService {
-  static const List<String> _scopes = <String>[
+  static const List<String> scopes = <String>[
     'email',
     'https://www.googleapis.com/auth/drive.readonly',
   ];
 
-  final GoogleSignIn _googleSignIn = GoogleSignIn(
-    clientId: kGoogleWebClientId,
-    scopes: _scopes,
-  );
+  GoogleSignIn _buildSignIn(String clientId) {
+    return GoogleSignIn(
+      clientId: clientId,
+      scopes: scopes,
+    );
+  }
 
-  Future<GoogleAuthPrepResult> signInForDriveRead() async {
-    if (kGoogleWebClientId.contains('INSERISCI_QUI_IL_CLIENT_ID_WEB')) {
-      throw Exception(
-        'Client ID Google Web mancante. Compila lib/core/constants/google_oauth_config.dart',
-      );
+  Future<GoogleAuthPrepResult> signInForDriveRead({
+    required String clientId,
+  }) async {
+    if (clientId.trim().isEmpty) {
+      throw Exception('Inserisci prima il Web Client ID Google nelle impostazioni.');
     }
 
-    final GoogleSignInAccount? account = await _googleSignIn.signIn();
+    final GoogleSignIn googleSignIn = _buildSignIn(clientId.trim());
+
+    final GoogleSignInAccount? account = await googleSignIn.signIn();
 
     if (account == null) {
       throw Exception('Login Google annullato.');
     }
 
-    final bool scopesGranted = await _googleSignIn.requestScopes(_scopes);
+    final bool scopesGranted = await googleSignIn.requestScopes(scopes);
 
     if (!scopesGranted) {
       throw Exception('Permessi Drive non concessi.');
@@ -52,7 +55,11 @@ class GoogleAuthPrepService {
     );
   }
 
-  Future<void> signOut() {
-    return _googleSignIn.signOut();
+  Future<void> signOut({
+    required String clientId,
+  }) async {
+    if (clientId.trim().isEmpty) return;
+    final GoogleSignIn googleSignIn = _buildSignIn(clientId.trim());
+    await googleSignIn.signOut();
   }
 }

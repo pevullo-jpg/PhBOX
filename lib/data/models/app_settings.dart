@@ -1,4 +1,5 @@
 class AppSettings {
+  final String googleWebClientId;
   final String incomingPdfDriveFolderId;
   final String incomingImageDriveFolderId;
   final String processedDriveFolderId;
@@ -12,6 +13,7 @@ class AppSettings {
   final DateTime updatedAt;
 
   const AppSettings({
+    this.googleWebClientId = '',
     this.incomingPdfDriveFolderId = '',
     this.incomingImageDriveFolderId = '',
     this.processedDriveFolderId = '',
@@ -27,6 +29,7 @@ class AppSettings {
 
   Map<String, dynamic> toMap() {
     return <String, dynamic>{
+      'googleWebClientId': googleWebClientId,
       'incomingPdfDriveFolderId': incomingPdfDriveFolderId,
       'incomingImageDriveFolderId': incomingImageDriveFolderId,
       'processedDriveFolderId': processedDriveFolderId,
@@ -43,6 +46,7 @@ class AppSettings {
 
   factory AppSettings.fromMap(Map<String, dynamic> map) {
     return AppSettings(
+      googleWebClientId: (map['googleWebClientId'] ?? '') as String,
       incomingPdfDriveFolderId: (map['incomingPdfDriveFolderId'] ?? map['incomingDriveFolderId'] ?? '') as String,
       incomingImageDriveFolderId: (map['incomingImageDriveFolderId'] ?? '') as String,
       processedDriveFolderId: (map['processedDriveFolderId'] ?? '') as String,

@@ -23,6 +23,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late final DrivePdfImportsRepository drivePdfImportsRepository;
   late final GoogleAuthPrepService googleAuthPrepService;
 
+  final TextEditingController googleWebClientIdController = TextEditingController();
   final TextEditingController incomingPdfController = TextEditingController();
   final TextEditingController incomingImageController = TextEditingController();
   final TextEditingController processedController = TextEditingController();
@@ -39,6 +40,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool isLoading = true;
   bool isGoogleLoading = false;
   bool isScanningDrive = false;
+  bool isGoogleConnected = false;
 
   String message = '';
   bool isErrorMessage = false;
@@ -63,6 +65,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   void dispose() {
+    googleWebClientIdController.dispose();
     incomingPdfController.dispose();
     incomingImageController.dispose();
     processedController.dispose();
@@ -87,6 +90,7 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) return;
 
       setState(() {
+        googleWebClientIdController.text = settings.googleWebClientId;
         incomingPdfController.text = settings.incomingPdfDriveFolderId;
         incomingImageController.text = settings.incomingImageDriveFolderId;
         processedController.text = settings.processedDriveFolderId;
@@ -128,6 +132,7 @@ class _SettingsPageState extends State<SettingsPage> {
           .toList();
 
       final AppSettings settings = AppSettings(
+        googleWebClientId: googleWebClientIdController.text.trim(),
         incomingPdfDriveFolderId: incomingPdfController.text.trim(),
         incomingImageDriveFolderId: incomingImageController.text.trim(),
         processedDriveFolderId: processedController.text.trim(),
@@ -171,13 +176,16 @@ class _SettingsPageState extends State<SettingsPage> {
 
     try {
       final GoogleAuthPrepResult result =
-          await googleAuthPrepService.signInForDriveRead();
+          await googleAuthPrepService.signInForDriveRead(
+        clientId: googleWebClientIdController.text.trim(),
+      );
 
       if (!mounted) return;
       setState(() {
         googleAccountEmail = result.email;
         googleAccountName = result.displayName ?? '';
         currentAccessToken = result.accessToken ?? '';
+        isGoogleConnected = true;
         message = 'Account Google collegato correttamente.';
         isErrorMessage = false;
       });
@@ -185,6 +193,41 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) return;
       setState(() {
         message = 'Errore login Google: $e';
+        isErrorMessage = true;
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        isGoogleLoading = false;
+      });
+    }
+  }
+
+  Future<void> _disconnectGoogle() async {
+    setState(() {
+      isGoogleLoading = true;
+      message = '';
+      isErrorMessage = false;
+    });
+
+    try {
+      await googleAuthPrepService.signOut(
+        clientId: googleWebClientIdController.text.trim(),
+      );
+
+      if (!mounted) return;
+      setState(() {
+        googleAccountEmail = '';
+        googleAccountName = '';
+        currentAccessToken = '';
+        isGoogleConnected = false;
+        message = 'Account Google scollegato.';
+        isErrorMessage = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        message = 'Errore logout Google: $e';
         isErrorMessage = true;
       });
     } finally {
@@ -271,6 +314,16 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ),
               const SizedBox(height: 20),
+              SettingsFieldCard(
+                title: 'Google Web Client ID',
+                subtitle:
+                    'Inserisci qui il Web Client ID OAuth della tua app. Non serve modificare il codice per cambiare account.',
+                child: _input(
+                  controller: googleWebClientIdController,
+                  hint: '1234567890-xxxxx.apps.googleusercontent.com',
+                ),
+              ),
+              const SizedBox(height: 20),
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(20),
@@ -321,6 +374,21 @@ class _SettingsPageState extends State<SettingsPage> {
                           label: Text(
                             isGoogleLoading ? 'Connessione...' : 'Collega account Google',
                             style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        ElevatedButton.icon(
+                          onPressed: isGoogleLoading || !isGoogleConnected
+                              ? null
+                              : _disconnectGoogle,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.red,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                          ),
+                          icon: const Icon(Icons.logout),
+                          label: const Text(
+                            'Cambia account',
+                            style: TextStyle(fontWeight: FontWeight.w800),
                           ),
                         ),
                         ElevatedButton.icon(
