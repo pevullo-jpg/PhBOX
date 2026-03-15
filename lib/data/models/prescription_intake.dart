@@ -11,6 +11,8 @@ class PrescriptionIntake {
   final bool dpcFlag;
   final List<String> medicines;
   final String rawText;
+  final String status;
+  final String importErrorMessage;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -27,9 +29,49 @@ class PrescriptionIntake {
     required this.dpcFlag,
     required this.medicines,
     required this.rawText,
+    this.status = 'parsed',
+    this.importErrorMessage = '',
     required this.createdAt,
     required this.updatedAt,
   });
+
+  PrescriptionIntake copyWith({
+    String? id,
+    String? driveFileId,
+    String? fileName,
+    String? patientName,
+    String? fiscalCode,
+    String? doctorName,
+    String? exemptionCode,
+    String? city,
+    DateTime? prescriptionDate,
+    bool? dpcFlag,
+    List<String>? medicines,
+    String? rawText,
+    String? status,
+    String? importErrorMessage,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) {
+    return PrescriptionIntake(
+      id: id ?? this.id,
+      driveFileId: driveFileId ?? this.driveFileId,
+      fileName: fileName ?? this.fileName,
+      patientName: patientName ?? this.patientName,
+      fiscalCode: fiscalCode ?? this.fiscalCode,
+      doctorName: doctorName ?? this.doctorName,
+      exemptionCode: exemptionCode ?? this.exemptionCode,
+      city: city ?? this.city,
+      prescriptionDate: prescriptionDate ?? this.prescriptionDate,
+      dpcFlag: dpcFlag ?? this.dpcFlag,
+      medicines: medicines ?? this.medicines,
+      rawText: rawText ?? this.rawText,
+      status: status ?? this.status,
+      importErrorMessage: importErrorMessage ?? this.importErrorMessage,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
 
   Map<String, dynamic> toMap() {
     return <String, dynamic>{
@@ -45,6 +87,8 @@ class PrescriptionIntake {
       'dpcFlag': dpcFlag,
       'medicines': medicines,
       'rawText': rawText,
+      'status': status,
+      'importErrorMessage': importErrorMessage,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
@@ -64,6 +108,8 @@ class PrescriptionIntake {
       dpcFlag: (map['dpcFlag'] ?? false) as bool,
       medicines: List<String>.from(map['medicines'] ?? const <String>[]),
       rawText: (map['rawText'] ?? '') as String,
+      status: (map['status'] ?? 'parsed') as String,
+      importErrorMessage: (map['importErrorMessage'] ?? '') as String,
       createdAt: _readDate(map['createdAt']) ?? DateTime.now(),
       updatedAt: _readDate(map['updatedAt']) ?? DateTime.now(),
     );

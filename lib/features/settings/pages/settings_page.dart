@@ -4,6 +4,7 @@ import '../../../core/services/drive_pdf_scanner_service.dart';
 import '../../../core/services/google_auth_prep_service.dart';
 import '../../../core/services/google_drive_service.dart';
 import '../../../core/services/imported_pdf_processing_service.dart';
+import '../../../core/services/intake_to_entities_service.dart';
 import '../../../core/services/pdf_text_extraction_service.dart';
 import '../../../core/services/prescription_pdf_parser_service.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
@@ -11,7 +12,9 @@ import '../../../data/models/app_settings.dart';
 import '../../../data/models/drive_pdf_import.dart';
 import '../../../data/models/prescription_intake.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
+import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescription_intakes_repository.dart';
+import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../shared/widgets/settings_field_card.dart';
 import '../../../theme/app_theme.dart';
@@ -27,6 +30,8 @@ class _SettingsPageState extends State<SettingsPage> {
   late final SettingsRepository repository;
   late final DrivePdfImportsRepository drivePdfImportsRepository;
   late final PrescriptionIntakesRepository prescriptionIntakesRepository;
+  late final PatientsRepository patientsRepository;
+  late final PrescriptionsRepository prescriptionsRepository;
   late final GoogleAuthPrepService googleAuthPrepService;
 
   final TextEditingController googleWebClientIdController =
@@ -49,6 +54,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool isScanningDrive = false;
   bool isGoogleConnected = false;
   bool isProcessingImports = false;
+  bool isImportingIntoApp = false;
 
   String message = '';
   bool isErrorMessage = false;
@@ -71,6 +77,11 @@ class _SettingsPageState extends State<SettingsPage> {
     drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
     prescriptionIntakesRepository =
         PrescriptionIntakesRepository(datasource: datasource);
+    patientsRepository = PatientsRepository(datasource: datasource);
+    prescriptionsRepository = PrescriptionsRepository(
+      datasource: datasource,
+      patientsRepository: patientsRepository,
+    );
     googleAuthPrepService = GoogleAuthPrepService();
     _load();
   }
@@ -460,6 +471,47 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _importIntakesIntoApp() async {
+    setState(() {
+      isImportingIntoApp = true;
+      message = '';
+      isErrorMessage = false;
+    });
+
+    try {
+      final IntakeToEntitiesService service = IntakeToEntitiesService(
+        prescriptionIntakesRepository: prescriptionIntakesRepository,
+        patientsRepository: patientsRepository,
+        prescriptionsRepository: prescriptionsRepository,
+      );
+
+      final IntakeImportResult result =
+          await service.importAllPendingIntakes();
+
+      final List<PrescriptionIntake> intakes =
+          await prescriptionIntakesRepository.getAllIntakes();
+
+      if (!mounted) return;
+      setState(() {
+        recentIntakes = intakes;
+        message =
+            'Import completato. Importati: ${result.importedCount}. Saltati: ${result.skippedCount}. Errori: ${result.errorCount}.';
+        isErrorMessage = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        message = 'Errore import dati in app: $e';
+        isErrorMessage = true;
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        isImportingIntoApp = false;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
@@ -575,32 +627,6 @@ class _SettingsPageState extends State<SettingsPage> {
                           label: const Text(
                             'Cambia account',
                             style: TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                        ElevatedButton.icon(
-                          onPressed: isScanningDrive ? null : _scanDriveNow,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.yellow,
-                            foregroundColor: Colors.black,
-                            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                          ),
-                          icon: const Icon(Icons.search),
-                          label: Text(
-                            isScanningDrive ? 'Scansione...' : 'Scansiona Drive ora',
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                        ElevatedButton.icon(
-                          onPressed: isProcessingImports ? null : _processImportedPdfs,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.green,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                          ),
-                          icon: const Icon(Icons.auto_fix_high),
-                          label: Text(
-                            isProcessingImports ? 'Analisi...' : 'Analizza PDF importati',
-                            style: const TextStyle(fontWeight: FontWeight.w800),
                           ),
                         ),
                       ],
@@ -744,7 +770,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ),
               const SizedBox(height: 20),
-              Row(
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
                 children: <Widget>[
                   ElevatedButton.icon(
                     onPressed: isSaving ? null : _save,
@@ -759,26 +787,65 @@ class _SettingsPageState extends State<SettingsPage> {
                       style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
                   ),
-                  const SizedBox(width: 16),
-                  if (message.isNotEmpty)
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                        decoration: BoxDecoration(
-                          color: isErrorMessage ? AppColors.red : AppColors.green,
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Text(
-                          message,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
+                  ElevatedButton.icon(
+                    onPressed: isScanningDrive ? null : _scanDriveNow,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.yellow,
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
                     ),
+                    icon: const Icon(Icons.search),
+                    label: Text(
+                      isScanningDrive ? 'Scansione...' : 'Scansiona Drive ora',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: isProcessingImports ? null : _processImportedPdfs,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                    ),
+                    icon: const Icon(Icons.auto_fix_high),
+                    label: Text(
+                      isProcessingImports ? 'Analisi...' : 'Analizza PDF importati',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: isImportingIntoApp ? null : _importIntakesIntoApp,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.coral,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                    ),
+                    icon: const Icon(Icons.move_down),
+                    label: Text(
+                      isImportingIntoApp ? 'Import...' : 'Importa in dashboard',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
                 ],
               ),
+              const SizedBox(height: 16),
+              if (message.isNotEmpty)
+                Container(
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: isErrorMessage ? AppColors.red : AppColors.green,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Text(
+                    message,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
               const SizedBox(height: 20),
               _importsSection(),
               const SizedBox(height: 20),
@@ -912,6 +979,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                     ),
                     const SizedBox(height: 8),
+                    Text('Stato: ${item.status}',
+                        style: const TextStyle(color: Colors.white70)),
                     Text('Assistito: ${item.patientName.isEmpty ? '-' : item.patientName}',
                         style: const TextStyle(color: Colors.white70)),
                     Text('CF: ${item.fiscalCode.isEmpty ? '-' : item.fiscalCode}',
@@ -926,6 +995,11 @@ class _SettingsPageState extends State<SettingsPage> {
                       'Farmaci rilevati: ${item.medicines.isEmpty ? '-' : item.medicines.join(' | ')}',
                       style: const TextStyle(color: Colors.white70),
                     ),
+                    if (item.importErrorMessage.isNotEmpty)
+                      Text(
+                        'Errore: ${item.importErrorMessage}',
+                        style: const TextStyle(color: Colors.white54),
+                      ),
                   ],
                 ),
               );
