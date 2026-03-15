@@ -59,6 +59,9 @@ class IntakeToEntitiesService {
         final Patient? existing =
             await patientsRepository.getPatientByFiscalCode(intake.fiscalCode);
 
+        final DateTime now = DateTime.now();
+        final DateTime prescriptionDate = intake.prescriptionDate ?? now;
+
         final Patient patient = Patient(
           fiscalCode: intake.fiscalCode,
           fullName: intake.patientName.isEmpty
@@ -76,9 +79,9 @@ class IntakeToEntitiesService {
           hasDebt: existing?.hasDebt ?? false,
           hasBooking: existing?.hasBooking ?? false,
           debtTotal: existing?.debtTotal ?? 0,
-          lastPrescriptionDate: intake.prescriptionDate,
-          updatedAt: DateTime.now(),
-          createdAt: existing?.createdAt ?? DateTime.now(),
+          lastPrescriptionDate: prescriptionDate,
+          updatedAt: now,
+          createdAt: existing?.createdAt ?? now,
         );
 
         await patientsRepository.savePatient(patient);
@@ -87,8 +90,8 @@ class IntakeToEntitiesService {
             ? <PrescriptionItem>[]
             : intake.medicines
                 .map<PrescriptionItem>(
-                  (String e) => PrescriptionItem(
-                    drugName: e,
+                  (String medicine) => PrescriptionItem(
+                    drugName: medicine,
                     quantity: 1,
                   ),
                 )
@@ -101,19 +104,20 @@ class IntakeToEntitiesService {
           id: prescriptionId,
           patientFiscalCode: intake.fiscalCode,
           patientName: patient.fullName,
+          prescriptionDate: prescriptionDate,
+          expiryDate: _computeExpiryDate(prescriptionDate),
           doctorName:
               intake.doctorName.isEmpty ? patient.doctorName : intake.doctorName,
           exemptionCode: intake.exemptionCode.isEmpty
               ? patient.exemptionCode
               : intake.exemptionCode,
-          prescriptionDate: intake.prescriptionDate ?? DateTime.now(),
-          expiryDate: _computeExpiryDate(
-            intake.prescriptionDate ?? DateTime.now(),
-          ),
+          city: intake.city.isEmpty ? patient.city : intake.city,
           dpcFlag: intake.dpcFlag,
+          sourceType: 'drive_import',
+          extractedText: intake.rawText,
           items: items,
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
+          createdAt: now,
+          updatedAt: now,
         );
 
         await prescriptionsRepository.savePrescription(prescription);
