@@ -87,8 +87,8 @@ class IntakeToEntitiesService {
             ? <PrescriptionItem>[]
             : intake.medicines
                 .map<PrescriptionItem>(
-                  (String medicine) => PrescriptionItem(
-                    drugName: medicine,
+                  (String e) => PrescriptionItem(
+                    drugName: e,
                     quantity: 1,
                   ),
                 )
@@ -111,7 +111,6 @@ class IntakeToEntitiesService {
             intake.prescriptionDate ?? DateTime.now(),
           ),
           dpcFlag: intake.dpcFlag,
-          notes: 'Import automatico da PDF Drive',
           items: items,
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
