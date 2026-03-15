@@ -40,10 +40,9 @@ class PrescriptionPdfParserService {
   const PrescriptionPdfParserService();
 
   ParsedPrescriptionData parse(String rawText) {
-    final String normalized = rawText.replaceAll('', '');
+    final String normalized = rawText.replaceAll('\r', '');
     final List<String> lines = normalized
-        .split('
-')
+        .split('\n')
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
         .toList();
@@ -53,19 +52,19 @@ class PrescriptionPdfParserService {
     final bool dpcFlag = normalized.toUpperCase().contains('DPC');
     final String patientName = _extractLabeledValue(
       lines,
-      <String>['ASSISTITO', 'PAZIENTE', 'NOME ASSISTITO', 'COGNOME E NOME'],
+      const <String>['ASSISTITO', 'PAZIENTE', 'NOME ASSISTITO', 'COGNOME E NOME'],
     );
     final String doctorName = _extractLabeledValue(
       lines,
-      <String>['MEDICO', 'DOTT', 'DOTT.', 'DOTTORE'],
+      const <String>['MEDICO', 'DOTT', 'DOTT.', 'DOTTORE'],
     );
     final String exemptionCode = _extractLabeledValue(
       lines,
-      <String>['ESENZIONE'],
+      const <String>['ESENZIONE'],
     );
     final String city = _extractLabeledValue(
       lines,
-      <String>['COMUNE', 'CITTA', 'CITTÀ'],
+      const <String>['COMUNE', 'CITTA', 'CITTÀ'],
     );
     final List<String> medicines = _extractMedicines(lines);
 
@@ -83,7 +82,9 @@ class PrescriptionPdfParserService {
   }
 
   String _extractFiscalCode(String text) {
-    final RegExp regex = RegExp(r'\b[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]\b');
+    final RegExp regex = RegExp(
+      r'\b[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]\b',
+    );
     final Match? match = regex.firstMatch(text.toUpperCase());
     return match?.group(0) ?? '';
   }

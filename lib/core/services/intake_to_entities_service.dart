@@ -71,8 +71,7 @@ class IntakeToEntitiesService {
               ? existing?.exemptionCode
               : intake.exemptionCode,
           activeTherapies: existing?.activeTherapies ?? const <String>[],
-          archivedRecipeCount:
-              (existing?.archivedRecipeCount ?? 0) + 1,
+          archivedRecipeCount: (existing?.archivedRecipeCount ?? 0) + 1,
           hasDpc: (existing?.hasDpc ?? false) || intake.dpcFlag,
           hasAdvance: existing?.hasAdvance ?? false,
           hasDebt: existing?.hasDebt ?? false,
@@ -104,9 +103,11 @@ class IntakeToEntitiesService {
           id: prescriptionId,
           patientFiscalCode: intake.fiscalCode,
           patientName: patient.fullName,
-          doctorName: intake.doctorName.isEmpty ? patient.doctorName : intake.doctorName,
-          exemptionCode:
-              intake.exemptionCode.isEmpty ? patient.exemptionCode : intake.exemptionCode,
+          doctorName:
+              intake.doctorName.isEmpty ? patient.doctorName : intake.doctorName,
+          exemptionCode: intake.exemptionCode.isEmpty
+              ? patient.exemptionCode
+              : intake.exemptionCode,
           prescriptionDate: intake.prescriptionDate ?? DateTime.now(),
           expiryDate: _computeExpiryDate(
             intake.prescriptionDate ?? DateTime.now(),

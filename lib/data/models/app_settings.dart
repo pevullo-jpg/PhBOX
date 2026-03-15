@@ -1,5 +1,7 @@
 class AppSettings {
   final String googleWebClientId;
+  final String connectedGoogleEmail;
+  final String connectedGoogleDisplayName;
   final String incomingPdfDriveFolderId;
   final String incomingImageDriveFolderId;
   final String processedDriveFolderId;
@@ -14,6 +16,8 @@ class AppSettings {
 
   const AppSettings({
     this.googleWebClientId = '',
+    this.connectedGoogleEmail = '',
+    this.connectedGoogleDisplayName = '',
     this.incomingPdfDriveFolderId = '',
     this.incomingImageDriveFolderId = '',
     this.processedDriveFolderId = '',
@@ -27,9 +31,50 @@ class AppSettings {
     required this.updatedAt,
   });
 
+  AppSettings copyWith({
+    String? googleWebClientId,
+    String? connectedGoogleEmail,
+    String? connectedGoogleDisplayName,
+    String? incomingPdfDriveFolderId,
+    String? incomingImageDriveFolderId,
+    String? processedDriveFolderId,
+    String? mergedPdfDriveFolderId,
+    bool? autoScanEnabled,
+    bool? autoMergeByPatient,
+    bool? autoDetectDpc,
+    List<String>? acceptedExtensions,
+    int? expiryWarningDays,
+    int? scanIntervalMinutes,
+    DateTime? updatedAt,
+  }) {
+    return AppSettings(
+      googleWebClientId: googleWebClientId ?? this.googleWebClientId,
+      connectedGoogleEmail: connectedGoogleEmail ?? this.connectedGoogleEmail,
+      connectedGoogleDisplayName:
+          connectedGoogleDisplayName ?? this.connectedGoogleDisplayName,
+      incomingPdfDriveFolderId:
+          incomingPdfDriveFolderId ?? this.incomingPdfDriveFolderId,
+      incomingImageDriveFolderId:
+          incomingImageDriveFolderId ?? this.incomingImageDriveFolderId,
+      processedDriveFolderId:
+          processedDriveFolderId ?? this.processedDriveFolderId,
+      mergedPdfDriveFolderId:
+          mergedPdfDriveFolderId ?? this.mergedPdfDriveFolderId,
+      autoScanEnabled: autoScanEnabled ?? this.autoScanEnabled,
+      autoMergeByPatient: autoMergeByPatient ?? this.autoMergeByPatient,
+      autoDetectDpc: autoDetectDpc ?? this.autoDetectDpc,
+      acceptedExtensions: acceptedExtensions ?? this.acceptedExtensions,
+      expiryWarningDays: expiryWarningDays ?? this.expiryWarningDays,
+      scanIntervalMinutes: scanIntervalMinutes ?? this.scanIntervalMinutes,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
   Map<String, dynamic> toMap() {
     return <String, dynamic>{
       'googleWebClientId': googleWebClientId,
+      'connectedGoogleEmail': connectedGoogleEmail,
+      'connectedGoogleDisplayName': connectedGoogleDisplayName,
       'incomingPdfDriveFolderId': incomingPdfDriveFolderId,
       'incomingImageDriveFolderId': incomingImageDriveFolderId,
       'processedDriveFolderId': processedDriveFolderId,
@@ -47,8 +92,14 @@ class AppSettings {
   factory AppSettings.fromMap(Map<String, dynamic> map) {
     return AppSettings(
       googleWebClientId: (map['googleWebClientId'] ?? '') as String,
-      incomingPdfDriveFolderId: (map['incomingPdfDriveFolderId'] ?? map['incomingDriveFolderId'] ?? '') as String,
-      incomingImageDriveFolderId: (map['incomingImageDriveFolderId'] ?? '') as String,
+      connectedGoogleEmail: (map['connectedGoogleEmail'] ?? '') as String,
+      connectedGoogleDisplayName:
+          (map['connectedGoogleDisplayName'] ?? '') as String,
+      incomingPdfDriveFolderId:
+          (map['incomingPdfDriveFolderId'] ?? map['incomingDriveFolderId'] ?? '')
+              as String,
+      incomingImageDriveFolderId:
+          (map['incomingImageDriveFolderId'] ?? '') as String,
       processedDriveFolderId: (map['processedDriveFolderId'] ?? '') as String,
       mergedPdfDriveFolderId: (map['mergedPdfDriveFolderId'] ?? '') as String,
       autoScanEnabled: (map['autoScanEnabled'] ?? false) as bool,

@@ -4,11 +4,13 @@ class GoogleAuthPrepResult {
   final String email;
   final String? displayName;
   final String? accessToken;
+  final bool isConnected;
 
   const GoogleAuthPrepResult({
     required this.email,
     required this.displayName,
     required this.accessToken,
+    required this.isConnected,
   });
 }
 
@@ -33,7 +35,6 @@ class GoogleAuthPrepService {
     }
 
     final GoogleSignIn googleSignIn = _buildSignIn(clientId.trim());
-
     final GoogleSignInAccount? account = await googleSignIn.signIn();
 
     if (account == null) {
@@ -52,6 +53,27 @@ class GoogleAuthPrepService {
       email: account.email,
       displayName: account.displayName,
       accessToken: auth.accessToken,
+      isConnected: true,
+    );
+  }
+
+  Future<GoogleAuthPrepResult?> tryRestoreSession({
+    required String clientId,
+  }) async {
+    if (clientId.trim().isEmpty) return null;
+
+    final GoogleSignIn googleSignIn = _buildSignIn(clientId.trim());
+    final GoogleSignInAccount? account = await googleSignIn.signInSilently();
+
+    if (account == null) return null;
+
+    final GoogleSignInAuthentication auth = await account.authentication;
+
+    return GoogleAuthPrepResult(
+      email: account.email,
+      displayName: account.displayName,
+      accessToken: auth.accessToken,
+      isConnected: true,
     );
   }
 

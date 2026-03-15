@@ -142,7 +142,9 @@ class _SettingsPageState extends State<SettingsPage> {
         isErrorMessage = true;
       });
     } finally {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       setState(() {
         isLoading = false;
       });
@@ -166,14 +168,14 @@ class _SettingsPageState extends State<SettingsPage> {
         isGoogleConnected = true;
       });
 
-      await repository.saveSettings(
-        currentSettings.copyWith(
-          googleWebClientId: clientId,
-          connectedGoogleEmail: googleAccountEmail,
-          connectedGoogleDisplayName: googleAccountName,
-          updatedAt: DateTime.now(),
-        ),
+      final AppSettings updated = currentSettings.copyWith(
+        googleWebClientId: clientId,
+        connectedGoogleEmail: googleAccountEmail,
+        connectedGoogleDisplayName: googleAccountName,
+        updatedAt: DateTime.now(),
       );
+      await repository.saveSettings(updated);
+      currentSettings = updated;
     } catch (_) {}
   }
 
@@ -832,8 +834,7 @@ class _SettingsPageState extends State<SettingsPage> {
               if (message.isNotEmpty)
                 Container(
                   width: double.infinity,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                   decoration: BoxDecoration(
                     color: isErrorMessage ? AppColors.red : AppColors.green,
                     borderRadius: BorderRadius.circular(16),
