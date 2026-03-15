@@ -3,10 +3,15 @@ import 'package:flutter/material.dart';
 import '../../../core/services/drive_pdf_scanner_service.dart';
 import '../../../core/services/google_auth_prep_service.dart';
 import '../../../core/services/google_drive_service.dart';
+import '../../../core/services/imported_pdf_processing_service.dart';
+import '../../../core/services/pdf_text_extraction_service.dart';
+import '../../../core/services/prescription_pdf_parser_service.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/app_settings.dart';
 import '../../../data/models/drive_pdf_import.dart';
+import '../../../data/models/prescription_intake.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
+import '../../../data/repositories/prescription_intakes_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../shared/widgets/settings_field_card.dart';
 import '../../../theme/app_theme.dart';
@@ -21,9 +26,11 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   late final SettingsRepository repository;
   late final DrivePdfImportsRepository drivePdfImportsRepository;
+  late final PrescriptionIntakesRepository prescriptionIntakesRepository;
   late final GoogleAuthPrepService googleAuthPrepService;
 
-  final TextEditingController googleWebClientIdController = TextEditingController();
+  final TextEditingController googleWebClientIdController =
+      TextEditingController();
   final TextEditingController incomingPdfController = TextEditingController();
   final TextEditingController incomingImageController = TextEditingController();
   final TextEditingController processedController = TextEditingController();
@@ -41,6 +48,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool isGoogleLoading = false;
   bool isScanningDrive = false;
   bool isGoogleConnected = false;
+  bool isProcessingImports = false;
 
   String message = '';
   bool isErrorMessage = false;
@@ -49,7 +57,9 @@ class _SettingsPageState extends State<SettingsPage> {
   String googleAccountName = '';
   String currentAccessToken = '';
 
+  AppSettings currentSettings = AppSettings.empty();
   List<DrivePdfImport> recentImports = <DrivePdfImport>[];
+  List<PrescriptionIntake> recentIntakes = <PrescriptionIntake>[];
 
   @override
   void initState() {
@@ -59,6 +69,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
     repository = SettingsRepository(datasource: datasource);
     drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
+    prescriptionIntakesRepository =
+        PrescriptionIntakesRepository(datasource: datasource);
     googleAuthPrepService = GoogleAuthPrepService();
     _load();
   }
@@ -86,10 +98,13 @@ class _SettingsPageState extends State<SettingsPage> {
       final AppSettings settings = await repository.getSettings();
       final List<DrivePdfImport> imports =
           await drivePdfImportsRepository.getAllImports();
+      final List<PrescriptionIntake> intakes =
+          await prescriptionIntakesRepository.getAllIntakes();
 
       if (!mounted) return;
 
       setState(() {
+        currentSettings = settings;
         googleWebClientIdController.text = settings.googleWebClientId;
         incomingPdfController.text = settings.incomingPdfDriveFolderId;
         incomingImageController.text = settings.incomingImageDriveFolderId;
@@ -102,7 +117,13 @@ class _SettingsPageState extends State<SettingsPage> {
         autoMergeByPatient = settings.autoMergeByPatient;
         autoDetectDpc = settings.autoDetectDpc;
         recentImports = imports;
+        recentIntakes = intakes;
+        googleAccountEmail = settings.connectedGoogleEmail;
+        googleAccountName = settings.connectedGoogleDisplayName;
+        isGoogleConnected = settings.connectedGoogleEmail.isNotEmpty;
       });
+
+      await _restoreGoogleSessionIfPossible();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -115,6 +136,34 @@ class _SettingsPageState extends State<SettingsPage> {
         isLoading = false;
       });
     }
+  }
+
+  Future<void> _restoreGoogleSessionIfPossible() async {
+    final String clientId = googleWebClientIdController.text.trim();
+    if (clientId.isEmpty) return;
+
+    try {
+      final GoogleAuthPrepResult? result =
+          await googleAuthPrepService.tryRestoreSession(clientId: clientId);
+
+      if (result == null || !mounted) return;
+
+      setState(() {
+        googleAccountEmail = result.email;
+        googleAccountName = result.displayName ?? '';
+        currentAccessToken = result.accessToken ?? '';
+        isGoogleConnected = true;
+      });
+
+      await repository.saveSettings(
+        currentSettings.copyWith(
+          googleWebClientId: clientId,
+          connectedGoogleEmail: googleAccountEmail,
+          connectedGoogleDisplayName: googleAccountName,
+          updatedAt: DateTime.now(),
+        ),
+      );
+    } catch (_) {}
   }
 
   Future<void> _save() async {
@@ -133,6 +182,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
       final AppSettings settings = AppSettings(
         googleWebClientId: googleWebClientIdController.text.trim(),
+        connectedGoogleEmail: googleAccountEmail,
+        connectedGoogleDisplayName: googleAccountName,
         incomingPdfDriveFolderId: incomingPdfController.text.trim(),
         incomingImageDriveFolderId: incomingImageController.text.trim(),
         processedDriveFolderId: processedController.text.trim(),
@@ -140,13 +191,17 @@ class _SettingsPageState extends State<SettingsPage> {
         autoScanEnabled: autoScanEnabled,
         autoMergeByPatient: autoMergeByPatient,
         autoDetectDpc: autoDetectDpc,
-        acceptedExtensions: extensions.isEmpty ? const <String>['pdf'] : extensions,
-        expiryWarningDays: int.tryParse(expiryWarningController.text.trim()) ?? 7,
-        scanIntervalMinutes: int.tryParse(scanIntervalController.text.trim()) ?? 30,
+        acceptedExtensions:
+            extensions.isEmpty ? const <String>['pdf'] : extensions,
+        expiryWarningDays:
+            int.tryParse(expiryWarningController.text.trim()) ?? 7,
+        scanIntervalMinutes:
+            int.tryParse(scanIntervalController.text.trim()) ?? 30,
         updatedAt: DateTime.now(),
       );
 
       await repository.saveSettings(settings);
+      currentSettings = settings;
 
       if (!mounted) return;
       setState(() {
@@ -186,6 +241,19 @@ class _SettingsPageState extends State<SettingsPage> {
         googleAccountName = result.displayName ?? '';
         currentAccessToken = result.accessToken ?? '';
         isGoogleConnected = true;
+      });
+
+      final AppSettings updated = currentSettings.copyWith(
+        googleWebClientId: googleWebClientIdController.text.trim(),
+        connectedGoogleEmail: googleAccountEmail,
+        connectedGoogleDisplayName: googleAccountName,
+        updatedAt: DateTime.now(),
+      );
+      await repository.saveSettings(updated);
+      currentSettings = updated;
+
+      if (!mounted) return;
+      setState(() {
         message = 'Account Google collegato correttamente.';
         isErrorMessage = false;
       });
@@ -215,6 +283,14 @@ class _SettingsPageState extends State<SettingsPage> {
         clientId: googleWebClientIdController.text.trim(),
       );
 
+      final AppSettings updated = currentSettings.copyWith(
+        connectedGoogleEmail: '',
+        connectedGoogleDisplayName: '',
+        updatedAt: DateTime.now(),
+      );
+      await repository.saveSettings(updated);
+      currentSettings = updated;
+
       if (!mounted) return;
       setState(() {
         googleAccountEmail = '';
@@ -228,6 +304,55 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) return;
       setState(() {
         message = 'Errore logout Google: $e';
+        isErrorMessage = true;
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        isGoogleLoading = false;
+      });
+    }
+  }
+
+  Future<void> _refreshGoogleSession() async {
+    setState(() {
+      isGoogleLoading = true;
+      message = '';
+      isErrorMessage = false;
+    });
+
+    try {
+      final GoogleAuthPrepResult? result =
+          await googleAuthPrepService.tryRestoreSession(
+        clientId: googleWebClientIdController.text.trim(),
+      );
+
+      if (result == null) {
+        throw Exception('Nessuna sessione Google attiva trovata.');
+      }
+
+      final AppSettings updated = currentSettings.copyWith(
+        googleWebClientId: googleWebClientIdController.text.trim(),
+        connectedGoogleEmail: result.email,
+        connectedGoogleDisplayName: result.displayName ?? '',
+        updatedAt: DateTime.now(),
+      );
+      await repository.saveSettings(updated);
+      currentSettings = updated;
+
+      if (!mounted) return;
+      setState(() {
+        googleAccountEmail = result.email;
+        googleAccountName = result.displayName ?? '';
+        currentAccessToken = result.accessToken ?? '';
+        isGoogleConnected = true;
+        message = 'Sessione Google aggiornata.';
+        isErrorMessage = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        message = 'Errore verifica sessione Google: $e';
         isErrorMessage = true;
       });
     } finally {
@@ -285,14 +410,62 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _processImportedPdfs() async {
+    setState(() {
+      isProcessingImports = true;
+      message = '';
+      isErrorMessage = false;
+    });
+
+    try {
+      if (currentAccessToken.isEmpty) {
+        throw Exception('Collega prima un account Google.');
+      }
+
+      final ImportedPdfProcessingService service = ImportedPdfProcessingService(
+        googleDriveService: GoogleDriveService(accessToken: currentAccessToken),
+        drivePdfImportsRepository: drivePdfImportsRepository,
+        prescriptionIntakesRepository: prescriptionIntakesRepository,
+        pdfTextExtractionService: const PdfTextExtractionService(),
+        prescriptionPdfParserService: const PrescriptionPdfParserService(),
+      );
+
+      final ImportedPdfProcessingResult result =
+          await service.processPendingImports();
+
+      final List<DrivePdfImport> imports =
+          await drivePdfImportsRepository.getAllImports();
+      final List<PrescriptionIntake> intakes =
+          await prescriptionIntakesRepository.getAllIntakes();
+
+      if (!mounted) return;
+      setState(() {
+        recentImports = imports;
+        recentIntakes = intakes;
+        message =
+            'Analisi completata. Processati: ${result.processedCount}. Errori: ${result.failedCount}.';
+        isErrorMessage = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        message = 'Errore analisi PDF: $e';
+        isErrorMessage = true;
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        isProcessingImports = false;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
       return const Scaffold(
         backgroundColor: AppColors.background,
-        body: Center(
-          child: CircularProgressIndicator(),
-        ),
+        body: Center(child: CircularProgressIndicator()),
       );
     }
 
@@ -377,6 +550,19 @@ class _SettingsPageState extends State<SettingsPage> {
                           ),
                         ),
                         ElevatedButton.icon(
+                          onPressed: isGoogleLoading ? null : _refreshGoogleSession,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.panelSoft,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                          ),
+                          icon: const Icon(Icons.refresh),
+                          label: const Text(
+                            'Verifica sessione',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        ElevatedButton.icon(
                           onPressed: isGoogleLoading || !isGoogleConnected
                               ? null
                               : _disconnectGoogle,
@@ -401,6 +587,19 @@ class _SettingsPageState extends State<SettingsPage> {
                           icon: const Icon(Icons.search),
                           label: Text(
                             isScanningDrive ? 'Scansione...' : 'Scansiona Drive ora',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        ElevatedButton.icon(
+                          onPressed: isProcessingImports ? null : _processImportedPdfs,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.green,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                          ),
+                          icon: const Icon(Icons.auto_fix_high),
+                          label: Text(
+                            isProcessingImports ? 'Analisi...' : 'Analizza PDF importati',
                             style: const TextStyle(fontWeight: FontWeight.w800),
                           ),
                         ),
@@ -581,67 +780,157 @@ class _SettingsPageState extends State<SettingsPage> {
                 ],
               ),
               const SizedBox(height: 20),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(20),
+              _importsSection(),
+              const SizedBox(height: 20),
+              _intakesSection(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _importsSection() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.panel,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            'PDF trovati in Drive',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (recentImports.isEmpty)
+            const Text(
+              'Nessun PDF importato finora.',
+              style: TextStyle(color: Colors.white70),
+            )
+          else
+            ...recentImports.take(20).map((DrivePdfImport item) {
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: AppColors.panel,
-                  borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: Colors.white10),
+                  color: AppColors.panelSoft,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  children: <Widget>[
+                    Row(
+                      children: <Widget>[
+                        const Icon(Icons.picture_as_pdf, color: AppColors.coral),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            item.fileName,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          item.status,
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                      ],
+                    ),
+                    if (item.errorMessage.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            item.errorMessage,
+                            style: const TextStyle(color: Colors.white54),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  Widget _intakesSection() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.panel,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            'Anteprima dati estratti dai PDF',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (recentIntakes.isEmpty)
+            const Text(
+              'Nessuna intake generata finora.',
+              style: TextStyle(color: Colors.white70),
+            )
+          else
+            ...recentIntakes.take(10).map((PrescriptionIntake item) {
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.panelSoft,
+                  borderRadius: BorderRadius.circular(16),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    const Text(
-                      'PDF trovati in Drive',
-                      style: TextStyle(
+                    Text(
+                      item.fileName,
+                      style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(height: 14),
-                    if (recentImports.isEmpty)
-                      const Text(
-                        'Nessun PDF importato finora.',
-                        style: TextStyle(color: Colors.white70),
-                      )
-                    else
-                      ...recentImports.take(20).map((DrivePdfImport item) {
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 10),
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: AppColors.panelSoft,
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Row(
-                            children: <Widget>[
-                              const Icon(Icons.picture_as_pdf, color: AppColors.coral),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Text(
-                                  item.fileName,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                              Text(
-                                item.status,
-                                style: const TextStyle(color: Colors.white70),
-                              ),
-                            ],
-                          ),
-                        );
-                      }),
+                    const SizedBox(height: 8),
+                    Text('Assistito: ${item.patientName.isEmpty ? '-' : item.patientName}',
+                        style: const TextStyle(color: Colors.white70)),
+                    Text('CF: ${item.fiscalCode.isEmpty ? '-' : item.fiscalCode}',
+                        style: const TextStyle(color: Colors.white70)),
+                    Text('Medico: ${item.doctorName.isEmpty ? '-' : item.doctorName}',
+                        style: const TextStyle(color: Colors.white70)),
+                    Text('Esenzione: ${item.exemptionCode.isEmpty ? '-' : item.exemptionCode}',
+                        style: const TextStyle(color: Colors.white70)),
+                    Text('DPC: ${item.dpcFlag ? 'SI' : 'NO'}',
+                        style: const TextStyle(color: Colors.white70)),
+                    Text(
+                      'Farmaci rilevati: ${item.medicines.isEmpty ? '-' : item.medicines.join(' | ')}',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
                   ],
                 ),
-              ),
-            ],
-          ),
-        ),
+              );
+            }),
+        ],
       ),
     );
   }

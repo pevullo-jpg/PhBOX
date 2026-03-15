@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 class GoogleDriveFile {
@@ -51,7 +52,9 @@ class GoogleDriveService {
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('Errore Google Drive API: ${response.statusCode} ${response.body}');
+      throw Exception(
+        'Errore Google Drive API: ${response.statusCode} ${response.body}',
+      );
     }
 
     final Map<String, dynamic> data =
@@ -65,5 +68,26 @@ class GoogleDriveService {
           ),
         )
         .toList();
+  }
+
+  Future<Uint8List> downloadPdfBytes(String fileId) async {
+    final Uri url = Uri.parse(
+      'https://www.googleapis.com/drive/v3/files/$fileId?alt=media',
+    );
+
+    final http.Response response = await http.get(
+      url,
+      headers: <String, String>{
+        'Authorization': 'Bearer $accessToken',
+      },
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        'Errore download PDF Drive: ${response.statusCode} ${response.body}',
+      );
+    }
+
+    return response.bodyBytes;
   }
 }

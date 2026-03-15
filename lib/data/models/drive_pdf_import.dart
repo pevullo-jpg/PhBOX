@@ -4,6 +4,7 @@ class DrivePdfImport {
   final String fileName;
   final String mimeType;
   final String status;
+  final String errorMessage;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -13,9 +14,32 @@ class DrivePdfImport {
     required this.fileName,
     required this.mimeType,
     required this.status,
+    this.errorMessage = '',
     required this.createdAt,
     required this.updatedAt,
   });
+
+  DrivePdfImport copyWith({
+    String? id,
+    String? driveFileId,
+    String? fileName,
+    String? mimeType,
+    String? status,
+    String? errorMessage,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) {
+    return DrivePdfImport(
+      id: id ?? this.id,
+      driveFileId: driveFileId ?? this.driveFileId,
+      fileName: fileName ?? this.fileName,
+      mimeType: mimeType ?? this.mimeType,
+      status: status ?? this.status,
+      errorMessage: errorMessage ?? this.errorMessage,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
 
   Map<String, dynamic> toMap() {
     return <String, dynamic>{
@@ -24,6 +48,7 @@ class DrivePdfImport {
       'fileName': fileName,
       'mimeType': mimeType,
       'status': status,
+      'errorMessage': errorMessage,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
@@ -36,6 +61,7 @@ class DrivePdfImport {
       fileName: (map['fileName'] ?? '') as String,
       mimeType: (map['mimeType'] ?? '') as String,
       status: (map['status'] ?? 'pending') as String,
+      errorMessage: (map['errorMessage'] ?? '') as String,
       createdAt: _readDate(map['createdAt']) ?? DateTime.now(),
       updatedAt: _readDate(map['updatedAt']) ?? DateTime.now(),
     );
