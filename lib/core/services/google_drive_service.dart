@@ -39,6 +39,7 @@ class GoogleDriveService {
         'q': query,
         'fields': 'files(id,name,mimeType)',
         'orderBy': 'createdTime desc',
+        'pageSize': '100',
       },
     );
 

@@ -1,8 +1,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import '../../../core/services/drive_pdf_scanner_service.dart';
 import '../../../core/services/google_auth_prep_service.dart';
+import '../../../core/services/google_drive_service.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/app_settings.dart';
+import '../../../data/models/drive_pdf_import.dart';
+import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../shared/widgets/settings_field_card.dart';
 import '../../../theme/app_theme.dart';
@@ -16,6 +20,7 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   late final SettingsRepository repository;
+  late final DrivePdfImportsRepository drivePdfImportsRepository;
   late final GoogleAuthPrepService googleAuthPrepService;
 
   final TextEditingController incomingPdfController = TextEditingController();
@@ -33,20 +38,25 @@ class _SettingsPageState extends State<SettingsPage> {
   bool isSaving = false;
   bool isLoading = true;
   bool isGoogleLoading = false;
+  bool isScanningDrive = false;
 
   String message = '';
   bool isErrorMessage = false;
 
   String googleAccountEmail = '';
   String googleAccountName = '';
-  String lastAccessTokenPreview = '';
+  String currentAccessToken = '';
+
+  List<DrivePdfImport> recentImports = <DrivePdfImport>[];
 
   @override
   void initState() {
     super.initState();
-    repository = SettingsRepository(
-      datasource: FirestoreFirebaseDatasource(FirebaseFirestore.instance),
-    );
+    final FirestoreFirebaseDatasource datasource =
+        FirestoreFirebaseDatasource(FirebaseFirestore.instance);
+
+    repository = SettingsRepository(datasource: datasource);
+    drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
     googleAuthPrepService = GoogleAuthPrepService();
     _load();
   }
@@ -71,6 +81,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
     try {
       final AppSettings settings = await repository.getSettings();
+      final List<DrivePdfImport> imports =
+          await drivePdfImportsRepository.getAllImports();
+
       if (!mounted) return;
 
       setState(() {
@@ -84,6 +97,7 @@ class _SettingsPageState extends State<SettingsPage> {
         autoScanEnabled = settings.autoScanEnabled;
         autoMergeByPatient = settings.autoMergeByPatient;
         autoDetectDpc = settings.autoDetectDpc;
+        recentImports = imports;
       });
     } catch (e) {
       if (!mounted) return;
@@ -163,10 +177,7 @@ class _SettingsPageState extends State<SettingsPage> {
       setState(() {
         googleAccountEmail = result.email;
         googleAccountName = result.displayName ?? '';
-        final String token = result.accessToken ?? '';
-        lastAccessTokenPreview = token.isEmpty
-            ? ''
-            : '${token.substring(0, token.length > 12 ? 12 : token.length)}...';
+        currentAccessToken = result.accessToken ?? '';
         message = 'Account Google collegato correttamente.';
         isErrorMessage = false;
       });
@@ -180,6 +191,53 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) return;
       setState(() {
         isGoogleLoading = false;
+      });
+    }
+  }
+
+  Future<void> _scanDriveNow() async {
+    setState(() {
+      isScanningDrive = true;
+      message = '';
+      isErrorMessage = false;
+    });
+
+    try {
+      final String folderId = incomingPdfController.text.trim();
+
+      if (folderId.isEmpty) {
+        throw Exception('Inserisci prima la cartella Drive PDF in ingresso.');
+      }
+
+      if (currentAccessToken.isEmpty) {
+        throw Exception('Collega prima un account Google.');
+      }
+
+      final DrivePdfScannerService scanner = DrivePdfScannerService(
+        googleDriveService: GoogleDriveService(accessToken: currentAccessToken),
+        importsRepository: drivePdfImportsRepository,
+      );
+
+      final DrivePdfScannerResult result = await scanner.scanFolder(folderId);
+      final List<DrivePdfImport> imports =
+          await drivePdfImportsRepository.getAllImports();
+
+      if (!mounted) return;
+      setState(() {
+        recentImports = imports;
+        message = 'Scansione completata. PDF trovati: ${result.importedCount}.';
+        isErrorMessage = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        message = 'Errore scansione Drive: $e';
+        isErrorMessage = true;
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        isScanningDrive = false;
       });
     }
   }
@@ -247,27 +305,38 @@ class _SettingsPageState extends State<SettingsPage> {
                           style: const TextStyle(color: Colors.white70),
                         ),
                       ),
-                    if (lastAccessTokenPreview.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Text(
-                          'Token preview: $lastAccessTokenPreview',
-                          style: const TextStyle(color: Colors.white54),
-                        ),
-                      ),
                     const SizedBox(height: 14),
-                    ElevatedButton.icon(
-                      onPressed: isGoogleLoading ? null : _connectGoogle,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.coral,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                      ),
-                      icon: const Icon(Icons.login),
-                      label: Text(
-                        isGoogleLoading ? 'Connessione...' : 'Collega account Google',
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: <Widget>[
+                        ElevatedButton.icon(
+                          onPressed: isGoogleLoading ? null : _connectGoogle,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.coral,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                          ),
+                          icon: const Icon(Icons.login),
+                          label: Text(
+                            isGoogleLoading ? 'Connessione...' : 'Collega account Google',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        ElevatedButton.icon(
+                          onPressed: isScanningDrive ? null : _scanDriveNow,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.yellow,
+                            foregroundColor: Colors.black,
+                            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                          ),
+                          icon: const Icon(Icons.search),
+                          label: Text(
+                            isScanningDrive ? 'Scansione...' : 'Scansiona Drive ora',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -442,6 +511,65 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                     ),
                 ],
+              ),
+              const SizedBox(height: 20),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: AppColors.panel,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: Colors.white10),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Text(
+                      'PDF trovati in Drive',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    if (recentImports.isEmpty)
+                      const Text(
+                        'Nessun PDF importato finora.',
+                        style: TextStyle(color: Colors.white70),
+                      )
+                    else
+                      ...recentImports.take(20).map((DrivePdfImport item) {
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: AppColors.panelSoft,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Row(
+                            children: <Widget>[
+                              const Icon(Icons.picture_as_pdf, color: AppColors.coral),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  item.fileName,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                item.status,
+                                style: const TextStyle(color: Colors.white70),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                  ],
+                ),
               ),
             ],
           ),
