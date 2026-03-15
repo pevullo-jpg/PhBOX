@@ -21,6 +21,7 @@ class SettingsFieldCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.panelSoft,
         borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white10),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

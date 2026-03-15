@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import '../../../core/services/google_auth_prep_service.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/app_settings.dart';
 import '../../../data/repositories/settings_repository.dart';
@@ -15,6 +16,7 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   late final SettingsRepository repository;
+  late final GoogleAuthPrepService googleAuthPrepService;
 
   final TextEditingController incomingPdfController = TextEditingController();
   final TextEditingController incomingImageController = TextEditingController();
@@ -29,7 +31,15 @@ class _SettingsPageState extends State<SettingsPage> {
   bool autoDetectDpc = true;
 
   bool isSaving = false;
+  bool isLoading = true;
+  bool isGoogleLoading = false;
+
   String message = '';
+  bool isErrorMessage = false;
+
+  String googleAccountEmail = '';
+  String googleAccountName = '';
+  String lastAccessTokenPreview = '';
 
   @override
   void initState() {
@@ -37,6 +47,7 @@ class _SettingsPageState extends State<SettingsPage> {
     repository = SettingsRepository(
       datasource: FirestoreFirebaseDatasource(FirebaseFirestore.instance),
     );
+    googleAuthPrepService = GoogleAuthPrepService();
     _load();
   }
 
@@ -53,6 +64,11 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _load() async {
+    setState(() {
+      isLoading = true;
+      message = '';
+    });
+
     try {
       final AppSettings settings = await repository.getSettings();
       if (!mounted) return;
@@ -73,6 +89,12 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) return;
       setState(() {
         message = 'Errore caricamento impostazioni: $e';
+        isErrorMessage = true;
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        isLoading = false;
       });
     }
   }
@@ -81,6 +103,7 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() {
       isSaving = true;
       message = '';
+      isErrorMessage = false;
     });
 
     try {
@@ -109,11 +132,13 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) return;
       setState(() {
         message = 'Impostazioni salvate correttamente.';
+        isErrorMessage = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         message = 'Errore salvataggio impostazioni: $e';
+        isErrorMessage = true;
       });
     } finally {
       if (!mounted) return;
@@ -123,168 +148,336 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _connectGoogle() async {
+    setState(() {
+      isGoogleLoading = true;
+      message = '';
+      isErrorMessage = false;
+    });
+
+    try {
+      final GoogleAuthPrepResult result =
+          await googleAuthPrepService.signInForDriveRead();
+
+      if (!mounted) return;
+      setState(() {
+        googleAccountEmail = result.email;
+        googleAccountName = result.displayName ?? '';
+        final String token = result.accessToken ?? '';
+        lastAccessTokenPreview = token.isEmpty
+            ? ''
+            : '${token.substring(0, token.length > 12 ? 12 : token.length)}...';
+        message = 'Account Google collegato correttamente.';
+        isErrorMessage = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        message = 'Errore login Google: $e';
+        isErrorMessage = true;
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        isGoogleLoading = false;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (isLoading) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
     return Scaffold(
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            const Text(
-              'Impostazioni',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 30,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 20),
-            SettingsFieldCard(
-              title: 'Cartella Drive PDF in ingresso',
-              subtitle: 'ID della cartella Google Drive da cui leggere le ricette PDF.',
-              child: TextField(
-                controller: incomingPdfController,
-                decoration: _decoration('Es. 1AbCDefGhIjKlMnOpQr'),
-              ),
-            ),
-            const SizedBox(height: 16),
-            SettingsFieldCard(
-              title: 'Cartella Drive immagini in ingresso',
-              subtitle: 'ID della cartella immagini. Può restare vuota per ora.',
-              child: TextField(
-                controller: incomingImageController,
-                decoration: _decoration('ID cartella immagini'),
-              ),
-            ),
-            const SizedBox(height: 16),
-            SettingsFieldCard(
-              title: 'Cartella Drive PDF elaborati',
-              subtitle: 'Cartella in cui archiviare i PDF già processati.',
-              child: TextField(
-                controller: processedController,
-                decoration: _decoration('ID cartella elaborati'),
-              ),
-            ),
-            const SizedBox(height: 16),
-            SettingsFieldCard(
-              title: 'Cartella Drive PDF unificati',
-              subtitle: 'Cartella dove salvare i PDF fusi per assistito.',
-              child: TextField(
-                controller: mergedController,
-                decoration: _decoration('ID cartella unificati'),
-              ),
-            ),
-            const SizedBox(height: 16),
-            SettingsFieldCard(
-              title: 'Estensioni accettate',
-              subtitle: 'Separate da virgola. Esempio: pdf, jpg, png',
-              child: TextField(
-                controller: extensionsController,
-                decoration: _decoration('pdf, jpg, png'),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: SettingsFieldCard(
-                    title: 'Giorni soglia scadenza',
-                    subtitle: 'Entro quanti giorni una ricetta viene segnalata in scadenza.',
-                    child: TextField(
-                      controller: expiryWarningController,
-                      keyboardType: TextInputType.number,
-                      decoration: _decoration('7'),
-                    ),
-                  ),
+        child: DefaultTextStyle(
+          style: const TextStyle(color: Colors.white),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Text(
+                'Impostazioni',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 30,
+                  fontWeight: FontWeight.w900,
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: SettingsFieldCard(
-                    title: 'Intervallo scansione minuti',
-                    subtitle: 'Quanto spesso controllare la cartella Drive.',
-                    child: TextField(
-                      controller: scanIntervalController,
-                      keyboardType: TextInputType.number,
-                      decoration: _decoration('30'),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: AppColors.panel,
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: Colors.white10),
               ),
-              child: Column(
+              const SizedBox(height: 20),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: AppColors.panel,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: Colors.white10),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Text(
+                      'Account Google Drive',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      googleAccountEmail.isEmpty
+                          ? 'Nessun account collegato.'
+                          : 'Collegato: $googleAccountEmail',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                    if (googleAccountName.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          'Nome: $googleAccountName',
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                      ),
+                    if (lastAccessTokenPreview.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          'Token preview: $lastAccessTokenPreview',
+                          style: const TextStyle(color: Colors.white54),
+                        ),
+                      ),
+                    const SizedBox(height: 14),
+                    ElevatedButton.icon(
+                      onPressed: isGoogleLoading ? null : _connectGoogle,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.coral,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                      ),
+                      icon: const Icon(Icons.login),
+                      label: Text(
+                        isGoogleLoading ? 'Connessione...' : 'Collega account Google',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              SettingsFieldCard(
+                title: 'Cartella Drive PDF in ingresso',
+                subtitle: 'ID della cartella Google Drive da cui leggere le ricette PDF.',
+                child: _input(
+                  controller: incomingPdfController,
+                  hint: 'Es. 1AbCDefGhIjKlMnOpQr',
+                ),
+              ),
+              const SizedBox(height: 16),
+              SettingsFieldCard(
+                title: 'Cartella Drive immagini in ingresso',
+                subtitle: 'ID della cartella immagini. Può restare vuota per ora.',
+                child: _input(
+                  controller: incomingImageController,
+                  hint: 'ID cartella immagini',
+                ),
+              ),
+              const SizedBox(height: 16),
+              SettingsFieldCard(
+                title: 'Cartella Drive PDF elaborati',
+                subtitle: 'Cartella in cui archiviare i PDF già processati.',
+                child: _input(
+                  controller: processedController,
+                  hint: 'ID cartella elaborati',
+                ),
+              ),
+              const SizedBox(height: 16),
+              SettingsFieldCard(
+                title: 'Cartella Drive PDF unificati',
+                subtitle: 'Cartella dove salvare i PDF fusi per assistito.',
+                child: _input(
+                  controller: mergedController,
+                  hint: 'ID cartella unificati',
+                ),
+              ),
+              const SizedBox(height: 16),
+              SettingsFieldCard(
+                title: 'Estensioni accettate',
+                subtitle: 'Separate da virgola. Esempio: pdf, jpg, png',
+                child: _input(
+                  controller: extensionsController,
+                  hint: 'pdf, jpg, png',
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
                 children: <Widget>[
-                  SwitchListTile(
-                    value: autoScanEnabled,
-                    onChanged: (value) => setState(() => autoScanEnabled = value),
-                    title: const Text('Scansione automatica attiva'),
-                    subtitle: const Text('Controlla periodicamente la cartella Drive impostata.'),
+                  Expanded(
+                    child: SettingsFieldCard(
+                      title: 'Giorni soglia scadenza',
+                      subtitle: 'Entro quanti giorni una ricetta viene segnalata in scadenza.',
+                      child: _input(
+                        controller: expiryWarningController,
+                        hint: '7',
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
                   ),
-                  SwitchListTile(
-                    value: autoMergeByPatient,
-                    onChanged: (value) => setState(() => autoMergeByPatient = value),
-                    title: const Text('Unisci PDF per assistito'),
-                    subtitle: const Text('Fonde le ricette con stesso nominativo in un unico PDF.'),
-                  ),
-                  SwitchListTile(
-                    value: autoDetectDpc,
-                    onChanged: (value) => setState(() => autoDetectDpc = value),
-                    title: const Text('Riconoscimento DPC automatico'),
-                    subtitle: const Text('Marca automaticamente le ricette con dicitura DPC.'),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: SettingsFieldCard(
+                      title: 'Intervallo scansione minuti',
+                      subtitle: 'Quanto spesso controllare la cartella Drive.',
+                      child: _input(
+                        controller: scanIntervalController,
+                        hint: '30',
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: 20),
-            Row(
-              children: <Widget>[
-                ElevatedButton.icon(
-                  onPressed: isSaving ? null : _save,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.yellow,
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                  ),
-                  icon: const Icon(Icons.save),
-                  label: Text(
-                    isSaving ? 'Salvataggio...' : 'Salva impostazioni',
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: AppColors.panel,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: Colors.white10),
                 ),
-                const SizedBox(width: 16),
-                if (message.isNotEmpty)
-                  Expanded(
-                    child: Text(
-                      message,
-                      style: const TextStyle(color: Colors.white70),
+                child: Theme(
+                  data: Theme.of(context).copyWith(
+                    unselectedWidgetColor: Colors.white54,
+                    switchTheme: const SwitchThemeData(
+                      thumbColor: WidgetStatePropertyAll(AppColors.yellow),
+                      trackColor: WidgetStatePropertyAll(Color(0xFF3A3A3A)),
                     ),
                   ),
-              ],
-            ),
-          ],
+                  child: Column(
+                    children: <Widget>[
+                      SwitchListTile(
+                        activeColor: AppColors.yellow,
+                        value: autoScanEnabled,
+                        onChanged: (value) => setState(() => autoScanEnabled = value),
+                        title: const Text(
+                          'Scansione automatica attiva',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                        subtitle: const Text(
+                          'Controlla periodicamente la cartella Drive impostata.',
+                          style: TextStyle(color: Colors.white70),
+                        ),
+                      ),
+                      SwitchListTile(
+                        activeColor: AppColors.yellow,
+                        value: autoMergeByPatient,
+                        onChanged: (value) => setState(() => autoMergeByPatient = value),
+                        title: const Text(
+                          'Unisci PDF per assistito',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                        subtitle: const Text(
+                          'Fonde le ricette con stesso nominativo in un unico PDF.',
+                          style: TextStyle(color: Colors.white70),
+                        ),
+                      ),
+                      SwitchListTile(
+                        activeColor: AppColors.yellow,
+                        value: autoDetectDpc,
+                        onChanged: (value) => setState(() => autoDetectDpc = value),
+                        title: const Text(
+                          'Riconoscimento DPC automatico',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                        subtitle: const Text(
+                          'Marca automaticamente le ricette con dicitura DPC.',
+                          style: TextStyle(color: Colors.white70),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: <Widget>[
+                  ElevatedButton.icon(
+                    onPressed: isSaving ? null : _save,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.yellow,
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                    ),
+                    icon: const Icon(Icons.save),
+                    label: Text(
+                      isSaving ? 'Salvataggio...' : 'Salva impostazioni',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  if (message.isNotEmpty)
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: isErrorMessage ? AppColors.red : AppColors.green,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(
+                          message,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  InputDecoration _decoration(String hint) {
-    return InputDecoration(
-      hintText: hint,
-      hintStyle: const TextStyle(color: Colors.white54),
-      filled: true,
-      fillColor: const Color(0xFF151515),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: BorderSide.none,
+  Widget _input({
+    required TextEditingController controller,
+    required String hint,
+    TextInputType keyboardType = TextInputType.text,
+  }) {
+    return TextField(
+      controller: controller,
+      keyboardType: keyboardType,
+      style: const TextStyle(
+        color: Colors.white,
+        fontWeight: FontWeight.w600,
+      ),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(color: Colors.white54),
+        filled: true,
+        fillColor: const Color(0xFF151515),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: const BorderSide(color: Colors.white12),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: const BorderSide(color: AppColors.yellow, width: 1.4),
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide.none,
+        ),
       ),
     );
   }
