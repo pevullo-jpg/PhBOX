@@ -70,7 +70,6 @@ class IntakeToEntitiesService {
           exemptionCode: intake.exemptionCode.isEmpty
               ? existing?.exemptionCode
               : intake.exemptionCode,
-          activeTherapies: existing?.activeTherapies ?? const <String>[],
           archivedRecipeCount: (existing?.archivedRecipeCount ?? 0) + 1,
           hasDpc: (existing?.hasDpc ?? false) || intake.dpcFlag,
           hasAdvance: existing?.hasAdvance ?? false,
@@ -85,13 +84,12 @@ class IntakeToEntitiesService {
         await patientsRepository.savePatient(patient);
 
         final List<PrescriptionItem> items = intake.medicines.isEmpty
-            ? const <PrescriptionItem>[]
+            ? <PrescriptionItem>[]
             : intake.medicines
-                .map(
-                  (String e) => PrescriptionItem(
-                    drugName: e,
+                .map<PrescriptionItem>(
+                  (String medicine) => PrescriptionItem(
+                    drugName: medicine,
                     quantity: 1,
-                    note: 'Estratto da PDF',
                   ),
                 )
                 .toList();
@@ -113,7 +111,6 @@ class IntakeToEntitiesService {
             intake.prescriptionDate ?? DateTime.now(),
           ),
           dpcFlag: intake.dpcFlag,
-          sourceFileId: intake.driveFileId,
           sourceFileName: intake.fileName,
           notes: 'Import automatico da PDF Drive',
           items: items,
