@@ -1,3 +1,4 @@
+
 import 'package:flutter/material.dart';
 import 'features/dashboard/pages/dashboard_page.dart';
 import 'features/expiries/pages/expiries_page.dart';
@@ -12,7 +13,7 @@ class FarmaciaApp extends StatefulWidget {
 
 class _FarmaciaAppState extends State<FarmaciaApp> {
 
-  int index = 0;
+  int currentIndex = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -26,6 +27,7 @@ class _FarmaciaAppState extends State<FarmaciaApp> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       home: Scaffold(
+        backgroundColor: const Color(0xFF0A0A0A),
         body: Row(
           children: [
 
@@ -37,26 +39,51 @@ class _FarmaciaAppState extends State<FarmaciaApp> {
 
                   const SizedBox(height: 40),
 
+                  const Text(
+                    "Farmacia Desk",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+
+                  const SizedBox(height: 30),
+
                   ListTile(
-                    title: const Text("Dashboard"),
-                    onTap: () => setState(() => index = 0),
+                    title: const Text(
+                      "Dashboard",
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    onTap: () => setState(() => currentIndex = 0),
                   ),
 
                   ListTile(
-                    title: const Text("Scadenze"),
-                    onTap: () => setState(() => index = 1),
+                    title: const Text(
+                      "Scadenze",
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    onTap: () => setState(() => currentIndex = 1),
                   ),
 
                   ListTile(
-                    title: const Text("Impostazioni"),
-                    onTap: () => setState(() => index = 2),
+                    title: const Text(
+                      "Impostazioni",
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    onTap: () => setState(() => currentIndex = 2),
                   ),
 
                 ],
               ),
             ),
 
-            Expanded(child: pages[index])
+            Expanded(
+              child: Container(
+                color: const Color(0xFF0A0A0A),
+                child: pages[currentIndex],
+              ),
+            )
 
           ],
         ),
