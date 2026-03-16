@@ -131,7 +131,8 @@ class _SettingsPageState extends State<SettingsPage> {
         recentIntakes = intakes;
         googleAccountEmail = settings.connectedGoogleEmail;
         googleAccountName = settings.connectedGoogleDisplayName;
-        isGoogleConnected = settings.connectedGoogleEmail.isNotEmpty;
+        currentAccessToken = '';
+        isGoogleConnected = false;
       });
 
       await _restoreGoogleSessionIfPossible();
@@ -177,6 +178,54 @@ class _SettingsPageState extends State<SettingsPage> {
       await repository.saveSettings(updated);
       currentSettings = updated;
     } catch (_) {}
+  }
+
+
+  Future<String> _ensureGoogleAccessToken({
+    bool interactive = false,
+  }) async {
+    if (currentAccessToken.trim().isNotEmpty) {
+      return currentAccessToken.trim();
+    }
+
+    final GoogleAuthPrepResult? result =
+        await googleAuthPrepService.ensureDriveSession(
+      clientId: googleWebClientIdController.text.trim(),
+      interactive: interactive,
+    );
+
+    if (result == null || result.accessToken == null || result.accessToken!.trim().isEmpty) {
+      throw Exception(
+        interactive
+            ? "Impossibile completare la sessione Google Drive. Ricollega l'account."
+            : "Sessione Google Drive non valida. Premi prima “Verifica sessione” o ricollega l'account.",
+      );
+    }
+
+    final AppSettings updated = currentSettings.copyWith(
+      googleWebClientId: googleWebClientIdController.text.trim(),
+      connectedGoogleEmail: result.email,
+      connectedGoogleDisplayName: result.displayName ?? '',
+      updatedAt: DateTime.now(),
+    );
+    await repository.saveSettings(updated);
+    currentSettings = updated;
+
+    if (mounted) {
+      setState(() {
+        googleAccountEmail = result.email;
+        googleAccountName = result.displayName ?? '';
+        currentAccessToken = result.accessToken ?? '';
+        isGoogleConnected = true;
+      });
+    } else {
+      googleAccountEmail = result.email;
+      googleAccountName = result.displayName ?? '';
+      currentAccessToken = result.accessToken ?? '';
+      isGoogleConnected = true;
+    }
+
+    return currentAccessToken.trim();
   }
 
   Future<void> _save() async {
@@ -365,6 +414,8 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
+        currentAccessToken = '';
+        isGoogleConnected = false;
         message = 'Errore verifica sessione Google: $e';
         isErrorMessage = true;
       });
@@ -390,12 +441,10 @@ class _SettingsPageState extends State<SettingsPage> {
         throw Exception('Inserisci prima la cartella Drive PDF in ingresso.');
       }
 
-      if (currentAccessToken.isEmpty) {
-        throw Exception('Collega prima un account Google.');
-      }
+      final String accessToken = await _ensureGoogleAccessToken();
 
       final DrivePdfScannerService scanner = DrivePdfScannerService(
-        googleDriveService: GoogleDriveService(accessToken: currentAccessToken),
+        googleDriveService: GoogleDriveService(accessToken: accessToken),
         importsRepository: drivePdfImportsRepository,
       );
 
@@ -431,12 +480,10 @@ class _SettingsPageState extends State<SettingsPage> {
     });
 
     try {
-      if (currentAccessToken.isEmpty) {
-        throw Exception('Collega prima un account Google.');
-      }
+      final String accessToken = await _ensureGoogleAccessToken();
 
       final ImportedPdfProcessingService service = ImportedPdfProcessingService(
-        googleDriveService: GoogleDriveService(accessToken: currentAccessToken),
+        googleDriveService: GoogleDriveService(accessToken: accessToken),
         drivePdfImportsRepository: drivePdfImportsRepository,
         prescriptionIntakesRepository: prescriptionIntakesRepository,
         pdfTextExtractionService: const PdfTextExtractionService(),
@@ -574,7 +621,9 @@ class _SettingsPageState extends State<SettingsPage> {
                     Text(
                       googleAccountEmail.isEmpty
                           ? 'Nessun account collegato.'
-                          : 'Collegato: $googleAccountEmail',
+                          : isGoogleConnected
+                              ? 'Collegato: $googleAccountEmail'
+                              : 'Account salvato: $googleAccountEmail (sessione da verificare)',
                       style: const TextStyle(color: Colors.white70),
                     ),
                     if (googleAccountName.isNotEmpty)

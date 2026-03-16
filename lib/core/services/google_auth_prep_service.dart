@@ -77,6 +77,34 @@ class GoogleAuthPrepService {
     );
   }
 
+
+  Future<GoogleAuthPrepResult?> ensureDriveSession({
+    required String clientId,
+    bool interactive = false,
+  }) async {
+    if (clientId.trim().isEmpty) return null;
+
+    GoogleAuthPrepResult? result = await tryRestoreSession(
+      clientId: clientId,
+    );
+
+    if (result != null && (result.accessToken?.isNotEmpty ?? false)) {
+      return result;
+    }
+
+    if (!interactive) return result;
+
+    result = await signInForDriveRead(
+      clientId: clientId,
+    );
+
+    if (result.accessToken == null || result.accessToken!.isEmpty) {
+      throw Exception('Sessione Google attiva ma token Drive non disponibile. Riprova il collegamento.');
+    }
+
+    return result;
+  }
+
   Future<void> signOut({
     required String clientId,
   }) async {
