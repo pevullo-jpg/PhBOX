@@ -17,7 +17,8 @@ class GoogleAuthPrepResult {
 class GoogleAuthPrepService {
   static const List<String> scopes = <String>[
     'email',
-    'https://www.googleapis.com/auth/drive.readonly',
+    'https://www.googleapis.com/auth/drive',
+    'https://www.googleapis.com/auth/gmail.modify',
   ];
 
   GoogleSignIn _buildSignIn(String clientId) {
@@ -44,7 +45,7 @@ class GoogleAuthPrepService {
     final bool scopesGranted = await googleSignIn.requestScopes(scopes);
 
     if (!scopesGranted) {
-      throw Exception('Permessi Drive non concessi.');
+      throw Exception('Permessi Google Drive/Gmail non concessi.');
     }
 
     final GoogleSignInAuthentication auth = await account.authentication;

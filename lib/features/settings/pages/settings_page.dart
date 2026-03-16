@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../../../core/services/drive_pdf_scanner_service.dart';
+import '../../../core/services/email_prescription_scan_service.dart';
+import '../../../core/services/gmail_service.dart';
 import '../../../core/services/google_auth_prep_service.dart';
 import '../../../core/services/google_drive_service.dart';
 import '../../../core/services/imported_pdf_processing_service.dart';
@@ -47,8 +49,16 @@ class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController extensionsController = TextEditingController();
   final TextEditingController expiryWarningController = TextEditingController();
   final TextEditingController scanIntervalController = TextEditingController();
+  final TextEditingController emailProcessedLabelController =
+      TextEditingController();
+  final TextEditingController emailIgnoredLabelController =
+      TextEditingController();
+  final TextEditingController emailQueryController = TextEditingController();
+  final TextEditingController emailMaxResultsController = TextEditingController();
 
   bool autoScanEnabled = false;
+  bool emailScanEnabled = false;
+  bool emailTrashProcessedMessages = true;
   bool autoMergeByPatient = true;
   bool autoDetectDpc = true;
 
@@ -59,6 +69,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool isGoogleConnected = false;
   bool isProcessingImports = false;
   bool isImportingIntoApp = false;
+  bool isScanningEmail = false;
 
   String message = '';
   bool isErrorMessage = false;
@@ -103,6 +114,10 @@ class _SettingsPageState extends State<SettingsPage> {
     extensionsController.dispose();
     expiryWarningController.dispose();
     scanIntervalController.dispose();
+    emailProcessedLabelController.dispose();
+    emailIgnoredLabelController.dispose();
+    emailQueryController.dispose();
+    emailMaxResultsController.dispose();
     super.dispose();
   }
 
@@ -133,7 +148,13 @@ class _SettingsPageState extends State<SettingsPage> {
         extensionsController.text = settings.acceptedExtensions.join(', ');
         expiryWarningController.text = settings.expiryWarningDays.toString();
         scanIntervalController.text = settings.scanIntervalMinutes.toString();
+        emailProcessedLabelController.text = settings.emailProcessedLabel;
+        emailIgnoredLabelController.text = settings.emailIgnoredLabel;
+        emailQueryController.text = settings.emailScanQuery;
+        emailMaxResultsController.text = settings.emailMaxResults.toString();
         autoScanEnabled = settings.autoScanEnabled;
+        emailScanEnabled = settings.emailScanEnabled;
+        emailTrashProcessedMessages = settings.emailTrashProcessedMessages;
         autoMergeByPatient = settings.autoMergeByPatient;
         autoDetectDpc = settings.autoDetectDpc;
         recentImports = imports;
@@ -269,6 +290,19 @@ class _SettingsPageState extends State<SettingsPage> {
             int.tryParse(expiryWarningController.text.trim()) ?? 7,
         scanIntervalMinutes:
             int.tryParse(scanIntervalController.text.trim()) ?? 30,
+        emailScanEnabled: emailScanEnabled,
+        emailTrashProcessedMessages: emailTrashProcessedMessages,
+        emailProcessedLabel: emailProcessedLabelController.text.trim().isEmpty
+            ? 'PhBOX Processed'
+            : emailProcessedLabelController.text.trim(),
+        emailIgnoredLabel: emailIgnoredLabelController.text.trim().isEmpty
+            ? 'PhBOX Ignored'
+            : emailIgnoredLabelController.text.trim(),
+        emailScanQuery: emailQueryController.text.trim().isEmpty
+            ? 'in:inbox has:attachment'
+            : emailQueryController.text.trim(),
+        emailMaxResults:
+            int.tryParse(emailMaxResultsController.text.trim()) ?? 25,
         updatedAt: DateTime.now(),
       );
 
@@ -575,6 +609,197 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+
+  Future<void> _scanEmailNow() async {
+    setState(() {
+      isScanningEmail = true;
+      message = '';
+      isErrorMessage = false;
+    });
+
+    try {
+      if (!emailScanEnabled) {
+        throw Exception('Attiva prima la scansione email nelle impostazioni.');
+      }
+
+      final String folderId = incomingPdfController.text.trim();
+      if (folderId.isEmpty) {
+        throw Exception('Inserisci prima la cartella Drive PDF in ingresso.');
+      }
+
+      final String accessToken = await _ensureGoogleAccessToken(interactive: true);
+
+      final EmailPrescriptionScanService service = EmailPrescriptionScanService(
+        gmailService: GmailService(accessToken: accessToken),
+        googleDriveService: GoogleDriveService(accessToken: accessToken),
+        drivePdfImportsRepository: drivePdfImportsRepository,
+        parserReferenceValuesRepository: parserReferenceValuesRepository,
+        pdfTextExtractionService: const PdfTextExtractionService(),
+        prescriptionPdfParserService: const PrescriptionPdfParserService(),
+      );
+
+      final EmailPrescriptionScanResult result = await service.scan(
+        incomingDriveFolderId: folderId,
+        processedLabelName: emailProcessedLabelController.text.trim().isEmpty
+            ? 'PhBOX Processed'
+            : emailProcessedLabelController.text.trim(),
+        ignoredLabelName: emailIgnoredLabelController.text.trim().isEmpty
+            ? 'PhBOX Ignored'
+            : emailIgnoredLabelController.text.trim(),
+        query: emailQueryController.text.trim(),
+        maxResults: int.tryParse(emailMaxResultsController.text.trim()) ?? 25,
+        trashEmailsWithPrescriptions: emailTrashProcessedMessages,
+      );
+
+      final List<DrivePdfImport> imports =
+          await drivePdfImportsRepository.getAllImports();
+
+      if (!mounted) return;
+      setState(() {
+        recentImports = imports;
+        message = 'Email lette: ${result.scannedMessages}. PDF salvati: ${result.uploadedPdfs}. Cestino: ${result.trashedMessages}. Etichettate: ${result.ignoredMessages}. Errori: ${result.errorCount}.';
+        isErrorMessage = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        message = 'Errore scansione email: $e';
+        isErrorMessage = true;
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        isScanningEmail = false;
+      });
+    }
+  }
+
+  Widget _emailSection() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.panel,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            'Email',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            "Legge la Gmail dell'account collegato, salva le ricette PDF nella cartella Drive in ingresso, etichetta le email già gestite e non le rianalizza.",
+            style: TextStyle(color: Colors.white70),
+          ),
+          const SizedBox(height: 16),
+          Theme(
+            data: Theme.of(context).copyWith(
+              unselectedWidgetColor: Colors.white54,
+              switchTheme: const SwitchThemeData(
+                thumbColor: WidgetStatePropertyAll(AppColors.yellow),
+                trackColor: WidgetStatePropertyAll(Color(0xFF3A3A3A)),
+              ),
+            ),
+            child: Column(
+              children: <Widget>[
+                SwitchListTile(
+                  activeColor: AppColors.yellow,
+                  value: emailScanEnabled,
+                  onChanged: (bool value) => setState(() => emailScanEnabled = value),
+                  title: const Text('Scansione Gmail attiva', style: TextStyle(color: Colors.white)),
+                  subtitle: const Text('Usa la Gmail dello stesso account Google collegato.', style: TextStyle(color: Colors.white70)),
+                ),
+                SwitchListTile(
+                  activeColor: AppColors.yellow,
+                  value: emailTrashProcessedMessages,
+                  onChanged: (bool value) => setState(() => emailTrashProcessedMessages = value),
+                  title: const Text('Sposta nel cestino le email con ricette', style: TextStyle(color: Colors.white)),
+                  subtitle: const Text('Dopo il salvataggio su Drive le email con ricette vengono cestinate.', style: TextStyle(color: Colors.white70)),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: SettingsFieldCard(
+                  title: 'Etichetta email processate',
+                  subtitle: 'Le email con almeno una ricetta valida ricevono questa etichetta.',
+                  child: _input(
+                    controller: emailProcessedLabelController,
+                    hint: 'PhBOX Processed',
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: SettingsFieldCard(
+                  title: 'Etichetta email ignorate',
+                  subtitle: 'Le email senza ricette valide ricevono questa etichetta.',
+                  child: _input(
+                    controller: emailIgnoredLabelController,
+                    hint: 'PhBOX Ignored',
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: SettingsFieldCard(
+                  title: 'Filtro Gmail',
+                  subtitle: 'Query Gmail. Esempio: in:inbox has:attachment newer_than:30d',
+                  child: _input(
+                    controller: emailQueryController,
+                    hint: 'in:inbox has:attachment',
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              SizedBox(
+                width: 180,
+                child: SettingsFieldCard(
+                  title: 'Max email',
+                  subtitle: 'Quante email analizzare per scansione.',
+                  child: _input(
+                    controller: emailMaxResultsController,
+                    hint: '25',
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: isScanningEmail ? null : _scanEmailNow,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.coral,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            ),
+            icon: const Icon(Icons.mail_outline),
+            label: Text(
+              isScanningEmail ? 'Scansione email...' : 'Scansiona Gmail ora',
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
@@ -624,7 +849,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     const Text(
-                      'Account Google Drive',
+                      'Account Google',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 22,
@@ -662,7 +887,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           ),
                           icon: const Icon(Icons.login),
                           label: Text(
-                            isGoogleLoading ? 'Connessione...' : 'Collega account Google',
+                            isGoogleLoading ? 'Connessione...' : 'Collega/Rinnova account Google',
                             style: const TextStyle(fontWeight: FontWeight.w800),
                           ),
                         ),
@@ -680,7 +905,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           ),
                         ),
                         ElevatedButton.icon(
-                          onPressed: isGoogleLoading || !isGoogleConnected
+                          onPressed: isGoogleLoading || (googleAccountEmail.isEmpty && !isGoogleConnected)
                               ? null
                               : _disconnectGoogle,
                           style: ElevatedButton.styleFrom(
@@ -690,7 +915,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           ),
                           icon: const Icon(Icons.logout),
                           label: const Text(
-                            'Cambia account',
+                            'Logout account',
                             style: TextStyle(fontWeight: FontWeight.w800),
                           ),
                         ),
@@ -835,6 +1060,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ),
               const SizedBox(height: 20),
+              _emailSection(),
+              const SizedBox(height: 20),
               Wrap(
                 spacing: 12,
                 runSpacing: 12,
@@ -862,6 +1089,19 @@ class _SettingsPageState extends State<SettingsPage> {
                     icon: const Icon(Icons.search),
                     label: Text(
                       isScanningDrive ? 'Scansione...' : 'Scansiona Drive ora',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: isScanningEmail ? null : _scanEmailNow,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.panelSoft,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                    ),
+                    icon: const Icon(Icons.mail_outline),
+                    label: Text(
+                      isScanningEmail ? 'Email...' : 'Scansiona Gmail ora',
                       style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
                   ),

@@ -12,6 +12,12 @@ class AppSettings {
   final List<String> acceptedExtensions;
   final int expiryWarningDays;
   final int scanIntervalMinutes;
+  final bool emailScanEnabled;
+  final bool emailTrashProcessedMessages;
+  final String emailProcessedLabel;
+  final String emailIgnoredLabel;
+  final String emailScanQuery;
+  final int emailMaxResults;
   final DateTime updatedAt;
 
   const AppSettings({
@@ -28,6 +34,12 @@ class AppSettings {
     this.acceptedExtensions = const <String>['pdf', 'jpg', 'png'],
     this.expiryWarningDays = 7,
     this.scanIntervalMinutes = 30,
+    this.emailScanEnabled = false,
+    this.emailTrashProcessedMessages = true,
+    this.emailProcessedLabel = 'PhBOX Processed',
+    this.emailIgnoredLabel = 'PhBOX Ignored',
+    this.emailScanQuery = 'in:inbox has:attachment',
+    this.emailMaxResults = 25,
     required this.updatedAt,
   });
 
@@ -45,6 +57,12 @@ class AppSettings {
     List<String>? acceptedExtensions,
     int? expiryWarningDays,
     int? scanIntervalMinutes,
+    bool? emailScanEnabled,
+    bool? emailTrashProcessedMessages,
+    String? emailProcessedLabel,
+    String? emailIgnoredLabel,
+    String? emailScanQuery,
+    int? emailMaxResults,
     DateTime? updatedAt,
   }) {
     return AppSettings(
@@ -66,6 +84,13 @@ class AppSettings {
       acceptedExtensions: acceptedExtensions ?? this.acceptedExtensions,
       expiryWarningDays: expiryWarningDays ?? this.expiryWarningDays,
       scanIntervalMinutes: scanIntervalMinutes ?? this.scanIntervalMinutes,
+      emailScanEnabled: emailScanEnabled ?? this.emailScanEnabled,
+      emailTrashProcessedMessages:
+          emailTrashProcessedMessages ?? this.emailTrashProcessedMessages,
+      emailProcessedLabel: emailProcessedLabel ?? this.emailProcessedLabel,
+      emailIgnoredLabel: emailIgnoredLabel ?? this.emailIgnoredLabel,
+      emailScanQuery: emailScanQuery ?? this.emailScanQuery,
+      emailMaxResults: emailMaxResults ?? this.emailMaxResults,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -85,6 +110,12 @@ class AppSettings {
       'acceptedExtensions': acceptedExtensions,
       'expiryWarningDays': expiryWarningDays,
       'scanIntervalMinutes': scanIntervalMinutes,
+      'emailScanEnabled': emailScanEnabled,
+      'emailTrashProcessedMessages': emailTrashProcessedMessages,
+      'emailProcessedLabel': emailProcessedLabel,
+      'emailIgnoredLabel': emailIgnoredLabel,
+      'emailScanQuery': emailScanQuery,
+      'emailMaxResults': emailMaxResults,
       'updatedAt': updatedAt.toIso8601String(),
     };
   }
@@ -110,6 +141,16 @@ class AppSettings {
       ),
       expiryWarningDays: (map['expiryWarningDays'] ?? 7) as int,
       scanIntervalMinutes: (map['scanIntervalMinutes'] ?? 30) as int,
+      emailScanEnabled: (map['emailScanEnabled'] ?? false) as bool,
+      emailTrashProcessedMessages:
+          (map['emailTrashProcessedMessages'] ?? true) as bool,
+      emailProcessedLabel:
+          (map['emailProcessedLabel'] ?? 'PhBOX Processed') as String,
+      emailIgnoredLabel:
+          (map['emailIgnoredLabel'] ?? 'PhBOX Ignored') as String,
+      emailScanQuery:
+          (map['emailScanQuery'] ?? 'in:inbox has:attachment') as String,
+      emailMaxResults: (map['emailMaxResults'] ?? 25) as int,
       updatedAt: _readDate(map['updatedAt']) ?? DateTime.now(),
     );
   }

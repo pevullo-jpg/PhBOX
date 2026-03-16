@@ -94,4 +94,55 @@ class GoogleDriveService {
 
     return response.bodyBytes;
   }
+
+
+  Future<String> uploadPdfBytes({
+    required String fileName,
+    required Uint8List bytes,
+    required String parentFolderId,
+  }) async {
+    final String boundary = 'phbox_upload_boundary';
+    final Uri url = Uri.parse(
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+    );
+
+    final Map<String, dynamic> metadata = <String, dynamic>{
+      'name': fileName,
+      'parents': <String>[parentFolderId],
+      'mimeType': 'application/pdf',
+    };
+
+    final List<int> body = <int>[]
+      ..addAll(utf8.encode('--$boundary\r\n'))
+      ..addAll(utf8.encode('Content-Type: application/json; charset=UTF-8\r\n\r\n'))
+      ..addAll(utf8.encode(jsonEncode(metadata)))
+      ..addAll(utf8.encode('\r\n--$boundary\r\n'))
+      ..addAll(utf8.encode('Content-Type: application/pdf\r\n\r\n'))
+      ..addAll(bytes)
+      ..addAll(utf8.encode('\r\n--$boundary--'));
+
+    final http.Response response = await http.post(
+      url,
+      headers: <String, String>{
+        'Authorization': 'Bearer $accessToken',
+        'Content-Type': 'multipart/related; boundary=$boundary',
+      },
+      body: body,
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        'Errore upload PDF Drive: ${response.statusCode} ${response.body}',
+      );
+    }
+
+    final Map<String, dynamic> data =
+        jsonDecode(response.body) as Map<String, dynamic>;
+    final String fileId = (data['id'] ?? '') as String;
+    if (fileId.isEmpty) {
+      throw Exception('Upload Drive completato ma fileId assente.');
+    }
+    return fileId;
+  }
+
 }
