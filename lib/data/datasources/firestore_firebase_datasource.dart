@@ -38,6 +38,15 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     return snapshot.docs.map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => doc.data()).toList();
   }
 
+
+  @override
+  Future<void> deleteDocument({
+    required String collectionPath,
+    required String documentId,
+  }) {
+    return firestore.collection(collectionPath).doc(documentId).delete();
+  }
+
   @override
   Future<void> setSubDocument({
     required String collectionPath,

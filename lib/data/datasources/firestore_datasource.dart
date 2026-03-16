@@ -16,6 +16,11 @@ abstract class FirestoreDatasource {
     bool descending = false,
   });
 
+  Future<void> deleteDocument({
+    required String collectionPath,
+    required String documentId,
+  });
+
   Future<void> setSubDocument({
     required String collectionPath,
     required String documentId,

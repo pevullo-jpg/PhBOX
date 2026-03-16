@@ -23,4 +23,11 @@ class ParserReferenceValuesRepository {
     );
     return maps.map(ParserReferenceValue.fromMap).toList();
   }
+
+  Future<void> deleteReference(String id) {
+    return datasource.deleteDocument(
+      collectionPath: AppCollections.parserReferenceValues,
+      documentId: id,
+    );
+  }
 }

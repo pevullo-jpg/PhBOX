@@ -1096,6 +1096,77 @@ class _SettingsPageState extends State<SettingsPage> {
     });
   }
 
+  Future<void> _showAddReferenceDialog(String type) async {
+    final TextEditingController controller = TextEditingController();
+    final bool? saved = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: AppColors.panel,
+          title: Text(
+            'Nuovo riferimento ${_referenceTypeLabel(type)}',
+            style: const TextStyle(color: Colors.white),
+          ),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              labelText: _referenceTypeLabel(type),
+              labelStyle: const TextStyle(color: Colors.white70),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Annulla'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Salva'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (saved != true) return;
+    await _saveReferenceValue(type, controller.text);
+    final List<ParserReferenceValue> references =
+        await parserReferenceValuesRepository.getAllReferences();
+    if (!mounted) return;
+    setState(() {
+      parserReferences = references;
+      message = 'Riferimento salvato.';
+      isErrorMessage = false;
+    });
+  }
+
+  Future<void> _deleteReferenceValue(ParserReferenceValue item) async {
+    await parserReferenceValuesRepository.deleteReference(item.id);
+    final List<ParserReferenceValue> references =
+        await parserReferenceValuesRepository.getAllReferences();
+    if (!mounted) return;
+    setState(() {
+      parserReferences = references;
+      message = 'Riferimento rimosso.';
+      isErrorMessage = false;
+    });
+  }
+
+  String _referenceTypeLabel(String type) {
+    switch (type) {
+      case 'patient':
+        return 'Assistito';
+      case 'doctor':
+        return 'Medico';
+      case 'city':
+        return 'Città';
+      default:
+        return type;
+    }
+  }
+
   Widget _learningSection() {
     final List<ParserReferenceValue> patients =
         parserReferences.where((ParserReferenceValue item) => item.type == 'patient').toList();
@@ -1104,34 +1175,66 @@ class _SettingsPageState extends State<SettingsPage> {
     final List<ParserReferenceValue> cities =
         parserReferences.where((ParserReferenceValue item) => item.type == 'city').toList();
 
-    Widget block(String title, List<ParserReferenceValue> values) {
-      return Expanded(
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: AppColors.panelSoft,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
-                '$title (${values.length})',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w800,
+    Widget block({
+      required String title,
+      required String type,
+      required List<ParserReferenceValue> values,
+    }) {
+      return Container(
+        width: 320,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.panelSoft,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    '$title (${values.length})',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Aggiungi',
+                  onPressed: () => _showAddReferenceDialog(type),
+                  icon: const Icon(Icons.add, color: AppColors.yellow),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            if (values.isEmpty)
+              const Text('Nessun riferimento salvato.', style: TextStyle(color: Colors.white54))
+            else
+              ...values.take(15).map(
+                (ParserReferenceValue item) => Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(item.value, style: const TextStyle(color: Colors.white70)),
+                      ),
+                      IconButton(
+                        tooltip: 'Rimuovi',
+                        onPressed: () => _deleteReferenceValue(item),
+                        icon: const Icon(Icons.delete_outline, color: Colors.white54, size: 18),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 10),
-              if (values.isEmpty)
-                const Text('Nessun riferimento salvato.', style: TextStyle(color: Colors.white54))
-              else
-                ...values.take(12).map((ParserReferenceValue item) => Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: Text('• ${item.value}', style: const TextStyle(color: Colors.white70)),
-                    )),
-            ],
-          ),
+          ],
         ),
       );
     }
@@ -1157,18 +1260,17 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Ogni correzione salvata nelle intake aggiorna questi riferimenti. Il pulsante "Correggi e insegna" alimenta le prossime estrazioni.',
+            'Qui gestisci i riferimenti che guidano le estrazioni future. Puoi aggiungerli a mano, salvarli da una correzione intake o rimuoverli.',
             style: TextStyle(color: Colors.white70),
           ),
           const SizedBox(height: 14),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
             children: <Widget>[
-              block('Assistiti', patients),
-              const SizedBox(width: 12),
-              block('Medici', doctors),
-              const SizedBox(width: 12),
-              block('Città', cities),
+              block(title: 'Assistiti', type: 'patient', values: patients),
+              block(title: 'Medici', type: 'doctor', values: doctors),
+              block(title: 'Città', type: 'city', values: cities),
             ],
           ),
         ],
