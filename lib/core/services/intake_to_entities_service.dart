@@ -59,9 +59,6 @@ class IntakeToEntitiesService {
         final Patient? existing =
             await patientsRepository.getPatientByFiscalCode(intake.fiscalCode);
 
-        final DateTime now = DateTime.now();
-        final DateTime prescriptionDate = intake.prescriptionDate ?? now;
-
         final Patient patient = Patient(
           fiscalCode: intake.fiscalCode,
           fullName: intake.patientName.isEmpty
@@ -79,9 +76,9 @@ class IntakeToEntitiesService {
           hasDebt: existing?.hasDebt ?? false,
           hasBooking: existing?.hasBooking ?? false,
           debtTotal: existing?.debtTotal ?? 0,
-          lastPrescriptionDate: prescriptionDate,
-          updatedAt: now,
-          createdAt: existing?.createdAt ?? now,
+          lastPrescriptionDate: intake.prescriptionDate,
+          updatedAt: DateTime.now(),
+          createdAt: existing?.createdAt ?? DateTime.now(),
         );
 
         await patientsRepository.savePatient(patient);
@@ -90,8 +87,8 @@ class IntakeToEntitiesService {
             ? <PrescriptionItem>[]
             : intake.medicines
                 .map<PrescriptionItem>(
-                  (String medicine) => PrescriptionItem(
-                    drugName: medicine,
+                  (String e) => PrescriptionItem(
+                    drugName: e,
                     quantity: 1,
                   ),
                 )
@@ -100,18 +97,21 @@ class IntakeToEntitiesService {
         final String prescriptionId =
             '${intake.fiscalCode}_${intake.driveFileId}';
 
+        final DateTime now = DateTime.now();
+        final DateTime prescriptionDate = intake.prescriptionDate ?? now;
+
         final Prescription prescription = Prescription(
           id: prescriptionId,
           patientFiscalCode: intake.fiscalCode,
           patientName: patient.fullName,
-          prescriptionDate: prescriptionDate,
-          expiryDate: _computeExpiryDate(prescriptionDate),
           doctorName:
               intake.doctorName.isEmpty ? patient.doctorName : intake.doctorName,
           exemptionCode: intake.exemptionCode.isEmpty
               ? patient.exemptionCode
               : intake.exemptionCode,
           city: intake.city.isEmpty ? patient.city : intake.city,
+          prescriptionDate: prescriptionDate,
+          expiryDate: _computeExpiryDate(prescriptionDate),
           dpcFlag: intake.dpcFlag,
           sourceType: 'drive_import',
           extractedText: intake.rawText,
