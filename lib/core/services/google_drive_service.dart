@@ -70,6 +70,10 @@ class GoogleDriveService {
         .toList();
   }
 
+  static String buildFileViewUrl(String fileId) {
+    return 'https://drive.google.com/file/d/$fileId/view';
+  }
+
   Future<Uint8List> downloadPdfBytes(String fileId) async {
     final Uri url = Uri.parse(
       'https://www.googleapis.com/drive/v3/files/$fileId?alt=media',

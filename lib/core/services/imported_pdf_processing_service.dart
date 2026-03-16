@@ -1,6 +1,8 @@
 import '../../data/models/drive_pdf_import.dart';
+import '../../data/models/parser_reference_value.dart';
 import '../../data/models/prescription_intake.dart';
 import '../../data/repositories/drive_pdf_imports_repository.dart';
+import '../../data/repositories/parser_reference_values_repository.dart';
 import '../../data/repositories/prescription_intakes_repository.dart';
 import 'google_drive_service.dart';
 import 'pdf_text_extraction_service.dart';
@@ -22,6 +24,7 @@ class ImportedPdfProcessingService {
   final PrescriptionIntakesRepository prescriptionIntakesRepository;
   final PdfTextExtractionService pdfTextExtractionService;
   final PrescriptionPdfParserService prescriptionPdfParserService;
+  final ParserReferenceValuesRepository parserReferenceValuesRepository;
 
   const ImportedPdfProcessingService({
     required this.googleDriveService,
@@ -29,11 +32,14 @@ class ImportedPdfProcessingService {
     required this.prescriptionIntakesRepository,
     required this.pdfTextExtractionService,
     required this.prescriptionPdfParserService,
+    required this.parserReferenceValuesRepository,
   });
 
   Future<ImportedPdfProcessingResult> processPendingImports() async {
     final List<DrivePdfImport> imports =
         await drivePdfImportsRepository.getAllImports();
+    final PrescriptionParserReferenceSet references =
+        await _loadReferenceSet();
 
     int processed = 0;
     int failed = 0;
@@ -52,8 +58,11 @@ class ImportedPdfProcessingService {
 
         final bytes = await googleDriveService.downloadPdfBytes(item.driveFileId);
         final String text = pdfTextExtractionService.extractText(bytes);
-        final ParsedPrescriptionData parsed =
-            prescriptionPdfParserService.parse(text, fileName: item.fileName);
+        final ParsedPrescriptionData parsed = prescriptionPdfParserService.parse(
+          text,
+          fileName: item.fileName,
+          references: references,
+        );
 
         final PrescriptionIntake intake = PrescriptionIntake(
           id: item.driveFileId,
@@ -99,6 +108,25 @@ class ImportedPdfProcessingService {
     return ImportedPdfProcessingResult(
       processedCount: processed,
       failedCount: failed,
+    );
+  }
+
+  Future<PrescriptionParserReferenceSet> _loadReferenceSet() async {
+    final List<ParserReferenceValue> values =
+        await parserReferenceValuesRepository.getAllReferences();
+    return PrescriptionParserReferenceSet(
+      patientNames: values
+          .where((ParserReferenceValue item) => item.type == 'patient')
+          .map((ParserReferenceValue item) => item.value)
+          .toList(),
+      doctorNames: values
+          .where((ParserReferenceValue item) => item.type == 'doctor')
+          .map((ParserReferenceValue item) => item.value)
+          .toList(),
+      cities: values
+          .where((ParserReferenceValue item) => item.type == 'city')
+          .map((ParserReferenceValue item) => item.value)
+          .toList(),
     );
   }
 }

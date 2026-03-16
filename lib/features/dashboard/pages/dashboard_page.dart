@@ -11,10 +11,12 @@ import '../../../data/models/booking.dart';
 import '../../../data/models/debt.dart';
 import '../../../data/models/patient.dart';
 import '../../../data/models/prescription.dart';
+import '../../../data/models/prescription_intake.dart';
 import '../../../data/repositories/advances_repository.dart';
 import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
+import '../../../data/repositories/prescription_intakes_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../shared/widgets/filter_chip_widget.dart';
 import '../../../shared/widgets/header_bar.dart';
@@ -22,6 +24,8 @@ import '../../../shared/widgets/stat_card.dart';
 import '../../../shared/widgets/status_badge.dart';
 import '../../../shared/widgets/table_header.dart';
 import '../../../theme/app_theme.dart';
+import '../../../core/services/google_drive_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../patients/pages/patient_detail_page.dart';
 
 class DashboardPage extends StatefulWidget {
@@ -47,6 +51,7 @@ class _DashboardPageState extends State<DashboardPage> {
   late final DebtsRepository debtsRepository;
   late final BookingsRepository bookingsRepository;
   late final PrescriptionsRepository prescriptionsRepository;
+  late final PrescriptionIntakesRepository prescriptionIntakesRepository;
 
   @override
   void initState() {
@@ -62,6 +67,7 @@ class _DashboardPageState extends State<DashboardPage> {
       datasource: datasource,
       patientsRepository: patientsRepository,
     );
+    prescriptionIntakesRepository = PrescriptionIntakesRepository(datasource: datasource);
   }
 
   @override
@@ -134,12 +140,81 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  Future<void> _openDrivePdf(String driveFileId) async {
+    final Uri uri = Uri.parse(GoogleDriveService.buildFileViewUrl(driveFileId));
+    await launchUrl(uri, webOnlyWindowName: '_blank');
+  }
+
+  Widget _buildRecentPdfSection(List<PrescriptionIntake> intakes) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.panel,
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            'PDF recenti',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (intakes.isEmpty)
+            const Text('Nessun PDF ancora elaborato.', style: TextStyle(color: Colors.white70))
+          else
+            ...intakes.take(8).map((PrescriptionIntake item) {
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.panelSoft,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  children: <Widget>[
+                    const Icon(Icons.picture_as_pdf, color: AppColors.coral),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(item.fileName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${item.patientName.isEmpty ? 'Assistito non riconosciuto' : item.patientName} • ${item.doctorName.isEmpty ? 'medico non riconosciuto' : item.doctorName}',
+                            style: const TextStyle(color: Colors.white70),
+                          ),
+                        ],
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => _openDrivePdf(item.driveFileId),
+                      icon: const Icon(Icons.open_in_new, size: 16),
+                      label: const Text('Apri PDF'),
+                    ),
+                  ],
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<Patient>>(
-      future: patientsRepository.getAllPatients(),
-      builder: (BuildContext context, AsyncSnapshot<List<Patient>> snapshot) {
-        final List<Patient> patients = snapshot.data ?? const <Patient>[];
+    return FutureBuilder<_DashboardData>(
+      future: _loadDashboardData(),
+      builder: (BuildContext context, AsyncSnapshot<_DashboardData> snapshot) {
+        final List<Patient> patients = snapshot.data?.patients ?? const <Patient>[];
+        final List<PrescriptionIntake> recentPdfIntakes = snapshot.data?.intakes ?? const <PrescriptionIntake>[];
         final List<Patient> filteredPatients = applyFilters(patients);
         final double totalDebts =
             patients.fold<double>(0, (double sum, Patient p) => sum + p.debtTotal);
@@ -320,6 +395,8 @@ class _DashboardPageState extends State<DashboardPage> {
                                   ),
                                 ),
                                 const SizedBox(height: 20),
+                                _buildRecentPdfSection(recentPdfIntakes),
+                                const SizedBox(height: 20),
                                 Container(
                                   width: double.infinity,
                                   padding: const EdgeInsets.all(20),
@@ -450,6 +527,22 @@ class _DashboardPageState extends State<DashboardPage> {
       },
     );
   }
+
+  Future<_DashboardData> _loadDashboardData() async {
+    final List<Patient> patients = await patientsRepository.getAllPatients();
+    final List<PrescriptionIntake> intakes = await prescriptionIntakesRepository.getAllIntakes();
+    return _DashboardData(patients: patients, intakes: intakes);
+  }
+}
+
+class _DashboardData {
+  final List<Patient> patients;
+  final List<PrescriptionIntake> intakes;
+
+  const _DashboardData({
+    required this.patients,
+    required this.intakes,
+  });
 }
 
 const TextStyle _rowStyle =

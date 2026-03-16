@@ -7,4 +7,5 @@ class AppCollections {
   static const String appSettings = 'app_settings';
   static const String drivePdfImports = 'drive_pdf_imports';
   static const String prescriptionIntakes = 'prescription_intakes';
+  static const String parserReferenceValues = 'parser_reference_values';
 }

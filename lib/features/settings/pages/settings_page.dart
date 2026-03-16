@@ -11,13 +11,16 @@ import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/app_settings.dart';
 import '../../../data/models/drive_pdf_import.dart';
 import '../../../data/models/prescription_intake.dart';
+import '../../../data/models/parser_reference_value.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
+import '../../../data/repositories/parser_reference_values_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescription_intakes_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../shared/widgets/settings_field_card.dart';
 import '../../../theme/app_theme.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -30,6 +33,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late final SettingsRepository repository;
   late final DrivePdfImportsRepository drivePdfImportsRepository;
   late final PrescriptionIntakesRepository prescriptionIntakesRepository;
+  late final ParserReferenceValuesRepository parserReferenceValuesRepository;
   late final PatientsRepository patientsRepository;
   late final PrescriptionsRepository prescriptionsRepository;
   late final GoogleAuthPrepService googleAuthPrepService;
@@ -77,6 +81,8 @@ class _SettingsPageState extends State<SettingsPage> {
     drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
     prescriptionIntakesRepository =
         PrescriptionIntakesRepository(datasource: datasource);
+    parserReferenceValuesRepository =
+        ParserReferenceValuesRepository(datasource: datasource);
     patientsRepository = PatientsRepository(datasource: datasource);
     prescriptionsRepository = PrescriptionsRepository(
       datasource: datasource,
@@ -488,6 +494,7 @@ class _SettingsPageState extends State<SettingsPage> {
         prescriptionIntakesRepository: prescriptionIntakesRepository,
         pdfTextExtractionService: const PdfTextExtractionService(),
         prescriptionPdfParserService: const PrescriptionPdfParserService(),
+        parserReferenceValuesRepository: parserReferenceValuesRepository,
       );
 
       final ImportedPdfProcessingResult result =
@@ -983,6 +990,100 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Future<void> _openDrivePdf(String driveFileId) async {
+    final Uri uri = Uri.parse(GoogleDriveService.buildFileViewUrl(driveFileId));
+    await launchUrl(uri, webOnlyWindowName: '_blank');
+  }
+
+  String _normalizeReferenceId(String type, String value) {
+    final String normalized = value.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9À-ÖØ-Ý]'), '');
+    return '${type}_$normalized';
+  }
+
+  Future<void> _saveReferenceValue(String type, String value) async {
+    final String cleaned = value.trim();
+    if (cleaned.isEmpty) return;
+    final DateTime now = DateTime.now();
+    await parserReferenceValuesRepository.saveReference(
+      ParserReferenceValue(
+        id: _normalizeReferenceId(type, cleaned),
+        type: type,
+        value: cleaned,
+        normalizedValue: cleaned.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9À-ÖØ-Ý]'), ''),
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+  }
+
+  Future<void> _editIntake(PrescriptionIntake item) async {
+    final TextEditingController patientController = TextEditingController(text: item.patientName);
+    final TextEditingController doctorController = TextEditingController(text: item.doctorName);
+    final TextEditingController cityController = TextEditingController(text: item.city);
+    final TextEditingController medicinesController = TextEditingController(text: item.medicines.join('\n'));
+
+    final bool? saved = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: AppColors.panel,
+          title: const Text('Correggi estrazione', style: TextStyle(color: Colors.white)),
+          content: SizedBox(
+            width: 560,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  TextField(controller: patientController, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Assistito', labelStyle: TextStyle(color: Colors.white70))),
+                  const SizedBox(height: 12),
+                  TextField(controller: doctorController, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Medico', labelStyle: TextStyle(color: Colors.white70))),
+                  const SizedBox(height: 12),
+                  TextField(controller: cityController, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Città', labelStyle: TextStyle(color: Colors.white70))),
+                  const SizedBox(height: 12),
+                  TextField(controller: medicinesController, minLines: 3, maxLines: 8, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Terapie / un farmaco per riga', labelStyle: TextStyle(color: Colors.white70))),
+                ],
+              ),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Annulla')),
+            ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Salva')),
+          ],
+        );
+      },
+    );
+
+    if (saved != true) return;
+
+    final List<String> medicines = medicinesController.text
+        .split('\n')
+        .map((String line) => line.trim())
+        .where((String line) => line.isNotEmpty)
+        .toList();
+
+    final PrescriptionIntake updated = item.copyWith(
+      patientName: patientController.text.trim(),
+      doctorName: doctorController.text.trim(),
+      city: cityController.text.trim(),
+      medicines: medicines,
+      updatedAt: DateTime.now(),
+      status: item.status == 'imported' ? 'imported' : 'parsed',
+      importErrorMessage: '',
+    );
+
+    await prescriptionIntakesRepository.saveIntake(updated);
+    await _saveReferenceValue('patient', updated.patientName);
+    await _saveReferenceValue('doctor', updated.doctorName);
+    await _saveReferenceValue('city', updated.city);
+    final List<PrescriptionIntake> intakes = await prescriptionIntakesRepository.getAllIntakes();
+    if (!mounted) return;
+    setState(() {
+      recentIntakes = intakes;
+      message = 'Correzione salvata. Verrà riusata nelle prossime estrazioni.';
+      isErrorMessage = false;
+    });
+  }
+
   Widget _intakesSection() {
     return Container(
       width: double.infinity,
@@ -1029,20 +1130,39 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Text('Stato: ${item.status}',
-                        style: const TextStyle(color: Colors.white70)),
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text('Stato: ${item.status}',
+                              style: const TextStyle(color: Colors.white70)),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => _openDrivePdf(item.driveFileId),
+                          icon: const Icon(Icons.open_in_new, size: 16),
+                          label: const Text('Apri PDF'),
+                        ),
+                        const SizedBox(width: 8),
+                        TextButton.icon(
+                          onPressed: () => _editIntake(item),
+                          icon: const Icon(Icons.edit, size: 16),
+                          label: const Text('Correggi'),
+                        ),
+                      ],
+                    ),
                     Text('Assistito: ${item.patientName.isEmpty ? '-' : item.patientName}',
                         style: const TextStyle(color: Colors.white70)),
                     Text('CF: ${item.fiscalCode.isEmpty ? '-' : item.fiscalCode}',
                         style: const TextStyle(color: Colors.white70)),
                     Text('Medico: ${item.doctorName.isEmpty ? '-' : item.doctorName}',
                         style: const TextStyle(color: Colors.white70)),
+                    Text('Città: ${item.city.isEmpty ? '-' : item.city}',
+                        style: const TextStyle(color: Colors.white70)),
                     Text('Esenzione: ${item.exemptionCode.isEmpty ? '-' : item.exemptionCode}',
                         style: const TextStyle(color: Colors.white70)),
                     Text('DPC: ${item.dpcFlag ? 'SI' : 'NO'}',
                         style: const TextStyle(color: Colors.white70)),
                     Text(
-                      'Farmaci rilevati: ${item.medicines.isEmpty ? '-' : item.medicines.join(' | ')}',
+                      'Terapie: ${item.medicines.isEmpty ? '-' : item.medicines.join(' | ')}',
                       style: const TextStyle(color: Colors.white70),
                     ),
                     if (item.importErrorMessage.isNotEmpty)
