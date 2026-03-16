@@ -70,7 +70,7 @@ class IntakeToEntitiesService {
           exemptionCode: intake.exemptionCode.isEmpty
               ? existing?.exemptionCode
               : intake.exemptionCode,
-          archivedRecipeCount: (existing?.archivedRecipeCount ?? 0) + 1,
+          archivedRecipeCount: (existing?.archivedRecipeCount ?? 0) + intake.prescriptionCount,
           hasDpc: (existing?.hasDpc ?? false) || intake.dpcFlag,
           hasAdvance: existing?.hasAdvance ?? false,
           hasDebt: existing?.hasDebt ?? false,
@@ -113,6 +113,7 @@ class IntakeToEntitiesService {
           prescriptionDate: prescriptionDate,
           expiryDate: _computeExpiryDate(prescriptionDate),
           dpcFlag: intake.dpcFlag,
+          prescriptionCount: intake.prescriptionCount,
           sourceType: 'drive_import',
           extractedText: intake.rawText,
           items: items,

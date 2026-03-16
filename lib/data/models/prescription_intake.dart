@@ -9,6 +9,7 @@ class PrescriptionIntake {
   final String city;
   final DateTime? prescriptionDate;
   final bool dpcFlag;
+  final int prescriptionCount;
   final List<String> medicines;
   final String rawText;
   final String status;
@@ -27,6 +28,7 @@ class PrescriptionIntake {
     required this.city,
     required this.prescriptionDate,
     required this.dpcFlag,
+    this.prescriptionCount = 1,
     required this.medicines,
     required this.rawText,
     this.status = 'parsed',
@@ -46,6 +48,7 @@ class PrescriptionIntake {
     String? city,
     DateTime? prescriptionDate,
     bool? dpcFlag,
+    int? prescriptionCount,
     List<String>? medicines,
     String? rawText,
     String? status,
@@ -64,6 +67,7 @@ class PrescriptionIntake {
       city: city ?? this.city,
       prescriptionDate: prescriptionDate ?? this.prescriptionDate,
       dpcFlag: dpcFlag ?? this.dpcFlag,
+      prescriptionCount: prescriptionCount ?? this.prescriptionCount,
       medicines: medicines ?? this.medicines,
       rawText: rawText ?? this.rawText,
       status: status ?? this.status,
@@ -85,6 +89,7 @@ class PrescriptionIntake {
       'city': city,
       'prescriptionDate': prescriptionDate?.toIso8601String(),
       'dpcFlag': dpcFlag,
+      'prescriptionCount': prescriptionCount,
       'medicines': medicines,
       'rawText': rawText,
       'status': status,
@@ -106,6 +111,7 @@ class PrescriptionIntake {
       city: (map['city'] ?? '') as String,
       prescriptionDate: _readDate(map['prescriptionDate']),
       dpcFlag: (map['dpcFlag'] ?? false) as bool,
+      prescriptionCount: (map['prescriptionCount'] ?? 1) as int,
       medicines: List<String>.from(map['medicines'] ?? const <String>[]),
       rawText: (map['rawText'] ?? '') as String,
       status: (map['status'] ?? 'parsed') as String,

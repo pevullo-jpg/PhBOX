@@ -53,7 +53,7 @@ class ImportedPdfProcessingService {
         final bytes = await googleDriveService.downloadPdfBytes(item.driveFileId);
         final String text = pdfTextExtractionService.extractText(bytes);
         final ParsedPrescriptionData parsed =
-            prescriptionPdfParserService.parse(text);
+            prescriptionPdfParserService.parse(text, fileName: item.fileName);
 
         final PrescriptionIntake intake = PrescriptionIntake(
           id: item.driveFileId,
@@ -66,6 +66,7 @@ class ImportedPdfProcessingService {
           city: parsed.city,
           prescriptionDate: parsed.prescriptionDate,
           dpcFlag: parsed.dpcFlag,
+          prescriptionCount: parsed.prescriptionCount,
           medicines: parsed.medicines,
           rawText: parsed.rawText,
           createdAt: DateTime.now(),

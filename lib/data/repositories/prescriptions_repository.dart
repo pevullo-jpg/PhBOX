@@ -42,7 +42,7 @@ class PrescriptionsRepository {
 
     final List<Prescription> prescriptions = await getPatientPrescriptions(fiscalCode);
 
-    final int archivedRecipeCount = prescriptions.length;
+    final int archivedRecipeCount = prescriptions.fold<int>(0, (int sum, Prescription prescription) => sum + prescription.prescriptionCount);
 
     DateTime? lastPrescriptionDate;
     bool hasDpc = false;

@@ -10,6 +10,7 @@ class Prescription {
   final String? exemptionCode;
   final String? city;
   final bool dpcFlag;
+  final int prescriptionCount;
   final String sourceType;
   final String? extractedText;
   final List<PrescriptionItem> items;
@@ -26,6 +27,7 @@ class Prescription {
     this.exemptionCode,
     this.city,
     this.dpcFlag = false,
+    this.prescriptionCount = 1,
     required this.sourceType,
     this.extractedText,
     this.items = const <PrescriptionItem>[],
@@ -44,6 +46,7 @@ class Prescription {
       'exemptionCode': exemptionCode,
       'city': city,
       'dpcFlag': dpcFlag,
+      'prescriptionCount': prescriptionCount,
       'sourceType': sourceType,
       'extractedText': extractedText,
       'items': items.map((PrescriptionItem item) => item.toMap()).toList(),
@@ -63,6 +66,7 @@ class Prescription {
       exemptionCode: map['exemptionCode'] as String?,
       city: map['city'] as String?,
       dpcFlag: (map['dpcFlag'] ?? false) as bool,
+      prescriptionCount: (map['prescriptionCount'] ?? 1) as int,
       sourceType: (map['sourceType'] ?? 'upload') as String,
       extractedText: map['extractedText'] as String?,
       items: (map['items'] as List<dynamic>? ?? const <dynamic>[])
