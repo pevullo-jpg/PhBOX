@@ -311,7 +311,7 @@ class PrescriptionPdfParserService {
     final String fromBlock = _extractNameByRegex(
       compact,
       RegExp(
-        r"COGNOME\s+E\s+NOME\s+DEL\s+MEDICO\s*:?\s*([A-ZÀ-ÖØ-Ý' ]{3,}?)(?=\s+(?:RILASCIATO|CODICE|DATA|$))",
+        r"COGNOME\s+E\s+NOME\s+DEL\s+MEDICO\s*:?\s*([A-ZÀ-ÖØ-Ý' ]{3,}?)(?=(?:\s+)?(?:RILASCIATO|CODICE|DATA|$))",
         caseSensitive: false,
       ),
     );
@@ -350,15 +350,15 @@ class PrescriptionPdfParserService {
   String _extractCity(String compact, List<String> lines) {
     for (final RegExp regex in <RegExp>[
       RegExp(
-        r"\bCOMUNE\s*:?\s*([A-ZÀ-ÖØ-Ý' ]{2,}?)(?=\s+(?:PROV|ESENZIONE|SIGLA|TIPOLOGIA|CODICE|DISPOSIZIONI|$))",
+        r"\bCOMUNE\s*:?\s*([A-ZÀ-ÖØ-Ý' ]{2,}?)(?=(?:\s+)?(?:PROV|ESENZIONE|SIGLA|TIPOLOGIA|CODICE|DISPOSIZIONI|$))",
         caseSensitive: false,
       ),
       RegExp(
-        r"\bCITTA'?\s*:?\s*([A-ZÀ-ÖØ-Ý' ]{2,}?)(?=\s+(?:PROV|ESENZIONE|SIGLA|TIPOLOGIA|CODICE|DISPOSIZIONI|$))",
+        r"\bCITTA'?\s*:?\s*([A-ZÀ-ÖØ-Ý' ]{2,}?)(?=(?:\s+)?(?:PROV|ESENZIONE|SIGLA|TIPOLOGIA|CODICE|DISPOSIZIONI|$))",
         caseSensitive: false,
       ),
       RegExp(
-        r"\bCAP\s*:?\s*\d{5}\s+CITTA'?\s*:?\s*([A-ZÀ-ÖØ-Ý' ]{2,}?)(?=\s+(?:PROV|ESENZIONE|SIGLA|TIPOLOGIA|CODICE|DISPOSIZIONI|$))",
+        r"\bCAP\s*:?\s*\d{5}\s+CITTA'?\s*:?\s*([A-ZÀ-ÖØ-Ý' ]{2,}?)(?=(?:\s+)?(?:PROV|ESENZIONE|SIGLA|TIPOLOGIA|CODICE|DISPOSIZIONI|$))",
         caseSensitive: false,
       ),
     ]) {
@@ -491,7 +491,7 @@ class PrescriptionPdfParserService {
   }
 
   String _sanitizePersonName(String value, {int maxWords = 5}) {
-    String result = _cutAtMarkers(_cleanLine(value), _tailMarkers)
+    String result = _prepareFieldValue(value)
         .replaceAll(RegExp(r'\bREGIONE\s+SICILIA\b.*$', caseSensitive: false), '')
         .replaceAll(RegExp(r'\bSERVIZIO\s+SANITARIO\s+NAZIONALE\b.*$', caseSensitive: false), '')
         .replaceAll(RegExp(r"[^A-Za-zÀ-ÖØ-öø-ÿ'\s]"), ' ')
@@ -505,9 +505,11 @@ class PrescriptionPdfParserService {
   }
 
   String _sanitizePlace(String value, {int maxWords = 3}) {
-    String result = _cutAtMarkers(_cleanLine(value), _tailMarkers)
+    String result = _prepareFieldValue(value)
         .replaceAll(RegExp(r'\bREGIONE\s+SICILIA\b.*$', caseSensitive: false), '')
         .replaceAll(RegExp(r'\bSERVIZIO\s+SANITARIO\s+NAZIONALE\b.*$', caseSensitive: false), '')
+        .replaceAll(RegExp(r'\b(PROV|SIGLA|TIPOLOGIA|ESENZIONE|CODICE|DISPOSIZIONI|ASL)\b.*$', caseSensitive: false), '')
+        .replaceAll(RegExp(r"\b[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]\b"), ' ')
         .replaceAll(RegExp(r"[^A-Za-zÀ-ÖØ-öø-ÿ'\s]"), ' ')
         .replaceAll(RegExp(r'\s{2,}'), ' ')
         .trim();
@@ -516,6 +518,21 @@ class PrescriptionPdfParserService {
     result = result.replaceAll(RegExp(r"[\'\-:;,.\s]+$"), '').trim();
     result = _keepFirstWords(result, maxWords);
     return _toNameCase(result);
+  }
+
+  String _prepareFieldValue(String value) {
+    String result = _cutAtMarkers(_cleanLine(value), _tailMarkers);
+    result = result.replaceAll(
+      RegExp(r'(?i)([A-ZÀ-ÖØ-Ý])((?:CODICE|RILASCIATO|PROV|CAP|ESENZIONE|SIGLA|TIPOLOGIA|DISPOSIZIONI|ASL|COMUNE|CITTA|CITTÀ))'),
+      r'$1 $2',
+    );
+    result = result.replaceAll(
+      RegExp(r'(?i)([A-ZÀ-ÖØ-Ý])((?:REGIONE|SICILIA|SERVIZIO))'),
+      r'$1 $2',
+    );
+    result = result.replaceAll(RegExp(r"\b[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]\b"), ' ');
+    result = _cutAtMarkers(result, _tailMarkers);
+    return result;
   }
 
   List<String> get _tailMarkers => const <String>[
@@ -594,20 +611,18 @@ class PrescriptionPdfParserService {
   List<String> _extractMedicines(String normalized, List<String> lines) {
     final List<String> candidates = <String>[];
     final List<String> sectionLines = _extractPrescriptionSectionLines(normalized, lines);
-    candidates.addAll(sectionLines.where(_looksLikeMedicineLine).map(_sanitizeMedicineLine));
 
-    if (candidates.isEmpty) {
-      for (final String line in lines) {
-        if (_looksLikeMedicineLine(line)) {
-          candidates.add(_sanitizeMedicineLine(line));
-        }
+    for (final String line in <String>[...sectionLines, ...lines]) {
+      if (_looksLikeMedicineLine(line)) {
+        candidates.add(_sanitizeMedicineLine(line));
       }
     }
 
     final List<String> unique = <String>[];
     for (final String item in candidates) {
       if (item.isEmpty) continue;
-      if (unique.any((String existing) => existing.toUpperCase() == item.toUpperCase())) {
+      final String normalizedItem = item.toUpperCase();
+      if (unique.any((String existing) => existing.toUpperCase() == normalizedItem)) {
         continue;
       }
       unique.add(item);
@@ -618,42 +633,45 @@ class PrescriptionPdfParserService {
   List<String> _extractPrescriptionSectionLines(String normalized, List<String> lines) {
     final List<String> results = <String>[];
     bool inside = false;
+    int trailingWindow = 0;
+
     for (final String line in lines) {
       final String upper = line.toUpperCase();
+
       if (upper.contains('PRESCRIZIONE')) {
         inside = true;
+        trailingWindow = 8;
         continue;
       }
-      if (!inside) continue;
-      if (upper.contains('QUESITO DIAGNOSTICO') ||
-          upper.contains('NOTE') ||
-          upper.contains('DISPOSIZIONI REGIONALI') ||
-          upper.startsWith('COGNOME E NOME DEL MEDICO') ||
-          upper.startsWith('RILASCIATO')) {
-        break;
+
+      if (upper.contains('SERVIZIO SANITARIO NAZIONALE') && results.isNotEmpty) {
+        inside = false;
+        trailingWindow = 0;
       }
-      results.add(line);
+
+      if (!inside && trailingWindow <= 0) {
+        continue;
+      }
+
+      if (_looksLikeMedicineLine(line)) {
+        results.add(line);
+      }
+
+      if (inside && (upper.contains('QUESITO DIAGNOSTICO') || upper.contains('COGNOME E NOME DEL MEDICO'))) {
+        inside = false;
+      }
+
+      if (trailingWindow > 0) {
+        trailingWindow--;
+      }
     }
 
-    if (results.isNotEmpty) return results;
-
-    final String upperNormalized = normalized.toUpperCase();
-    final int start = upperNormalized.indexOf('PRESCRIZIONE');
-    final int end = upperNormalized.indexOf('QUESITO DIAGNOSTICO');
-    if (start >= 0 && end > start) {
-      return normalized
-          .substring(start, end)
-          .split('\n')
-          .map(_cleanLine)
-          .where((String line) => line.isNotEmpty)
-          .toList();
-    }
-
-    return <String>[];
+    return results;
   }
 
   bool _looksLikeMedicineLine(String line) {
-    final String upper = line.toUpperCase().trim();
+    final String cleaned = _cleanLine(line);
+    final String upper = cleaned.toUpperCase().trim();
     if (upper.isEmpty) return false;
     if (upper == 'PRESCRIZIONE' ||
         upper == 'QTA' ||
@@ -667,18 +685,25 @@ class PrescriptionPdfParserService {
         upper.contains('QUESITO') ||
         upper.contains('REGIONE SICILIA') ||
         upper.contains('SERVIZIO SANITARIO') ||
-        upper.contains('ESENZIONE')) {
+        upper.contains('ESENZIONE') ||
+        upper.contains('CODICE AUTENTICAZIONE') ||
+        upper.contains('RILASCIATO AI SENSI')) {
       return false;
     }
 
     final bool dosageLike = RegExp(
-      r'(MG|MCG|G\b|ML|CPR|COMPRESSE|CAPSULE|SCIROPPO|GOCCE|FIALA|FIALE|BUSTINE|BUSTA|CEROTTO|FLACONE|SOLUZIONE|USO ORALE|RIV|CREMA|POMATA|SPRAY|PENNA)',
+      r'(MG|MCG|G\b|ML|CPR|CPS|COMPRESSE|CAPSULE|SCIROPPO|GOCCE|FIALA|FIALE|BUSTINE|BUSTA|CEROTTO|FLACONE|SOLUZIONE|USO ORALE|RIV|CREMA|POMATA|SPRAY|PENNA|IM\b|OS\b)',
       caseSensitive: false,
-    ).hasMatch(line);
-    final bool qtyLike = RegExp(r'\b(QTA|QT\.?A?\b|X\s*\d+|N\.?\s*\d+)').hasMatch(upper);
-    final bool brandLike = RegExp(r'^[0-9\-–\s]*[A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ý0-9\-\/\+ ]{4,}$').hasMatch(upper);
+    ).hasMatch(cleaned);
+    final bool qtyLike = RegExp(r'\b(QTA|QT\.?A?\b|X\s*\d+|N\.?\s*\d+)\b', caseSensitive: false).hasMatch(cleaned);
+    final bool productCodeLike = RegExp(r'^\(?\d{6,9}\)?\s*[- ]\s*[A-ZÀ-ÖØ-Ý0-9]', caseSensitive: false).hasMatch(cleaned) ||
+        RegExp(r'^\d{6,9}\s+[A-ZÀ-ÖØ-Ý0-9]', caseSensitive: false).hasMatch(cleaned);
+    final bool recipeCodeLike = RegExp(r'^\(?[A-Z0-9]{3,4}\)?\s*[- ]\s*[A-ZÀ-ÖØ-Ý]', caseSensitive: false).hasMatch(cleaned);
+    final bool commercialLike = cleaned.contains('*') || cleaned.contains(':');
 
-    return dosageLike || qtyLike || brandLike;
+    return (dosageLike && (productCodeLike || recipeCodeLike || commercialLike || qtyLike)) ||
+        productCodeLike ||
+        (recipeCodeLike && dosageLike);
   }
 
   String _sanitizeMedicineLine(String line) {
@@ -688,7 +713,17 @@ class PrescriptionPdfParserService {
         .replaceAll(RegExp(r'\s{2,}'), ' ')
         .trim();
 
-    cleaned = _cutAtMarkers(cleaned, const <String>['QUESITO', 'NOTE', 'DISPOSIZIONI']);
+    cleaned = _cutAtMarkers(cleaned, const <String>[
+      'QUESITO',
+      'NOTE',
+      'DISPOSIZIONI',
+      'CODICE AUTENTICAZIONE',
+      'RILASCIATO',
+      'COGNOME E NOME DEL MEDICO',
+      'SERVIZIO SANITARIO',
+    ]);
+    cleaned = cleaned.replaceAll(RegExp(r'\s+\d+\s*---$'), '');
+    cleaned = cleaned.replaceAll(RegExp(r'\s+\d+\s+\d+$'), '');
     cleaned = cleaned.replaceAll(RegExp(r'^[\-:;,.\s]+'), '').trim();
     cleaned = cleaned.replaceAll(RegExp(r'[\-:;,.\s]+$'), '').trim();
     return cleaned;

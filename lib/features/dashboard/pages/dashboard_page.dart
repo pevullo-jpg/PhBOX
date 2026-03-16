@@ -145,68 +145,75 @@ class _DashboardPageState extends State<DashboardPage> {
     await launchUrl(uri, webOnlyWindowName: '_blank');
   }
 
-  Widget _buildRecentPdfSection(List<PrescriptionIntake> intakes) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppColors.panel,
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          const Text(
-            'PDF recenti',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w900,
-              color: Colors.white,
+  Future<void> _openPatientPdfFiles(
+    Patient patient,
+    List<PrescriptionIntake> intakes,
+  ) async {
+    final List<PrescriptionIntake> matching = intakes.where((PrescriptionIntake intake) {
+      final String intakeFiscal = intake.fiscalCode.trim().toUpperCase();
+      final String patientFiscal = patient.fiscalCode.trim().toUpperCase();
+      if (intakeFiscal.isNotEmpty && patientFiscal.isNotEmpty && intakeFiscal == patientFiscal) {
+        return true;
+      }
+      return _sameLooseName(intake.patientName, patient.fullName);
+    }).toList();
+
+    if (matching.isEmpty) return;
+    if (matching.length == 1) {
+      await _openDrivePdf(matching.first.driveFileId);
+      return;
+    }
+
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.panel,
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  'PDF di ${patient.fullName}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ...matching.map((PrescriptionIntake item) {
+                  final String dateLabel = item.prescriptionDate == null
+                      ? 'data non disponibile'
+                      : '${item.prescriptionDate!.day.toString().padLeft(2, '0')}/${item.prescriptionDate!.month.toString().padLeft(2, '0')}/${item.prescriptionDate!.year}';
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.picture_as_pdf, color: AppColors.coral),
+                    title: Text(item.fileName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                    subtitle: Text(dateLabel, style: const TextStyle(color: Colors.white70)),
+                    trailing: TextButton(
+                      onPressed: () => _openDrivePdf(item.driveFileId),
+                      child: const Text('Apri'),
+                    ),
+                  );
+                }),
+              ],
             ),
           ),
-          const SizedBox(height: 14),
-          if (intakes.isEmpty)
-            const Text('Nessun PDF ancora elaborato.', style: TextStyle(color: Colors.white70))
-          else
-            ...intakes.take(8).map((PrescriptionIntake item) {
-              return Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: AppColors.panelSoft,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Row(
-                  children: <Widget>[
-                    const Icon(Icons.picture_as_pdf, color: AppColors.coral),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Text(item.fileName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                          const SizedBox(height: 4),
-                          Text(
-                            '${item.patientName.isEmpty ? 'Assistito non riconosciuto' : item.patientName} • ${item.doctorName.isEmpty ? 'medico non riconosciuto' : item.doctorName}',
-                            style: const TextStyle(color: Colors.white70),
-                          ),
-                        ],
-                      ),
-                    ),
-                    TextButton.icon(
-                      onPressed: () => _openDrivePdf(item.driveFileId),
-                      icon: const Icon(Icons.open_in_new, size: 16),
-                      label: const Text('Apri PDF'),
-                    ),
-                  ],
-                ),
-              );
-            }),
-        ],
-      ),
+        );
+      },
     );
   }
+
+  bool _sameLooseName(String a, String b) {
+    final String left = a.toUpperCase().replaceAll(RegExp(r'[^A-ZÀ-ÖØ-Ý]'), '');
+    final String right = b.toUpperCase().replaceAll(RegExp(r'[^A-ZÀ-ÖØ-Ý]'), '');
+    return left.isNotEmpty && left == right;
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -214,7 +221,7 @@ class _DashboardPageState extends State<DashboardPage> {
       future: _loadDashboardData(),
       builder: (BuildContext context, AsyncSnapshot<_DashboardData> snapshot) {
         final List<Patient> patients = snapshot.data?.patients ?? const <Patient>[];
-        final List<PrescriptionIntake> recentPdfIntakes = snapshot.data?.intakes ?? const <PrescriptionIntake>[];
+        final List<PrescriptionIntake> allIntakes = snapshot.data?.intakes ?? const <PrescriptionIntake>[];
         final List<Patient> filteredPatients = applyFilters(patients);
         final double totalDebts =
             patients.fold<double>(0, (double sum, Patient p) => sum + p.debtTotal);
@@ -394,8 +401,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                     ],
                                   ),
                                 ),
-                                const SizedBox(height: 20),
-                                _buildRecentPdfSection(recentPdfIntakes),
+
                                 const SizedBox(height: 20),
                                 Container(
                                   width: double.infinity,
@@ -477,8 +483,15 @@ class _DashboardPageState extends State<DashboardPage> {
                                                   Text(p.doctorName ?? '-', style: _rowStyle),
                                                 ),
                                                 DataCell(
-                                                  Text('${p.archivedRecipeCount}',
-                                                      style: _rowStyle),
+                                                  p.archivedRecipeCount > 0
+                                                      ? InkWell(
+                                                          onTap: () => _openPatientPdfFiles(p, allIntakes),
+                                                          child: Text(
+                                                            '${p.archivedRecipeCount}',
+                                                            style: _rowLinkStyle,
+                                                          ),
+                                                        )
+                                                      : Text('0', style: _rowStyle),
                                                 ),
                                                 DataCell(
                                                   p.hasDpc

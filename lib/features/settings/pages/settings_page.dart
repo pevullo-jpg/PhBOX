@@ -70,6 +70,7 @@ class _SettingsPageState extends State<SettingsPage> {
   AppSettings currentSettings = AppSettings.empty();
   List<DrivePdfImport> recentImports = <DrivePdfImport>[];
   List<PrescriptionIntake> recentIntakes = <PrescriptionIntake>[];
+  List<ParserReferenceValue> parserReferences = <ParserReferenceValue>[];
 
   @override
   void initState() {
@@ -117,6 +118,8 @@ class _SettingsPageState extends State<SettingsPage> {
           await drivePdfImportsRepository.getAllImports();
       final List<PrescriptionIntake> intakes =
           await prescriptionIntakesRepository.getAllIntakes();
+      final List<ParserReferenceValue> references =
+          await parserReferenceValuesRepository.getAllReferences();
 
       if (!mounted) return;
 
@@ -135,6 +138,7 @@ class _SettingsPageState extends State<SettingsPage> {
         autoDetectDpc = settings.autoDetectDpc;
         recentImports = imports;
         recentIntakes = intakes;
+        parserReferences = references;
         googleAccountEmail = settings.connectedGoogleEmail;
         googleAccountName = settings.connectedGoogleDisplayName;
         currentAccessToken = '';
@@ -546,10 +550,13 @@ class _SettingsPageState extends State<SettingsPage> {
 
       final List<PrescriptionIntake> intakes =
           await prescriptionIntakesRepository.getAllIntakes();
+      final List<ParserReferenceValue> references =
+          await parserReferenceValuesRepository.getAllReferences();
 
       if (!mounted) return;
       setState(() {
         recentIntakes = intakes;
+        parserReferences = references;
         message =
             'Import completato. Importati: ${result.importedCount}. Saltati: ${result.skippedCount}. Errori: ${result.errorCount}.';
         isErrorMessage = false;
@@ -907,6 +914,8 @@ class _SettingsPageState extends State<SettingsPage> {
               _importsSection(),
               const SizedBox(height: 20),
               _intakesSection(),
+              const SizedBox(height: 20),
+              _learningSection(),
             ],
           ),
         ),
@@ -1076,12 +1085,95 @@ class _SettingsPageState extends State<SettingsPage> {
     await _saveReferenceValue('doctor', updated.doctorName);
     await _saveReferenceValue('city', updated.city);
     final List<PrescriptionIntake> intakes = await prescriptionIntakesRepository.getAllIntakes();
+    final List<ParserReferenceValue> references =
+        await parserReferenceValuesRepository.getAllReferences();
     if (!mounted) return;
     setState(() {
       recentIntakes = intakes;
+      parserReferences = references;
       message = 'Correzione salvata. Verrà riusata nelle prossime estrazioni.';
       isErrorMessage = false;
     });
+  }
+
+  Widget _learningSection() {
+    final List<ParserReferenceValue> patients =
+        parserReferences.where((ParserReferenceValue item) => item.type == 'patient').toList();
+    final List<ParserReferenceValue> doctors =
+        parserReferences.where((ParserReferenceValue item) => item.type == 'doctor').toList();
+    final List<ParserReferenceValue> cities =
+        parserReferences.where((ParserReferenceValue item) => item.type == 'city').toList();
+
+    Widget block(String title, List<ParserReferenceValue> values) {
+      return Expanded(
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.panelSoft,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                '$title (${values.length})',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 10),
+              if (values.isEmpty)
+                const Text('Nessun riferimento salvato.', style: TextStyle(color: Colors.white54))
+              else
+                ...values.take(12).map((ParserReferenceValue item) => Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text('• ${item.value}', style: const TextStyle(color: Colors.white70)),
+                    )),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.panel,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            'Archivio apprendimento parser',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Ogni correzione salvata nelle intake aggiorna questi riferimenti. Il pulsante "Correggi e insegna" alimenta le prossime estrazioni.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              block('Assistiti', patients),
+              const SizedBox(width: 12),
+              block('Medici', doctors),
+              const SizedBox(width: 12),
+              block('Città', cities),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _intakesSection() {
@@ -1145,7 +1237,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         TextButton.icon(
                           onPressed: () => _editIntake(item),
                           icon: const Icon(Icons.edit, size: 16),
-                          label: const Text('Correggi'),
+                          label: const Text('Correggi e insegna'),
                         ),
                       ],
                     ),
