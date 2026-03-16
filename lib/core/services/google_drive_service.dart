@@ -22,12 +22,33 @@ class GoogleDriveFile {
   }
 }
 
+typedef GoogleAuthHeadersLoader = Future<Map<String, String>> Function();
+
 class GoogleDriveService {
   final String accessToken;
+  final GoogleAuthHeadersLoader? authHeadersLoader;
 
   const GoogleDriveService({
-    required this.accessToken,
+    this.accessToken = '',
+    this.authHeadersLoader,
   });
+
+  Future<Map<String, String>> _headers() async {
+    if (authHeadersLoader != null) {
+      final Map<String, String> headers = await authHeadersLoader!.call();
+      if ((headers['Authorization'] ?? headers['authorization'] ?? '').trim().isNotEmpty) {
+        return headers;
+      }
+    }
+
+    if (accessToken.trim().isEmpty) {
+      throw Exception('Token Google Drive assente.');
+    }
+
+    return <String, String>{
+      'Authorization': 'Bearer ${accessToken.trim()}',
+    };
+  }
 
   Future<List<GoogleDriveFile>> listPdfFiles(String folderId) async {
     final String query =
@@ -46,9 +67,7 @@ class GoogleDriveService {
 
     final http.Response response = await http.get(
       url,
-      headers: <String, String>{
-        'Authorization': 'Bearer $accessToken',
-      },
+      headers: await _headers(),
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -81,9 +100,7 @@ class GoogleDriveService {
 
     final http.Response response = await http.get(
       url,
-      headers: <String, String>{
-        'Authorization': 'Bearer $accessToken',
-      },
+      headers: await _headers(),
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -121,10 +138,11 @@ class GoogleDriveService {
       ..addAll(bytes)
       ..addAll(utf8.encode('\r\n--$boundary--'));
 
+    final Map<String, String> headers = await _headers();
     final http.Response response = await http.post(
       url,
       headers: <String, String>{
-        'Authorization': 'Bearer $accessToken',
+        ...headers,
         'Content-Type': 'multipart/related; boundary=$boundary',
       },
       body: body,

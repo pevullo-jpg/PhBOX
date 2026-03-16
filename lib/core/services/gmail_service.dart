@@ -41,10 +41,16 @@ class GmailMessageDetail {
   });
 }
 
+typedef GmailAuthHeadersLoader = Future<Map<String, String>> Function();
+
 class GmailService {
   final String accessToken;
+  final GmailAuthHeadersLoader? authHeadersLoader;
 
-  const GmailService({required this.accessToken});
+  const GmailService({
+    this.accessToken = '',
+    this.authHeadersLoader,
+  });
 
   Future<List<String>> listMessageIds({
     required String query,
@@ -59,7 +65,7 @@ class GmailService {
       },
     );
 
-    final http.Response response = await http.get(url, headers: _headers());
+    final http.Response response = await http.get(url, headers: await _headers());
     _ensureOk(response, 'Errore Gmail list messages');
 
     final Map<String, dynamic> data =
@@ -79,7 +85,7 @@ class GmailService {
       <String, String>{'format': 'full'},
     );
 
-    final http.Response response = await http.get(url, headers: _headers());
+    final http.Response response = await http.get(url, headers: await _headers());
     _ensureOk(response, 'Errore Gmail read message');
 
     final Map<String, dynamic> data =
@@ -112,7 +118,7 @@ class GmailService {
       '/gmail/v1/users/me/messages/$messageId/attachments/${attachment.attachmentId}',
     );
 
-    final http.Response response = await http.get(url, headers: _headers());
+    final http.Response response = await http.get(url, headers: await _headers());
     _ensureOk(response, 'Errore Gmail download attachment');
 
     final Map<String, dynamic> data =
@@ -140,7 +146,7 @@ class GmailService {
     final Uri url = Uri.https('gmail.googleapis.com', '/gmail/v1/users/me/labels');
     final http.Response response = await http.post(
       url,
-      headers: <String, String>{..._headers(), 'Content-Type': 'application/json'},
+      headers: <String, String>{...(await _headers()), 'Content-Type': 'application/json'},
       body: jsonEncode(<String, dynamic>{
         'name': trimmed,
         'labelListVisibility': 'labelShow',
@@ -156,7 +162,7 @@ class GmailService {
 
   Future<Map<String, String>> listLabels() async {
     final Uri url = Uri.https('gmail.googleapis.com', '/gmail/v1/users/me/labels');
-    final http.Response response = await http.get(url, headers: _headers());
+    final http.Response response = await http.get(url, headers: await _headers());
     _ensureOk(response, 'Errore Gmail labels');
 
     final Map<String, dynamic> data =
@@ -186,7 +192,7 @@ class GmailService {
 
     final http.Response response = await http.post(
       url,
-      headers: <String, String>{..._headers(), 'Content-Type': 'application/json'},
+      headers: <String, String>{...(await _headers()), 'Content-Type': 'application/json'},
       body: jsonEncode(<String, dynamic>{
         'addLabelIds': addLabelIds,
         'removeLabelIds': removeLabelIds,
@@ -200,7 +206,7 @@ class GmailService {
       'gmail.googleapis.com',
       '/gmail/v1/users/me/messages/$messageId/trash',
     );
-    final http.Response response = await http.post(url, headers: _headers());
+    final http.Response response = await http.post(url, headers: await _headers());
     _ensureOk(response, 'Errore Gmail trash message');
   }
 
@@ -250,8 +256,19 @@ class GmailService {
     return '';
   }
 
-  Map<String, String> _headers() {
-    return <String, String>{'Authorization': 'Bearer $accessToken'};
+  Future<Map<String, String>> _headers() async {
+    if (authHeadersLoader != null) {
+      final Map<String, String> headers = await authHeadersLoader!.call();
+      if ((headers['Authorization'] ?? headers['authorization'] ?? '').trim().isNotEmpty) {
+        return headers;
+      }
+    }
+
+    if (accessToken.trim().isEmpty) {
+      throw Exception('Token Gmail assente.');
+    }
+
+    return <String, String>{'Authorization': 'Bearer ${accessToken.trim()}'};
   }
 
   void _ensureOk(http.Response response, String prefix) {

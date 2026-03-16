@@ -222,6 +222,13 @@ class _SettingsPageState extends State<SettingsPage> {
       return 'Popup Google chiuso o bloccato. Usa il pulsante Collega account Google e consenti il popup del browser.';
     }
 
+    if (lower.contains('401') ||
+        lower.contains('unauthenticated') ||
+        lower.contains('credentials_missing') ||
+        lower.contains('login required')) {
+      return 'Sessione Google non valida per Gmail/Drive. Fai logout Google, ricarica la pagina e collega di nuovo l'account una sola volta.';
+    }
+
     return raw;
   }
 
@@ -507,7 +514,13 @@ class _SettingsPageState extends State<SettingsPage> {
       final String accessToken = await _ensureGoogleAccessToken();
 
       final DrivePdfScannerService scanner = DrivePdfScannerService(
-        googleDriveService: GoogleDriveService(accessToken: accessToken),
+        googleDriveService: GoogleDriveService(
+          accessToken: accessToken,
+          authHeadersLoader: () => googleAuthPrepService.getAuthHeaders(
+            clientId: googleWebClientIdController.text.trim(),
+            interactive: false,
+          ),
+        ),
         importsRepository: drivePdfImportsRepository,
       );
 
@@ -546,7 +559,13 @@ class _SettingsPageState extends State<SettingsPage> {
       final String accessToken = await _ensureGoogleAccessToken();
 
       final ImportedPdfProcessingService service = ImportedPdfProcessingService(
-        googleDriveService: GoogleDriveService(accessToken: accessToken),
+        googleDriveService: GoogleDriveService(
+          accessToken: accessToken,
+          authHeadersLoader: () => googleAuthPrepService.getAuthHeaders(
+            clientId: googleWebClientIdController.text.trim(),
+            interactive: false,
+          ),
+        ),
         drivePdfImportsRepository: drivePdfImportsRepository,
         prescriptionIntakesRepository: prescriptionIntakesRepository,
         pdfTextExtractionService: const PdfTextExtractionService(),
@@ -651,8 +670,20 @@ class _SettingsPageState extends State<SettingsPage> {
       );
 
       final EmailPrescriptionScanService service = EmailPrescriptionScanService(
-        gmailService: GmailService(accessToken: accessToken),
-        googleDriveService: GoogleDriveService(accessToken: accessToken),
+        gmailService: GmailService(
+          accessToken: accessToken,
+          authHeadersLoader: () => googleAuthPrepService.getAuthHeaders(
+            clientId: googleWebClientIdController.text.trim(),
+            interactive: false,
+          ),
+        ),
+        googleDriveService: GoogleDriveService(
+          accessToken: accessToken,
+          authHeadersLoader: () => googleAuthPrepService.getAuthHeaders(
+            clientId: googleWebClientIdController.text.trim(),
+            interactive: false,
+          ),
+        ),
         drivePdfImportsRepository: drivePdfImportsRepository,
         parserReferenceValuesRepository: parserReferenceValuesRepository,
         pdfTextExtractionService: const PdfTextExtractionService(),

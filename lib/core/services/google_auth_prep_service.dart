@@ -42,55 +42,21 @@ class GoogleAuthPrepService {
     ...driveAndGmailScopes,
   ];
 
-  GoogleSignIn _buildSignIn(String clientId) {
-    return GoogleSignIn(
-      clientId: clientId,
+  GoogleSignIn? _cachedSignIn;
+  String _cachedClientId = '';
+
+  GoogleSignIn _buildOrReuseSignIn(String clientId) {
+    final String normalizedClientId = clientId.trim();
+    if (_cachedSignIn != null && _cachedClientId == normalizedClientId) {
+      return _cachedSignIn!;
+    }
+
+    _cachedClientId = normalizedClientId;
+    _cachedSignIn = GoogleSignIn(
+      clientId: normalizedClientId,
       scopes: _fullScopes,
     );
-  }
-
-  Future<GoogleAuthPrepResult> signInForGoogleAccount({
-    required String clientId,
-  }) async {
-    if (clientId.trim().isEmpty) {
-      throw Exception('Inserisci prima il Web Client ID Google nelle impostazioni.');
-    }
-
-    final GoogleSignIn googleSignIn = _buildSignIn(clientId.trim());
-    final GoogleSignInAccount? account = await googleSignIn.signIn();
-
-    if (account == null) {
-      throw Exception('Login Google annullato.');
-    }
-
-    final GoogleSignInAuthentication auth = await account.authentication;
-
-    return GoogleAuthPrepResult(
-      email: account.email,
-      displayName: account.displayName,
-      accessToken: auth.accessToken,
-      isConnected: true,
-    );
-  }
-
-  Future<GoogleAuthPrepResult?> tryRestoreSession({
-    required String clientId,
-  }) async {
-    if (clientId.trim().isEmpty) return null;
-
-    final GoogleSignIn googleSignIn = _buildSignIn(clientId.trim());
-    final GoogleSignInAccount? account = await googleSignIn.signInSilently();
-
-    if (account == null) return null;
-
-    final GoogleSignInAuthentication auth = await account.authentication;
-
-    return GoogleAuthPrepResult(
-      email: account.email,
-      displayName: account.displayName,
-      accessToken: auth.accessToken,
-      isConnected: true,
-    );
+    return _cachedSignIn!;
   }
 
   Future<GoogleSignInAccount?> _getSignedAccount({
@@ -107,14 +73,94 @@ class GoogleAuthPrepService {
     return account;
   }
 
-  Future<bool> _canAccessScopes(
-    GoogleSignIn googleSignIn,
-    List<String> scopes,
-  ) async {
+  String? _tokenFromAuthHeaders(Map<String, String> headers) {
+    final String authorization = headers['Authorization'] ?? headers['authorization'] ?? '';
+    if (!authorization.toLowerCase().startsWith('bearer ')) {
+      return null;
+    }
+    final String token = authorization.substring(7).trim();
+    return token.isEmpty ? null : token;
+  }
+
+  Future<Map<String, String>> getAuthHeaders({
+    required String clientId,
+    bool interactive = false,
+  }) async {
+    if (clientId.trim().isEmpty) {
+      throw Exception('Inserisci prima il Web Client ID Google nelle impostazioni.');
+    }
+
+    final GoogleSignIn googleSignIn = _buildOrReuseSignIn(clientId);
+    final GoogleSignInAccount? account = await _getSignedAccount(
+      googleSignIn: googleSignIn,
+      interactive: interactive,
+    );
+
+    if (account == null) {
+      throw Exception(
+        interactive
+            ? 'Login Google annullato.'
+            : 'Sessione Google assente o scaduta. Premi Collega account Google.',
+      );
+    }
+
+    final Map<String, String> authHeaders = await account.authHeaders;
+    final String? token = _tokenFromAuthHeaders(authHeaders);
+    if (token == null) {
+      throw Exception('Token Google non disponibile. Ricollega l'account Google.');
+    }
+
+    return <String, String>{
+      ...authHeaders,
+      'Authorization': 'Bearer $token',
+    };
+  }
+
+  Future<GoogleAuthPrepResult> signInForGoogleAccount({
+    required String clientId,
+  }) async {
+    final Map<String, String> headers = await getAuthHeaders(
+      clientId: clientId,
+      interactive: true,
+    );
+
+    final GoogleSignIn googleSignIn = _buildOrReuseSignIn(clientId);
+    final GoogleSignInAccount? account = googleSignIn.currentUser ?? await googleSignIn.signInSilently();
+
+    if (account == null) {
+      throw Exception('Login Google annullato.');
+    }
+
+    return GoogleAuthPrepResult(
+      email: account.email,
+      displayName: account.displayName,
+      accessToken: _tokenFromAuthHeaders(headers),
+      isConnected: true,
+    );
+  }
+
+  Future<GoogleAuthPrepResult?> tryRestoreSession({
+    required String clientId,
+  }) async {
+    if (clientId.trim().isEmpty) return null;
+
     try {
-      return await googleSignIn.canAccessScopes(scopes);
+      final Map<String, String> headers = await getAuthHeaders(
+        clientId: clientId,
+        interactive: false,
+      );
+      final GoogleSignIn googleSignIn = _buildOrReuseSignIn(clientId);
+      final GoogleSignInAccount? account = googleSignIn.currentUser ?? await googleSignIn.signInSilently();
+      if (account == null) return null;
+
+      return GoogleAuthPrepResult(
+        email: account.email,
+        displayName: account.displayName,
+        accessToken: _tokenFromAuthHeaders(headers),
+        isConnected: true,
+      );
     } catch (_) {
-      return true;
+      return null;
     }
   }
 
@@ -125,24 +171,18 @@ class GoogleAuthPrepService {
   }) async {
     if (clientId.trim().isEmpty) return null;
 
-    final GoogleSignIn googleSignIn = _buildSignIn(clientId.trim());
-    GoogleSignInAccount? account = googleSignIn.currentUser;
-    account ??= await googleSignIn.signInSilently();
-
-    if (account == null && interactive) {
-      account = await googleSignIn.signIn();
-    }
-
-    if (account == null) {
-      return null;
-    }
-
-    final GoogleSignInAuthentication auth = await account.authentication;
+    final Map<String, String> headers = await getAuthHeaders(
+      clientId: clientId,
+      interactive: interactive,
+    );
+    final GoogleSignIn googleSignIn = _buildOrReuseSignIn(clientId);
+    final GoogleSignInAccount? account = googleSignIn.currentUser ?? await googleSignIn.signInSilently();
+    if (account == null) return null;
 
     return GoogleAuthPrepResult(
       email: account.email,
       displayName: account.displayName,
-      accessToken: auth.accessToken,
+      accessToken: _tokenFromAuthHeaders(headers),
       isConnected: true,
     );
   }
@@ -173,7 +213,7 @@ class GoogleAuthPrepService {
     required String clientId,
   }) async {
     if (clientId.trim().isEmpty) return;
-    final GoogleSignIn googleSignIn = _buildSignIn(clientId.trim());
+    final GoogleSignIn googleSignIn = _buildOrReuseSignIn(clientId);
     await googleSignIn.signOut();
   }
 }
