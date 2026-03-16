@@ -511,7 +511,7 @@ class _SettingsPageState extends State<SettingsPage> {
         throw Exception('Inserisci prima la cartella Drive PDF in ingresso.');
       }
 
-      final String accessToken = await _ensureGoogleAccessToken();
+      final String accessToken = await _ensureGoogleAccessToken(interactive: true);
 
       final DrivePdfScannerService scanner = DrivePdfScannerService(
         googleDriveService: GoogleDriveService(
@@ -556,7 +556,7 @@ class _SettingsPageState extends State<SettingsPage> {
     });
 
     try {
-      final String accessToken = await _ensureGoogleAccessToken();
+      final String accessToken = await _ensureGoogleAccessToken(interactive: true);
 
       final ImportedPdfProcessingService service = ImportedPdfProcessingService(
         googleDriveService: GoogleDriveService(
@@ -666,6 +666,7 @@ class _SettingsPageState extends State<SettingsPage> {
       }
 
       final String accessToken = await _ensureGoogleAccessToken(
+        interactive: true,
         includeGmail: true,
       );
 

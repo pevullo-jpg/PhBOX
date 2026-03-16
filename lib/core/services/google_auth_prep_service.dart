@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 class GoogleAuthPrepResult {
@@ -164,6 +165,36 @@ class GoogleAuthPrepService {
     }
   }
 
+  Future<void> _ensureScopes({
+    required GoogleSignIn googleSignIn,
+    required GoogleSignInAccount account,
+    required List<String> scopes,
+    required bool interactive,
+  }) async {
+    if (scopes.isEmpty) return;
+
+    if (kIsWeb) {
+      bool canAccess = false;
+      try {
+        canAccess = await googleSignIn.canAccessScopes(scopes);
+      } on UnimplementedError {
+        canAccess = true;
+      }
+
+      if (!canAccess) {
+        if (!interactive) {
+          throw Exception('Permessi Google Drive/Gmail non ancora concessi. Premi di nuovo il pulsante della scansione.');
+        }
+
+        final bool granted = await googleSignIn.requestScopes(scopes);
+        if (!granted) {
+          throw Exception('Permessi Google Drive/Gmail non concessi.');
+        }
+      }
+      return;
+    }
+  }
+
   Future<GoogleAuthPrepResult?> ensureAuthorizedSession({
     required String clientId,
     required List<String> scopes,
@@ -171,13 +202,24 @@ class GoogleAuthPrepService {
   }) async {
     if (clientId.trim().isEmpty) return null;
 
-    final Map<String, String> headers = await getAuthHeaders(
-      clientId: clientId,
+    final GoogleSignIn googleSignIn = _buildOrReuseSignIn(clientId);
+    final GoogleSignInAccount? account = await _getSignedAccount(
+      googleSignIn: googleSignIn,
       interactive: interactive,
     );
-    final GoogleSignIn googleSignIn = _buildOrReuseSignIn(clientId);
-    final GoogleSignInAccount? account = googleSignIn.currentUser ?? await googleSignIn.signInSilently();
     if (account == null) return null;
+
+    await _ensureScopes(
+      googleSignIn: googleSignIn,
+      account: account,
+      scopes: scopes,
+      interactive: interactive,
+    );
+
+    final Map<String, String> headers = await getAuthHeaders(
+      clientId: clientId,
+      interactive: false,
+    );
 
     return GoogleAuthPrepResult(
       email: account.email,
@@ -214,6 +256,10 @@ class GoogleAuthPrepService {
   }) async {
     if (clientId.trim().isEmpty) return;
     final GoogleSignIn googleSignIn = _buildOrReuseSignIn(clientId);
-    await googleSignIn.signOut();
+    try {
+      await googleSignIn.disconnect();
+    } catch (_) {
+      await googleSignIn.signOut();
+    }
   }
 }
