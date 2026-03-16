@@ -523,11 +523,11 @@ class PrescriptionPdfParserService {
   String _prepareFieldValue(String value) {
     String result = _cutAtMarkers(_cleanLine(value), _tailMarkers);
     result = result.replaceAll(
-      RegExp(r'(?i)([A-ZÀ-ÖØ-Ý])((?:CODICE|RILASCIATO|PROV|CAP|ESENZIONE|SIGLA|TIPOLOGIA|DISPOSIZIONI|ASL|COMUNE|CITTA|CITTÀ))'),
+      RegExp(r'([A-ZÀ-ÖØ-Ý])((?:CODICE|RILASCIATO|PROV|CAP|ESENZIONE|SIGLA|TIPOLOGIA|DISPOSIZIONI|ASL|COMUNE|CITTA|CITTÀ))', caseSensitive: false),
       r'$1 $2',
     );
     result = result.replaceAll(
-      RegExp(r'(?i)([A-ZÀ-ÖØ-Ý])((?:REGIONE|SICILIA|SERVIZIO))'),
+      RegExp(r'([A-ZÀ-ÖØ-Ý])((?:REGIONE|SICILIA|SERVIZIO))', caseSensitive: false),
       r'$1 $2',
     );
     result = result.replaceAll(RegExp(r"\b[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]\b"), ' ');
