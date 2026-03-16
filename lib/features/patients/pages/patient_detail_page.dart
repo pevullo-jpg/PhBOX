@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../../core/utils/prescription_expiry_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
@@ -38,6 +39,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   final MockPrescriptionParserService parser = MockPrescriptionParserService();
 
   bool isUploading = false;
+  bool isSavingQuickAction = false;
   String uploadMessage = '';
 
   @override
@@ -118,6 +120,39 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                 ],
                               ),
                               const SizedBox(height: 20),
+                              Wrap(
+                                spacing: 12,
+                                runSpacing: 12,
+                                children: <Widget>[
+                                  ElevatedButton.icon(
+                                    onPressed: isSavingQuickAction ? null : () => _openAddDebtDialog(data.patient!),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppColors.wine,
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                    ),
+                                    icon: const Icon(Icons.payments_outlined),
+                                    label: Text(
+                                      isSavingQuickAction ? 'Salvataggio...' : 'Aggiungi debito',
+                                      style: const TextStyle(fontWeight: FontWeight.w800),
+                                    ),
+                                  ),
+                                  ElevatedButton.icon(
+                                    onPressed: isSavingQuickAction ? null : () => _openAddBookingDialog(data.patient!),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppColors.coral,
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                    ),
+                                    icon: const Icon(Icons.event_note_outlined),
+                                    label: Text(
+                                      isSavingQuickAction ? 'Salvataggio...' : 'Aggiungi prenotazione',
+                                      style: const TextStyle(fontWeight: FontWeight.w800),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 20),
                               _buildTherapies(data.patient!),
                               const SizedBox(height: 20),
                               _buildPrescriptions(data.prescriptions),
@@ -154,6 +189,294 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       bookings: bookings,
       prescriptions: prescriptions,
     );
+  }
+
+  Future<void> _openAddDebtDialog(Patient patient) async {
+    final TextEditingController descriptionController = TextEditingController();
+    final TextEditingController amountController = TextEditingController();
+    final TextEditingController dueDateController = TextEditingController();
+    final TextEditingController noteController = TextEditingController();
+
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: AppColors.panel,
+          title: const Text('Nuovo debito', style: TextStyle(color: Colors.white)),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  _dialogField(controller: descriptionController, label: 'Descrizione'),
+                  const SizedBox(height: 12),
+                  _dialogField(
+                    controller: amountController,
+                    label: 'Importo (€)',
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: <TextInputFormatter>[
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]')),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _dialogField(controller: dueDateController, label: 'Scadenza (gg/mm/aaaa)'),
+                  const SizedBox(height: 12),
+                  _dialogField(controller: noteController, label: 'Nota', maxLines: 3),
+                ],
+              ),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.wine, foregroundColor: Colors.white),
+              child: const Text('Salva'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      descriptionController.dispose();
+      amountController.dispose();
+      dueDateController.dispose();
+      noteController.dispose();
+      return;
+    }
+
+    try {
+      setState(() {
+        isSavingQuickAction = true;
+        uploadMessage = '';
+      });
+
+      final String description = descriptionController.text.trim();
+      final double amount = _parseEuro(amountController.text);
+      final DateTime? dueDate = _parseItalianDate(dueDateController.text);
+      final String note = noteController.text.trim();
+
+      if (description.isEmpty) {
+        throw Exception('Inserisci la descrizione del debito.');
+      }
+      if (amount <= 0) {
+        throw Exception('Inserisci un importo valido.');
+      }
+
+      final Debt debt = Debt(
+        id: _buildLocalId('debt', patient.fiscalCode),
+        patientFiscalCode: patient.fiscalCode,
+        patientName: patient.fullName,
+        description: description,
+        amount: amount,
+        paidAmount: 0,
+        residualAmount: amount,
+        createdAt: DateTime.now(),
+        dueDate: dueDate,
+        status: 'open',
+        note: note.isEmpty ? null : note,
+      );
+
+      await debtsRepository.saveDebt(debt);
+      await patientsRepository.savePatient(
+        patient.copyWith(
+          hasDebt: true,
+          debtTotal: patient.debtTotal + amount,
+          updatedAt: DateTime.now(),
+        ),
+      );
+
+      if (!mounted) return;
+      setState(() {
+        uploadMessage = 'Debito aggiunto correttamente.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        uploadMessage = 'Errore salvataggio debito: $e';
+      });
+    } finally {
+      descriptionController.dispose();
+      amountController.dispose();
+      dueDateController.dispose();
+      noteController.dispose();
+      if (mounted) {
+        setState(() {
+          isSavingQuickAction = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _openAddBookingDialog(Patient patient) async {
+    final TextEditingController drugController = TextEditingController();
+    final TextEditingController quantityController = TextEditingController(text: '1');
+    final TextEditingController expectedDateController = TextEditingController();
+    final TextEditingController noteController = TextEditingController();
+
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: AppColors.panel,
+          title: const Text('Nuova prenotazione', style: TextStyle(color: Colors.white)),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  _dialogField(controller: drugController, label: 'Farmaco / articolo'),
+                  const SizedBox(height: 12),
+                  _dialogField(
+                    controller: quantityController,
+                    label: 'Quantità',
+                    keyboardType: TextInputType.number,
+                    inputFormatters: <TextInputFormatter>[FilteringTextInputFormatter.digitsOnly],
+                  ),
+                  const SizedBox(height: 12),
+                  _dialogField(controller: expectedDateController, label: 'Data prevista (gg/mm/aaaa)'),
+                  const SizedBox(height: 12),
+                  _dialogField(controller: noteController, label: 'Nota', maxLines: 3),
+                ],
+              ),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.coral, foregroundColor: Colors.white),
+              child: const Text('Salva'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      drugController.dispose();
+      quantityController.dispose();
+      expectedDateController.dispose();
+      noteController.dispose();
+      return;
+    }
+
+    try {
+      setState(() {
+        isSavingQuickAction = true;
+        uploadMessage = '';
+      });
+
+      final String drugName = drugController.text.trim();
+      final int quantity = int.tryParse(quantityController.text.trim()) ?? 1;
+      final DateTime? expectedDate = _parseItalianDate(expectedDateController.text);
+      final String note = noteController.text.trim();
+
+      if (drugName.isEmpty) {
+        throw Exception('Inserisci il nome della prenotazione.');
+      }
+      if (quantity <= 0) {
+        throw Exception('Inserisci una quantità valida.');
+      }
+
+      final Booking booking = Booking(
+        id: _buildLocalId('booking', patient.fiscalCode),
+        patientFiscalCode: patient.fiscalCode,
+        patientName: patient.fullName,
+        drugName: drugName,
+        quantity: quantity,
+        createdAt: DateTime.now(),
+        expectedDate: expectedDate,
+        status: 'open',
+        note: note.isEmpty ? null : note,
+      );
+
+      await bookingsRepository.saveBooking(booking);
+      await patientsRepository.savePatient(
+        patient.copyWith(
+          hasBooking: true,
+          updatedAt: DateTime.now(),
+        ),
+      );
+
+      if (!mounted) return;
+      setState(() {
+        uploadMessage = 'Prenotazione aggiunta correttamente.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        uploadMessage = 'Errore salvataggio prenotazione: $e';
+      });
+    } finally {
+      drugController.dispose();
+      quantityController.dispose();
+      expectedDateController.dispose();
+      noteController.dispose();
+      if (mounted) {
+        setState(() {
+          isSavingQuickAction = false;
+        });
+      }
+    }
+  }
+
+  Widget _dialogField({
+    required TextEditingController controller,
+    required String label,
+    TextInputType? keyboardType,
+    List<TextInputFormatter>? inputFormatters,
+    int maxLines = 1,
+  }) {
+    return TextField(
+      controller: controller,
+      keyboardType: keyboardType,
+      inputFormatters: inputFormatters,
+      maxLines: maxLines,
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(color: Colors.white70),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: Colors.white24),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: Colors.white70),
+        ),
+      ),
+    );
+  }
+
+  String _buildLocalId(String prefix, String fiscalCode) {
+    final String ts = DateTime.now().microsecondsSinceEpoch.toString();
+    return '${prefix}_${fiscalCode}_$ts';
+  }
+
+  double _parseEuro(String raw) {
+    final String normalized = raw.trim().replaceAll('.', '').replaceAll(',', '.');
+    return double.tryParse(normalized) ?? 0;
+  }
+
+  DateTime? _parseItalianDate(String raw) {
+    final String value = raw.trim();
+    if (value.isEmpty) return null;
+    final Match? match = RegExp(r'^(\d{1,2})\/(\d{1,2})\/(\d{4})$').firstMatch(value);
+    if (match == null) return null;
+    final int day = int.parse(match.group(1)!);
+    final int month = int.parse(match.group(2)!);
+    final int year = int.parse(match.group(3)!);
+    return DateTime(year, month, day);
   }
 
   Future<void> uploadMockPrescription() async {

@@ -15,20 +15,41 @@ class GoogleAuthPrepResult {
 }
 
 class GoogleAuthPrepService {
-  static const List<String> scopes = <String>[
+  static const List<String> basicScopes = <String>[
     'email',
-    'https://www.googleapis.com/auth/drive',
-    'https://www.googleapis.com/auth/gmail.modify',
+    'openid',
+    'profile',
+  ];
+
+  static const String driveScope = 'https://www.googleapis.com/auth/drive';
+  static const String gmailModifyScope = 'https://www.googleapis.com/auth/gmail.modify';
+
+  static const List<String> driveScopes = <String>[
+    driveScope,
+  ];
+
+  static const List<String> gmailScopes = <String>[
+    gmailModifyScope,
+  ];
+
+  static const List<String> driveAndGmailScopes = <String>[
+    driveScope,
+    gmailModifyScope,
+  ];
+
+  List<String> get _fullScopes => <String>[
+    ...basicScopes,
+    ...driveAndGmailScopes,
   ];
 
   GoogleSignIn _buildSignIn(String clientId) {
     return GoogleSignIn(
       clientId: clientId,
-      scopes: scopes,
+      scopes: _fullScopes,
     );
   }
 
-  Future<GoogleAuthPrepResult> signInForDriveRead({
+  Future<GoogleAuthPrepResult> signInForGoogleAccount({
     required String clientId,
   }) async {
     if (clientId.trim().isEmpty) {
@@ -40,12 +61,6 @@ class GoogleAuthPrepService {
 
     if (account == null) {
       throw Exception('Login Google annullato.');
-    }
-
-    final bool scopesGranted = await googleSignIn.requestScopes(scopes);
-
-    if (!scopesGranted) {
-      throw Exception('Permessi Google Drive/Gmail non concessi.');
     }
 
     final GoogleSignInAuthentication auth = await account.authentication;
@@ -78,32 +93,80 @@ class GoogleAuthPrepService {
     );
   }
 
+  Future<GoogleSignInAccount?> _getSignedAccount({
+    required GoogleSignIn googleSignIn,
+    required bool interactive,
+  }) async {
+    GoogleSignInAccount? account = googleSignIn.currentUser;
+    account ??= await googleSignIn.signInSilently();
+
+    if (account == null && interactive) {
+      account = await googleSignIn.signIn();
+    }
+
+    return account;
+  }
+
+  Future<bool> _canAccessScopes(
+    GoogleSignIn googleSignIn,
+    List<String> scopes,
+  ) async {
+    try {
+      return await googleSignIn.canAccessScopes(scopes);
+    } catch (_) {
+      return true;
+    }
+  }
+
+  Future<GoogleAuthPrepResult?> ensureAuthorizedSession({
+    required String clientId,
+    required List<String> scopes,
+    bool interactive = false,
+  }) async {
+    if (clientId.trim().isEmpty) return null;
+
+    final GoogleSignIn googleSignIn = _buildSignIn(clientId.trim());
+    GoogleSignInAccount? account = googleSignIn.currentUser;
+    account ??= await googleSignIn.signInSilently();
+
+    if (account == null && interactive) {
+      account = await googleSignIn.signIn();
+    }
+
+    if (account == null) {
+      return null;
+    }
+
+    final GoogleSignInAuthentication auth = await account.authentication;
+
+    return GoogleAuthPrepResult(
+      email: account.email,
+      displayName: account.displayName,
+      accessToken: auth.accessToken,
+      isConnected: true,
+    );
+  }
 
   Future<GoogleAuthPrepResult?> ensureDriveSession({
     required String clientId,
     bool interactive = false,
   }) async {
-    if (clientId.trim().isEmpty) return null;
-
-    GoogleAuthPrepResult? result = await tryRestoreSession(
+    return ensureAuthorizedSession(
       clientId: clientId,
+      scopes: driveScopes,
+      interactive: interactive,
     );
+  }
 
-    if (result != null && (result.accessToken?.isNotEmpty ?? false)) {
-      return result;
-    }
-
-    if (!interactive) return result;
-
-    result = await signInForDriveRead(
+  Future<GoogleAuthPrepResult?> ensureDriveAndGmailSession({
+    required String clientId,
+    bool interactive = false,
+  }) async {
+    return ensureAuthorizedSession(
       clientId: clientId,
+      scopes: driveAndGmailScopes,
+      interactive: interactive,
     );
-
-    if (result.accessToken == null || result.accessToken!.isEmpty) {
-      throw Exception('Sessione Google attiva ma token Drive non disponibile. Riprova il collegamento.');
-    }
-
-    return result;
   }
 
   Future<void> signOut({

@@ -212,24 +212,43 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
 
+  String _googleErrorMessage(Object error) {
+    final String raw = error.toString();
+    final String lower = raw.toLowerCase();
+
+    if (lower.contains('popup_closed') ||
+        lower.contains('popup closed') ||
+        lower.contains('popup_closed_by_user')) {
+      return 'Popup Google chiuso o bloccato. Usa il pulsante Collega account Google e consenti il popup del browser.';
+    }
+
+    return raw;
+  }
+
+
   Future<String> _ensureGoogleAccessToken({
     bool interactive = false,
+    bool includeGmail = false,
   }) async {
     if (currentAccessToken.trim().isNotEmpty) {
       return currentAccessToken.trim();
     }
 
-    final GoogleAuthPrepResult? result =
-        await googleAuthPrepService.ensureDriveSession(
-      clientId: googleWebClientIdController.text.trim(),
-      interactive: interactive,
-    );
+    final GoogleAuthPrepResult? result = includeGmail
+        ? await googleAuthPrepService.ensureDriveAndGmailSession(
+            clientId: googleWebClientIdController.text.trim(),
+            interactive: interactive,
+          )
+        : await googleAuthPrepService.ensureDriveSession(
+            clientId: googleWebClientIdController.text.trim(),
+            interactive: interactive,
+          );
 
     if (result == null || result.accessToken == null || result.accessToken!.trim().isEmpty) {
       throw Exception(
         interactive
-            ? "Impossibile completare la sessione Google Drive. Ricollega l'account."
-            : "Sessione Google Drive non valida. Premi prima “Verifica sessione” o ricollega l'account.",
+            ? 'Impossibile completare il collegamento Google.'
+            : 'Sessione Google assente o scaduta. Premi Collega account Google e rifai il login una sola volta.',
       );
     }
 
@@ -337,7 +356,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
     try {
       final GoogleAuthPrepResult result =
-          await googleAuthPrepService.signInForDriveRead(
+          await googleAuthPrepService.signInForGoogleAccount(
         clientId: googleWebClientIdController.text.trim(),
       );
 
@@ -360,13 +379,13 @@ class _SettingsPageState extends State<SettingsPage> {
 
       if (!mounted) return;
       setState(() {
-        message = 'Account Google collegato correttamente.';
+        message = 'Account Google collegato con Drive e Gmail. Da ora la sessione resta attiva finché non fai logout.';
         isErrorMessage = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        message = 'Errore login Google: $e';
+        message = 'Errore login Google: ${_googleErrorMessage(e)}';
         isErrorMessage = true;
       });
     } finally {
@@ -460,7 +479,7 @@ class _SettingsPageState extends State<SettingsPage> {
       setState(() {
         currentAccessToken = '';
         isGoogleConnected = false;
-        message = 'Errore verifica sessione Google: $e';
+        message = 'Errore verifica sessione Google: ${_googleErrorMessage(e)}';
         isErrorMessage = true;
       });
     } finally {
@@ -505,7 +524,7 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        message = 'Errore scansione Drive: $e';
+        message = 'Errore scansione Drive: ${_googleErrorMessage(e)}';
         isErrorMessage = true;
       });
     } finally {
@@ -554,7 +573,7 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        message = 'Errore analisi PDF: $e';
+        message = 'Errore analisi PDF: ${_googleErrorMessage(e)}';
         isErrorMessage = true;
       });
     } finally {
@@ -627,7 +646,9 @@ class _SettingsPageState extends State<SettingsPage> {
         throw Exception('Inserisci prima la cartella Drive PDF in ingresso.');
       }
 
-      final String accessToken = await _ensureGoogleAccessToken(interactive: true);
+      final String accessToken = await _ensureGoogleAccessToken(
+        includeGmail: true,
+      );
 
       final EmailPrescriptionScanService service = EmailPrescriptionScanService(
         gmailService: GmailService(accessToken: accessToken),
@@ -663,7 +684,7 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        message = 'Errore scansione email: $e';
+        message = 'Errore scansione email: ${_googleErrorMessage(e)}';
         isErrorMessage = true;
       });
     } finally {
