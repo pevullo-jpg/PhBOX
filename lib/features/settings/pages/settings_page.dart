@@ -226,7 +226,7 @@ class _SettingsPageState extends State<SettingsPage> {
         lower.contains('unauthenticated') ||
         lower.contains('credentials_missing') ||
         lower.contains('login required')) {
-      return 'Sessione Google non valida per Gmail/Drive. Fai logout Google, ricarica la pagina e collega di nuovo l'account una sola volta.';
+      return "Sessione Google non valida per Gmail/Drive. Fai logout Google, ricarica la pagina e collega di nuovo l'account una sola volta.";
     }
 
     return raw;

@@ -610,71 +610,55 @@ class PrescriptionPdfParserService {
 
   List<String> _extractMedicines(String normalized, List<String> lines) {
     final List<String> candidates = <String>[];
-    final List<String> sectionLines = _extractPrescriptionSectionLines(lines);
+    final List<String> sectionLines = _extractPrescriptionSectionLines(normalized, lines);
 
-    for (final String line in sectionLines) {
-      _appendMedicineCandidate(candidates, line);
-    }
-
-    for (final String line in lines) {
-      if (_looksLikeMedicineStarter(line)) {
-        _appendMedicineCandidate(candidates, line);
+    for (final String line in <String>[...sectionLines, ...lines]) {
+      if (_looksLikeMedicineLine(line)) {
+        candidates.add(_sanitizeMedicineLine(line));
       }
     }
 
     final List<String> unique = <String>[];
-    final Set<String> seen = <String>{};
     for (final String item in candidates) {
-      final String cleaned = _sanitizeMedicineLine(item);
-      if (cleaned.isEmpty) continue;
-      final String normalizedItem = _normalizeMedicineKey(cleaned);
-      if (normalizedItem.isEmpty || seen.contains(normalizedItem)) continue;
-      seen.add(normalizedItem);
-      unique.add(cleaned);
+      if (item.isEmpty) continue;
+      final String normalizedItem = item.toUpperCase();
+      if (unique.any((String existing) => existing.toUpperCase() == normalizedItem)) {
+        continue;
+      }
+      unique.add(item);
     }
     return unique;
   }
 
-  void _appendMedicineCandidate(List<String> target, String line) {
-    final String cleaned = _cleanLine(line);
-    if (cleaned.isEmpty) return;
-
-    if (target.isNotEmpty && _looksLikeMedicineContinuation(cleaned)) {
-      final String previous = target.removeLast();
-      target.add('$previous $cleaned');
-      return;
-    }
-
-    if (_looksLikeMedicineStarter(cleaned)) {
-      target.add(cleaned);
-    }
-  }
-
-  List<String> _extractPrescriptionSectionLines(List<String> lines) {
+  List<String> _extractPrescriptionSectionLines(String normalized, List<String> lines) {
     final List<String> results = <String>[];
     bool inside = false;
     int trailingWindow = 0;
 
     for (final String line in lines) {
-      final String upper = _cleanLine(line).toUpperCase();
-      if (upper.isEmpty) continue;
+      final String upper = line.toUpperCase();
 
       if (upper.contains('PRESCRIZIONE')) {
         inside = true;
-        trailingWindow = 12;
+        trailingWindow = 8;
         continue;
       }
 
-      if (inside && _isPrescriptionSectionBoundary(upper)) {
+      if (upper.contains('SERVIZIO SANITARIO NAZIONALE') && results.isNotEmpty) {
         inside = false;
+        trailingWindow = 0;
       }
 
-      if (!inside && trailingWindow <= 0 && !_looksLikeMedicineStarter(line)) {
+      if (!inside && trailingWindow <= 0) {
         continue;
       }
 
-      if (_looksLikeMedicineStarter(line) || _looksLikeMedicineContinuation(line)) {
+      if (_looksLikeMedicineLine(line)) {
         results.add(line);
+      }
+
+      if (inside && (upper.contains('QUESITO DIAGNOSTICO') || upper.contains('COGNOME E NOME DEL MEDICO'))) {
+        inside = false;
       }
 
       if (trailingWindow > 0) {
@@ -685,129 +669,47 @@ class PrescriptionPdfParserService {
     return results;
   }
 
-  bool _isPrescriptionSectionBoundary(String upper) {
-    return upper.contains('QUESITO DIAGNOSTICO') ||
-        upper.contains('COGNOME E NOME DEL MEDICO') ||
-        upper.contains('CODICE AUTENTICAZIONE') ||
-        upper.contains('RILASCIATO AI SENSI') ||
-        upper.contains('REGIONE SICILIA') ||
-        upper.contains('SERVIZIO SANITARIO NAZIONALE');
-  }
-
   bool _looksLikeMedicineLine(String line) {
-    return _looksLikeMedicineStarter(line) || _looksLikeMedicineContinuation(line);
-  }
-
-  bool _looksLikeMedicineStarter(String line) {
     final String cleaned = _cleanLine(line);
-    final String upper = cleaned.toUpperCase();
-    if (_isIgnoredMedicineLine(upper)) return false;
-
-    final bool startsWithProductCode = RegExp(
-      r'^(?:\(?[A-Z0-9]{2,4}\)?\s*[-–]\s*)?\d{6,10}(?:\s*[-–]\s*|\s+)[A-ZÀ-ÖØ-Ý0-9]',
-      caseSensitive: false,
-    ).hasMatch(cleaned);
-    final bool startsWithShortCode = RegExp(
-      r'^\(?[A-Z0-9]{3,4}\)?\s*[-–]\s*[A-ZÀ-ÖØ-Ý]',
-      caseSensitive: false,
-    ).hasMatch(cleaned);
-    final bool hasDosage = RegExp(
-      r'\b\d+(?:[\.,]\d+)?\s*(?:MG|MCG|G|GR|ML|UI|MUI|MMOL|%)\b',
-      caseSensitive: false,
-    ).hasMatch(cleaned);
-    final bool hasPharmaForm = RegExp(
-      r'\b(CPR|CP|CPS|COMPRESSE|CAPSULE|BUST(?:A|E|INE)|FLACONE|FIAL(?:A|E)|GOCCE|SCIROPPO|SOLUZIONE|CREMA|POMATA|GEL|SPRAY|PENNA|SIRINGA|CEROTTO|COLLIRIO|AEROSOL|RIV|OS|IM|SC|UT|ORODISPERSIBILE)\b',
-      caseSensitive: false,
-    ).hasMatch(cleaned);
-    final bool hasQuantity = RegExp(
-      r'\b(?:QTA|QT\.?A?|N\.?|X)\s*[:.]?\s*\d+\b',
-      caseSensitive: false,
-    ).hasMatch(cleaned);
-    final bool hasCommercialName = _containsLikelyCommercialName(cleaned);
-
-    return startsWithProductCode ||
-        startsWithShortCode ||
-        ((hasDosage || hasPharmaForm) && hasCommercialName) ||
-        (hasCommercialName && hasQuantity) ||
-        (hasDosage && hasPharmaForm);
-  }
-
-  bool _looksLikeMedicineContinuation(String line) {
-    final String cleaned = _cleanLine(line);
-    final String upper = cleaned.toUpperCase();
-    if (_isIgnoredMedicineLine(upper)) return false;
-    if (_looksLikeMedicineStarter(cleaned)) return false;
-    if (cleaned.length < 5) return false;
-    if (!RegExp(r'[A-ZÀ-ÖØ-Ý]{3,}', caseSensitive: false).hasMatch(cleaned)) {
+    final String upper = cleaned.toUpperCase().trim();
+    if (upper.isEmpty) return false;
+    if (upper == 'PRESCRIZIONE' ||
+        upper == 'QTA' ||
+        upper == "QTA'" ||
+        upper == 'NOTA' ||
+        upper == '---') {
+      return false;
+    }
+    if (upper.contains('CODICE FISCALE') ||
+        upper.contains('COGNOME E NOME') ||
+        upper.contains('QUESITO') ||
+        upper.contains('REGIONE SICILIA') ||
+        upper.contains('SERVIZIO SANITARIO') ||
+        upper.contains('ESENZIONE') ||
+        upper.contains('CODICE AUTENTICAZIONE') ||
+        upper.contains('RILASCIATO AI SENSI')) {
       return false;
     }
 
-    final bool hasDosageOrForm = RegExp(
-      r'\b(?:\d+(?:[\.,]\d+)?\s*(?:MG|MCG|G|GR|ML|UI|MUI|MMOL|%)|CPR|CP|CPS|COMPRESSE|CAPSULE|BUST(?:A|E|INE)|FLACONE|FIAL(?:A|E)|GOCCE|SCIROPPO|SOLUZIONE|CREMA|POMATA|GEL|SPRAY|PENNA|CEROTTO|COLLIRIO|AEROSOL|ORODISPERSIBILE)\b',
+    final bool dosageLike = RegExp(
+      r'(MG|MCG|G\b|ML|CPR|CPS|COMPRESSE|CAPSULE|SCIROPPO|GOCCE|FIALA|FIALE|BUSTINE|BUSTA|CEROTTO|FLACONE|SOLUZIONE|USO ORALE|RIV|CREMA|POMATA|SPRAY|PENNA|IM\b|OS\b)',
       caseSensitive: false,
     ).hasMatch(cleaned);
-    final bool compactText = cleaned.length <= 80;
+    final bool qtyLike = RegExp(r'\b(QTA|QT\.?A?\b|X\s*\d+|N\.?\s*\d+)\b', caseSensitive: false).hasMatch(cleaned);
+    final bool productCodeLike = RegExp(r'^\(?\d{6,9}\)?\s*[- ]\s*[A-ZÀ-ÖØ-Ý0-9]', caseSensitive: false).hasMatch(cleaned) ||
+        RegExp(r'^\d{6,9}\s+[A-ZÀ-ÖØ-Ý0-9]', caseSensitive: false).hasMatch(cleaned);
+    final bool recipeCodeLike = RegExp(r'^\(?[A-Z0-9]{3,4}\)?\s*[- ]\s*[A-ZÀ-ÖØ-Ý]', caseSensitive: false).hasMatch(cleaned);
+    final bool commercialLike = cleaned.contains('*') || cleaned.contains(':');
 
-    return hasDosageOrForm && compactText;
-  }
-
-  bool _isIgnoredMedicineLine(String upper) {
-    if (upper.isEmpty) return true;
-    const List<String> exactIgnored = <String>['PRESCRIZIONE', 'QTA', "QTA'", 'NOTA', '---'];
-    if (exactIgnored.contains(upper)) return true;
-
-    const List<String> forbiddenFragments = <String>[
-      'CODICE FISCALE',
-      'COGNOME E NOME',
-      'QUESITO',
-      'REGIONE SICILIA',
-      'SERVIZIO SANITARIO',
-      'ESENZIONE',
-      'CODICE AUTENTICAZIONE',
-      'RILASCIATO AI SENSI',
-      'COMUNE',
-      'CITTA',
-      'CITTÀ',
-      'PROV',
-      'MEDICO',
-      'ASSISTITO',
-      'TIPOLOGIA',
-      'DISPOSIZIONI',
-    ];
-    return forbiddenFragments.any(upper.contains);
-  }
-
-  bool _containsLikelyCommercialName(String value) {
-    final String cleaned = value
-        .replaceAll(RegExp(r'^\(?[A-Z0-9]{2,4}\)?\s*[-–]\s*', caseSensitive: false), '')
-        .replaceAll(RegExp(r'^\d{6,10}\s*[-–]?\s*', caseSensitive: false), '')
-        .replaceAll(RegExp(r'\b\d+(?:[\.,]\d+)?\s*(?:MG|MCG|G|GR|ML|UI|MUI|MMOL|%)\b', caseSensitive: false), ' ')
-        .replaceAll(RegExp(r'\b(CPR|CP|CPS|COMPRESSE|CAPSULE|BUST(?:A|E|INE)|FLACONE|FIAL(?:A|E)|GOCCE|SCIROPPO|SOLUZIONE|CREMA|POMATA|GEL|SPRAY|PENNA|CEROTTO|COLLIRIO|AEROSOL|ORODISPERSIBILE)\b', caseSensitive: false), ' ')
-        .replaceAll(RegExp(r'[^A-Za-zÀ-ÖØ-öø-ÿ\s\-\*]'), ' ')
-        .replaceAll(RegExp(r'\s{2,}'), ' ')
-        .trim();
-
-    final List<String> words = cleaned
-        .split(RegExp(r'\s+'))
-        .where((String word) => word.length >= 3)
-        .toList();
-    if (words.isEmpty) return false;
-    if (words.length == 1) {
-      return words.first.length >= 5;
-    }
-    return true;
-  }
-
-  String _normalizeMedicineKey(String value) {
-    return value.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9À-ÖØ-Ý]'), '');
+    return (dosageLike && (productCodeLike || recipeCodeLike || commercialLike || qtyLike)) ||
+        productCodeLike ||
+        (recipeCodeLike && dosageLike);
   }
 
   String _sanitizeMedicineLine(String line) {
     String cleaned = _cleanLine(line)
-        .replaceAll(RegExp(r'^\(?[A-Z0-9]{2,4}\)?\s*[-–]\s*', caseSensitive: false), '')
-        .replaceAll(RegExp(r'^\d{6,10}\s*[-–]?\s*', caseSensitive: false), '')
+        .replaceAll(RegExp(r'^\d+\s*[-–]\s*'), '')
         .replaceAll(RegExp(r'^QTA\s*:?\s*', caseSensitive: false), '')
-        .replaceAll(RegExp(r'^N\.?\s*:?\s*\d+\s*', caseSensitive: false), '')
         .replaceAll(RegExp(r'\s{2,}'), ' ')
         .trim();
 
@@ -819,15 +721,11 @@ class PrescriptionPdfParserService {
       'RILASCIATO',
       'COGNOME E NOME DEL MEDICO',
       'SERVIZIO SANITARIO',
-      'REGIONE SICILIA',
     ]);
     cleaned = cleaned.replaceAll(RegExp(r'\s+\d+\s*---$'), '');
     cleaned = cleaned.replaceAll(RegExp(r'\s+\d+\s+\d+$'), '');
     cleaned = cleaned.replaceAll(RegExp(r'^[\-:;,.\s]+'), '').trim();
     cleaned = cleaned.replaceAll(RegExp(r'[\-:;,.\s]+$'), '').trim();
-    if (cleaned.split(RegExp(r'\s+')).length > 10) {
-      cleaned = cleaned.split(RegExp(r'\s+')).take(10).join(' ').trim();
-    }
     return cleaned;
   }
 

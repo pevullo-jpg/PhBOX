@@ -107,7 +107,7 @@ class GoogleAuthPrepService {
     final Map<String, String> authHeaders = await account.authHeaders;
     final String? token = _tokenFromAuthHeaders(authHeaders);
     if (token == null) {
-      throw Exception('Token Google non disponibile. Ricollega l'account Google.');
+      throw Exception("Token Google non disponibile. Ricollega l'account Google.");
     }
 
     return <String, String>{
