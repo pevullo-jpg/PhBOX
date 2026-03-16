@@ -375,7 +375,7 @@ class PrescriptionPdfParserService {
         if (index < 0) continue;
 
         String inline = original.substring(index + label.length).trim();
-        inline = inline.replaceFirst(RegExp(r'^[\'":\-\s]+'), '').trim();
+        inline = inline.replaceFirst(RegExp('^[\\'":\\-\\s]+'), '').trim();
         final String cleanedInline = usePlaceSanitizer
             ? _sanitizePlace(inline, maxWords: maxWords)
             : _sanitizePersonName(inline, maxWords: maxWords);
