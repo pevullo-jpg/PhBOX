@@ -311,15 +311,18 @@ class _DashboardPageState extends State<DashboardPage> {
                                   Text(seedMessage, style: const TextStyle(color: Colors.white70)),
                                 ],
                                 const SizedBox(height: 24),
-                                Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.all(20),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.panel,
-                                    borderRadius: BorderRadius.circular(28),
-                                    border: Border.all(color: Colors.white10),
-                                  ),
-                                  child: filteredPatients.isEmpty
+                                Center(
+                                  child: ConstrainedBox(
+                                    constraints: const BoxConstraints(maxWidth: 1280),
+                                    child: Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.all(20),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.panel,
+                                        borderRadius: BorderRadius.circular(28),
+                                        border: Border.all(color: Colors.white10),
+                                      ),
+                                      child: filteredPatients.isEmpty
                                       ? const Text(
                                           'Nessun assistito presente.',
                                           style: TextStyle(color: Colors.white70),
@@ -403,6 +406,8 @@ class _DashboardPageState extends State<DashboardPage> {
                                             }).toList(),
                                           ),
                                         ),
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),

@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
+
 import '../../../core/utils/prescription_expiry_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
@@ -11,6 +13,7 @@ import '../../../data/models/prescription.dart';
 import '../../../data/repositories/advances_repository.dart';
 import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
+import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../shared/widgets/status_badge.dart';
@@ -34,6 +37,8 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   late final DebtsRepository debtsRepository;
   late final BookingsRepository bookingsRepository;
   late final PrescriptionsRepository prescriptionsRepository;
+  late final DrivePdfImportsRepository drivePdfImportsRepository;
+
   bool isSavingQuickAction = false;
   String uploadMessage = '';
 
@@ -50,6 +55,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       datasource: datasource,
       patientsRepository: patientsRepository,
     );
+    drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
   }
 
   @override
@@ -60,6 +66,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         final _PatientDetailData? data = snapshot.data;
 
         return Scaffold(
+          backgroundColor: AppColors.background,
           appBar: AppBar(
             backgroundColor: AppColors.background,
             foregroundColor: Colors.white,
@@ -76,7 +83,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                     )
                   : data == null || data.patient == null
                       ? const Center(
-                          child: Text('Assistito non trovato.', style: TextStyle(color: Colors.white)),
+                          child: Text(
+                            'Assistito non trovato.',
+                            style: TextStyle(color: Colors.white),
+                          ),
                         )
                       : SingleChildScrollView(
                           padding: const EdgeInsets.all(20),
@@ -85,76 +95,69 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                             children: <Widget>[
                               _buildHeader(data.patient!),
                               const SizedBox(height: 20),
-                              Row(
-                                children: <Widget>[
-                                  Expanded(
-                                    child: _FlagCard(
-                                      label: 'Debiti',
-                                      value: '${data.debts.length}',
-                                      color: data.debts.isNotEmpty ? AppColors.wine : AppColors.green,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  Expanded(
-                                    child: _FlagCard(
-                                      label: 'Anticipi',
-                                      value: '${data.advances.length}',
-                                      color: data.advances.isNotEmpty ? AppColors.amber : AppColors.green,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  Expanded(
-                                    child: _FlagCard(
-                                      label: 'Prenotazioni',
-                                      value: '${data.bookings.length}',
-                                      color: data.bookings.isNotEmpty ? AppColors.coral : AppColors.green,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 20),
                               Wrap(
-                                spacing: 12,
-                                runSpacing: 12,
+                                spacing: 16,
+                                runSpacing: 16,
                                 children: <Widget>[
-                                  ElevatedButton.icon(
-                                    onPressed: isSavingQuickAction ? null : () => _openAddDebtDialog(data.patient!),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: AppColors.wine,
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                    ),
-                                    icon: const Icon(Icons.payments_outlined),
-                                    label: Text(
-                                      isSavingQuickAction ? 'Salvataggio...' : 'Aggiungi debito',
-                                      style: const TextStyle(fontWeight: FontWeight.w800),
-                                    ),
+                                  _ActionSummaryCard(
+                                    label: 'Debiti',
+                                    value:
+                                        '€ ${data.totalDebt.toStringAsFixed(2)}',
+                                    subtitle: '${data.debts.length} voci',
+                                    color: AppColors.wine,
+                                    onTap: () => _openDebtsManager(data.patient!, data.debts),
+                                    onClear: data.debts.isEmpty
+                                        ? null
+                                        : () => _deleteAllDebts(data.patient!, data.debts),
                                   ),
-                                  ElevatedButton.icon(
-                                    onPressed: isSavingQuickAction ? null : () => _openAddBookingDialog(data.patient!),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: AppColors.coral,
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                    ),
-                                    icon: const Icon(Icons.event_note_outlined),
-                                    label: Text(
-                                      isSavingQuickAction ? 'Salvataggio...' : 'Aggiungi prenotazione',
-                                      style: const TextStyle(fontWeight: FontWeight.w800),
-                                    ),
+                                  _ActionSummaryCard(
+                                    label: 'Anticipi',
+                                    value: '${data.advances.length}',
+                                    subtitle: 'gestisci elenco',
+                                    color: AppColors.amber,
+                                    onTap: () => _openAdvancesManager(data.patient!, data.advances),
+                                    onClear: data.advances.isEmpty
+                                        ? null
+                                        : () => _deleteAllAdvances(data.patient!, data.advances),
+                                  ),
+                                  _ActionSummaryCard(
+                                    label: 'Prenotazioni',
+                                    value: '${data.bookings.length}',
+                                    subtitle: 'gestisci elenco',
+                                    color: AppColors.coral,
+                                    onTap: () => _openBookingsManager(data.patient!, data.bookings),
+                                    onClear: data.bookings.isEmpty
+                                        ? null
+                                        : () => _deleteAllBookings(data.patient!, data.bookings),
+                                  ),
+                                  _ActionSummaryCard(
+                                    label: 'Ricette',
+                                    value: '${data.totalRecipeCount}',
+                                    subtitle: '${data.prescriptions.length} documenti',
+                                    color: AppColors.green,
+                                    onTap: () => _openPrescriptionsManager(data.patient!, data.prescriptions),
+                                    onClear: data.prescriptions.isEmpty
+                                        ? null
+                                        : () => _deleteAllPrescriptions(data.patient!, data.prescriptions),
                                   ),
                                 ],
                               ),
+                              if (uploadMessage.isNotEmpty) ...<Widget>[
+                                const SizedBox(height: 16),
+                                Text(
+                                  uploadMessage,
+                                  style: TextStyle(
+                                    color: uploadMessage.toLowerCase().contains('errore')
+                                        ? AppColors.red
+                                        : AppColors.green,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
                               const SizedBox(height: 20),
                               _buildTherapies(data.patient!),
                               const SizedBox(height: 20),
-                              _buildPrescriptions(data.prescriptions),
-                              const SizedBox(height: 20),
-                              _buildDebts(data.debts),
-                              const SizedBox(height: 20),
-                              _buildAdvances(data.advances),
-                              const SizedBox(height: 20),
-                              _buildBookings(data.bookings),
+                              _buildPrescriptionDetails(data.patient!, data.prescriptions),
                             ],
                           ),
                         ),
@@ -168,8 +171,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         await patientsRepository.getPatientByFiscalCode(widget.fiscalCode);
     final List<Advance> advances =
         await advancesRepository.getPatientAdvances(widget.fiscalCode);
-    final List<Debt> debts =
-        await debtsRepository.getPatientDebts(widget.fiscalCode);
+    final List<Debt> debts = await debtsRepository.getPatientDebts(widget.fiscalCode);
     final List<Booking> bookings =
         await bookingsRepository.getPatientBookings(widget.fiscalCode);
     final List<Prescription> prescriptions =
@@ -181,6 +183,166 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       debts: debts,
       bookings: bookings,
       prescriptions: prescriptions,
+    );
+  }
+
+  Future<void> _refreshPatientFlags(Patient patient) async {
+    await prescriptionsRepository.refreshPatientAggregates(patient.fiscalCode);
+    final Patient? current =
+        await patientsRepository.getPatientByFiscalCode(patient.fiscalCode);
+    if (current == null) return;
+
+    final List<Debt> debts = await debtsRepository.getPatientDebts(patient.fiscalCode);
+    final List<Advance> advances =
+        await advancesRepository.getPatientAdvances(patient.fiscalCode);
+    final List<Booking> bookings =
+        await bookingsRepository.getPatientBookings(patient.fiscalCode);
+
+    final double totalDebt = debts.fold<double>(
+      0,
+      (double sum, Debt item) => sum + item.residualAmount,
+    );
+
+    await patientsRepository.savePatient(
+      current.copyWith(
+        hasDebt: debts.isNotEmpty,
+        debtTotal: totalDebt,
+        hasAdvance: advances.isNotEmpty,
+        hasBooking: bookings.isNotEmpty,
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  Future<void> _openDebtsManager(Patient patient, List<Debt> debts) async {
+    await _openCollectionManager<Debt>(
+      title: 'Debiti',
+      items: debts,
+      emptyLabel: 'Nessun debito registrato.',
+      buildRow: (Debt debt) => _ManagerRow(
+        title: debt.description,
+        subtitle:
+            'Residuo € ${debt.residualAmount.toStringAsFixed(2)} · Scadenza ${_formatDate(debt.dueDate)}${debt.note == null || debt.note!.trim().isEmpty ? '' : ' · ${debt.note!.trim()}'}',
+        badge: StatusBadge(text: debt.status.toUpperCase(), color: AppColors.wine),
+        onDelete: () => _deleteSingleDebt(patient, debt),
+      ),
+      onAdd: () => _openAddDebtDialog(patient),
+    );
+  }
+
+  Future<void> _openAdvancesManager(Patient patient, List<Advance> advances) async {
+    await _openCollectionManager<Advance>(
+      title: 'Anticipi',
+      items: advances,
+      emptyLabel: 'Nessun anticipo registrato.',
+      buildRow: (Advance advance) => _ManagerRow(
+        title: advance.drugName,
+        subtitle:
+            '${advance.doctorName.isEmpty ? '-' : advance.doctorName}${advance.note == null || advance.note!.trim().isEmpty ? '' : ' · ${advance.note!.trim()}'}',
+        badge: StatusBadge(
+          text: advance.matchedTherapyFlag ? 'MATCH' : advance.status.toUpperCase(),
+          color: advance.matchedTherapyFlag ? AppColors.green : AppColors.amber,
+        ),
+        onDelete: () => _deleteSingleAdvance(patient, advance),
+      ),
+      onAdd: () => _openAddAdvanceDialog(patient),
+    );
+  }
+
+  Future<void> _openBookingsManager(Patient patient, List<Booking> bookings) async {
+    await _openCollectionManager<Booking>(
+      title: 'Prenotazioni',
+      items: bookings,
+      emptyLabel: 'Nessuna prenotazione registrata.',
+      buildRow: (Booking booking) => _ManagerRow(
+        title: '${booking.drugName} x${booking.quantity}',
+        subtitle:
+            'Prevista ${_formatDate(booking.expectedDate)}${booking.note == null || booking.note!.trim().isEmpty ? '' : ' · ${booking.note!.trim()}'}',
+        badge: StatusBadge(text: booking.status.toUpperCase(), color: AppColors.coral),
+        onDelete: () => _deleteSingleBooking(patient, booking),
+      ),
+      onAdd: () => _openAddBookingDialog(patient),
+    );
+  }
+
+  Future<void> _openPrescriptionsManager(Patient patient, List<Prescription> prescriptions) async {
+    await _openCollectionManager<Prescription>(
+      title: 'Ricette',
+      items: prescriptions,
+      emptyLabel: 'Nessuna ricetta registrata.',
+      buildRow: (Prescription prescription) => _ManagerRow(
+        title: _prescriptionTitle(prescription),
+        subtitle:
+            '${_formatDate(prescription.prescriptionDate)} · ${prescription.doctorName ?? '-'} · ${prescription.prescriptionCount} ricetta/e',
+        badge: StatusBadge(
+          text: prescription.dpcFlag ? 'DPC' : prescription.sourceType.toUpperCase(),
+          color: prescription.dpcFlag ? AppColors.coral : AppColors.green,
+        ),
+        onDelete: () => _deleteSinglePrescription(patient, prescription),
+      ),
+    );
+  }
+
+  Future<void> _openCollectionManager<T>({
+    required String title,
+    required List<T> items,
+    required String emptyLabel,
+    required Widget Function(T item) buildRow,
+    Future<void> Function()? onAdd,
+  }) async {
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return Dialog(
+          backgroundColor: AppColors.panel,
+          child: SizedBox(
+            width: 760,
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      if (onAdd != null)
+                        FilledButton.icon(
+                          onPressed: () async {
+                            Navigator.of(dialogContext).pop();
+                            await onAdd();
+                          },
+                          icon: const Icon(Icons.add),
+                          label: const Text('Aggiungi'),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 520),
+                    child: items.isEmpty
+                        ? Text(emptyLabel, style: const TextStyle(color: Colors.white70))
+                        : SingleChildScrollView(
+                            child: Column(
+                              children: items.map(buildRow).toList(),
+                            ),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -227,7 +389,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
             ),
             ElevatedButton(
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              style: ElevatedButton.styleFrom(backgroundColor: AppColors.wine, foregroundColor: Colors.white),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.wine,
+                foregroundColor: Colors.white,
+              ),
               child: const Text('Salva'),
             ),
           ],
@@ -276,13 +441,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       );
 
       await debtsRepository.saveDebt(debt);
-      await patientsRepository.savePatient(
-        patient.copyWith(
-          hasDebt: true,
-          debtTotal: patient.debtTotal + amount,
-          updatedAt: DateTime.now(),
-        ),
-      );
+      await _refreshPatientFlags(patient);
 
       if (!mounted) return;
       setState(() {
@@ -297,6 +456,162 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       descriptionController.dispose();
       amountController.dispose();
       dueDateController.dispose();
+      noteController.dispose();
+      if (mounted) {
+        setState(() {
+          isSavingQuickAction = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _openAddAdvanceDialog(Patient patient) async {
+    final TextEditingController drugController = TextEditingController();
+    final TextEditingController doctorController =
+        TextEditingController(text: (patient.doctorName ?? '').trim());
+    final TextEditingController noteController = TextEditingController(
+      text: (patient.exemptionCode ?? '').trim().isEmpty
+          ? ''
+          : 'Esenzione: ${patient.exemptionCode!.trim()}',
+    );
+    bool matchedTherapyFlag = false;
+
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (BuildContext context, void Function(void Function()) setModalState) {
+            return AlertDialog(
+              backgroundColor: AppColors.panel,
+              title: const Text('Nuovo anticipo', style: TextStyle(color: Colors.white)),
+              content: SizedBox(
+                width: 460,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      if ((patient.doctorName ?? '').trim().isNotEmpty ||
+                          (patient.exemptionCode ?? '').trim().isNotEmpty) ...<Widget>[
+                        const Text(
+                          'Suggerimenti memoria assistito',
+                          style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: <Widget>[
+                            if ((patient.doctorName ?? '').trim().isNotEmpty)
+                              ActionChip(
+                                label: Text('Medico: ${patient.doctorName!.trim()}'),
+                                onPressed: () => doctorController.text = patient.doctorName!.trim(),
+                              ),
+                            if ((patient.exemptionCode ?? '').trim().isNotEmpty)
+                              ActionChip(
+                                label: Text('Esenzione: ${patient.exemptionCode!.trim()}'),
+                                onPressed: () {
+                                  final String prefix = 'Esenzione: ${patient.exemptionCode!.trim()}';
+                                  if (!noteController.text.contains(prefix)) {
+                                    noteController.text = noteController.text.trim().isEmpty
+                                        ? prefix
+                                        : '$prefix · ${noteController.text.trim()}';
+                                  }
+                                },
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                      ],
+                      _dialogField(controller: drugController, label: 'Farmaco / articolo'),
+                      const SizedBox(height: 12),
+                      _dialogField(controller: doctorController, label: 'Medico'),
+                      const SizedBox(height: 12),
+                      _dialogField(controller: noteController, label: 'Nota', maxLines: 3),
+                      const SizedBox(height: 12),
+                      SwitchListTile.adaptive(
+                        value: matchedTherapyFlag,
+                        activeColor: AppColors.green,
+                        title: const Text('Già allineato a terapia', style: TextStyle(color: Colors.white)),
+                        subtitle: const Text('Attivalo se l’anticipo corrisponde a una terapia nota.', style: TextStyle(color: Colors.white70)),
+                        onChanged: (bool value) => setModalState(() => matchedTherapyFlag = value),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.amber,
+                    foregroundColor: Colors.black,
+                  ),
+                  child: const Text('Salva'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      drugController.dispose();
+      doctorController.dispose();
+      noteController.dispose();
+      return;
+    }
+
+    try {
+      setState(() {
+        isSavingQuickAction = true;
+        uploadMessage = '';
+      });
+
+      final String drugName = drugController.text.trim();
+      final String doctorName = doctorController.text.trim();
+      final String note = noteController.text.trim();
+
+      if (drugName.isEmpty) {
+        throw Exception('Inserisci il nome dell’anticipo.');
+      }
+      if (doctorName.isEmpty) {
+        throw Exception('Seleziona o inserisci il medico.');
+      }
+
+      final Advance advance = Advance(
+        id: _buildLocalId('advance', patient.fiscalCode),
+        patientFiscalCode: patient.fiscalCode,
+        patientName: patient.fullName,
+        drugName: drugName,
+        doctorName: doctorName,
+        note: note.isEmpty ? null : note,
+        matchedTherapyFlag: matchedTherapyFlag,
+        status: 'open',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      await advancesRepository.saveAdvance(advance);
+      await _refreshPatientFlags(patient);
+
+      if (!mounted) return;
+      setState(() {
+        uploadMessage = 'Anticipo aggiunto correttamente.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        uploadMessage = 'Errore salvataggio anticipo: $e';
+      });
+    } finally {
+      drugController.dispose();
+      doctorController.dispose();
       noteController.dispose();
       if (mounted) {
         setState(() {
@@ -347,7 +662,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
             ),
             ElevatedButton(
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              style: ElevatedButton.styleFrom(backgroundColor: AppColors.coral, foregroundColor: Colors.white),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.coral,
+                foregroundColor: Colors.white,
+              ),
               child: const Text('Salva'),
             ),
           ],
@@ -394,12 +712,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       );
 
       await bookingsRepository.saveBooking(booking);
-      await patientsRepository.savePatient(
-        patient.copyWith(
-          hasBooking: true,
-          updatedAt: DateTime.now(),
-        ),
-      );
+      await _refreshPatientFlags(patient);
 
       if (!mounted) return;
       setState(() {
@@ -421,6 +734,150 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         });
       }
     }
+  }
+
+  Future<void> _deleteSingleDebt(Patient patient, Debt debt) async {
+    if (!await _confirmDelete('Eliminare questa voce debito?')) return;
+    try {
+      await debtsRepository.deleteDebt(patient.fiscalCode, debt.id);
+      await _refreshPatientFlags(patient);
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      setState(() => uploadMessage = 'Voce debito eliminata.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => uploadMessage = 'Errore eliminazione debito: $e');
+    }
+  }
+
+  Future<void> _deleteSingleAdvance(Patient patient, Advance advance) async {
+    if (!await _confirmDelete('Eliminare questo anticipo?')) return;
+    try {
+      await advancesRepository.deleteAdvance(patient.fiscalCode, advance.id);
+      await _refreshPatientFlags(patient);
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      setState(() => uploadMessage = 'Anticipo eliminato.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => uploadMessage = 'Errore eliminazione anticipo: $e');
+    }
+  }
+
+  Future<void> _deleteSingleBooking(Patient patient, Booking booking) async {
+    if (!await _confirmDelete('Eliminare questa prenotazione?')) return;
+    try {
+      await bookingsRepository.deleteBooking(patient.fiscalCode, booking.id);
+      await _refreshPatientFlags(patient);
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      setState(() => uploadMessage = 'Prenotazione eliminata.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => uploadMessage = 'Errore eliminazione prenotazione: $e');
+    }
+  }
+
+  Future<void> _deleteSinglePrescription(Patient patient, Prescription prescription) async {
+    if (!await _confirmDelete('Eliminare questa ricetta?')) return;
+    try {
+      if (prescription.sourceType == 'script') {
+        await drivePdfImportsRepository.deleteImport(prescription.id);
+      } else {
+        await prescriptionsRepository.deletePrescription(patient.fiscalCode, prescription.id);
+      }
+      await _refreshPatientFlags(patient);
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      setState(() => uploadMessage = 'Ricetta eliminata.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => uploadMessage = 'Errore eliminazione ricetta: $e');
+    }
+  }
+
+  Future<void> _deleteAllDebts(Patient patient, List<Debt> debts) async {
+    if (!await _confirmDelete('Eliminare tutti i debiti dell’assistito?')) return;
+    try {
+      for (final Debt debt in debts) {
+        await debtsRepository.deleteDebt(patient.fiscalCode, debt.id);
+      }
+      await _refreshPatientFlags(patient);
+      if (!mounted) return;
+      setState(() => uploadMessage = 'Tutti i debiti eliminati.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => uploadMessage = 'Errore eliminazione debiti: $e');
+    }
+  }
+
+  Future<void> _deleteAllAdvances(Patient patient, List<Advance> advances) async {
+    if (!await _confirmDelete('Eliminare tutti gli anticipi dell’assistito?')) return;
+    try {
+      for (final Advance advance in advances) {
+        await advancesRepository.deleteAdvance(patient.fiscalCode, advance.id);
+      }
+      await _refreshPatientFlags(patient);
+      if (!mounted) return;
+      setState(() => uploadMessage = 'Tutti gli anticipi eliminati.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => uploadMessage = 'Errore eliminazione anticipi: $e');
+    }
+  }
+
+  Future<void> _deleteAllBookings(Patient patient, List<Booking> bookings) async {
+    if (!await _confirmDelete('Eliminare tutte le prenotazioni dell’assistito?')) return;
+    try {
+      for (final Booking booking in bookings) {
+        await bookingsRepository.deleteBooking(patient.fiscalCode, booking.id);
+      }
+      await _refreshPatientFlags(patient);
+      if (!mounted) return;
+      setState(() => uploadMessage = 'Tutte le prenotazioni eliminate.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => uploadMessage = 'Errore eliminazione prenotazioni: $e');
+    }
+  }
+
+  Future<void> _deleteAllPrescriptions(Patient patient, List<Prescription> prescriptions) async {
+    if (!await _confirmDelete('Eliminare tutte le ricette dell’assistito?')) return;
+    try {
+      await prescriptionsRepository.deleteAllPatientPrescriptions(patient.fiscalCode);
+      await drivePdfImportsRepository.deleteImportsByPatient(patient.fiscalCode);
+      await _refreshPatientFlags(patient);
+      if (!mounted) return;
+      setState(() => uploadMessage = 'Tutte le ricette eliminate.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => uploadMessage = 'Errore eliminazione ricette: $e');
+    }
+  }
+
+  Future<bool> _confirmDelete(String message) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: AppColors.panel,
+          title: const Text('Conferma eliminazione', style: TextStyle(color: Colors.white)),
+          content: Text(message, style: const TextStyle(color: Colors.white70)),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: FilledButton.styleFrom(backgroundColor: AppColors.red),
+              child: const Text('Elimina'),
+            ),
+          ],
+        );
+      },
+    );
+    return confirmed == true;
   }
 
   Widget _dialogField({
@@ -471,8 +928,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     final int year = int.parse(match.group(3)!);
     return DateTime(year, month, day);
   }
-
-
 
   Widget _buildHeader(Patient patient) {
     final DateTime? lastDate = patient.lastPrescriptionDate;
@@ -550,114 +1005,141 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     );
   }
 
-  Widget _buildPrescriptions(List<Prescription> prescriptions) {
-    return _SectionCard(
-      title: 'Ricette',
-      emptyLabel: 'Nessuna ricetta registrata.',
-      child: prescriptions.isEmpty
-          ? null
-          : Column(
+  Widget _buildPrescriptionDetails(Patient patient, List<Prescription> prescriptions) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: AppColors.panel,
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text('Dettaglio ricette', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 18),
+          if (prescriptions.isEmpty)
+            const Text('Nessuna ricetta registrata.', style: TextStyle(color: Colors.white70))
+          else
+            Column(
               children: prescriptions.map((Prescription prescription) {
-                final String itemLabel =
-                    prescription.items.map((item) => item.drugName).join(', ');
-                final expiryInfo = PrescriptionExpiryUtils.evaluate(prescription.expiryDate);
-
+                final PrescriptionExpiryInfo expiryInfo =
+                    PrescriptionExpiryUtils.evaluate(prescription.expiryDate);
                 return Container(
+                  width: double.infinity,
                   margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(18),
                   decoration: BoxDecoration(
                     color: AppColors.panelSoft,
-                    borderRadius: BorderRadius.circular(18),
+                    borderRadius: BorderRadius.circular(20),
                   ),
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: <Widget>[
-                            Text(
-                              itemLabel.isEmpty ? 'Ricetta' : itemLabel,
-                              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: <Widget>[
+                                Text(
+                                  _prescriptionTitle(prescription),
+                                  style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800),
+                                ),
+                                const SizedBox(height: 8),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: <Widget>[
+                                    StatusBadge(text: expiryInfo.label, color: expiryInfo.color),
+                                    StatusBadge(
+                                      text: prescription.dpcFlag ? 'DPC' : prescription.sourceType.toUpperCase(),
+                                      color: prescription.dpcFlag ? AppColors.coral : AppColors.green,
+                                    ),
+                                    StatusBadge(text: '${prescription.prescriptionCount} ricetta/e', color: AppColors.amber),
+                                  ],
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 6),
-                            Text(
-                              '${_formatDate(prescription.prescriptionDate)} · ${prescription.doctorName ?? '-'} · scadenza ${_formatDate(prescription.expiryDate)}',
-                              style: const TextStyle(color: Colors.white70),
-                            ),
-                          ],
+                          ),
+                          IconButton(
+                            tooltip: 'Elimina ricetta',
+                            onPressed: () => _deleteSinglePrescription(patient, prescription),
+                            icon: const Icon(Icons.delete_outline, color: AppColors.red),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      _detailRow('Data', _formatDate(prescription.prescriptionDate)),
+                      _detailRow('Scadenza', _formatDate(prescription.expiryDate)),
+                      _detailRow('Medico', (prescription.doctorName ?? '-').trim().isEmpty ? '-' : prescription.doctorName!.trim()),
+                      _detailRow('Esenzione', (prescription.exemptionCode ?? '-').trim().isEmpty ? '-' : prescription.exemptionCode!.trim()),
+                      _detailRow('Città', (prescription.city ?? '-').trim().isEmpty ? '-' : prescription.city!.trim()),
+                      _detailRow('Terapie', _prescriptionItemsLabel(prescription)),
+                      if (prescription.sourceType == 'script') ...<Widget>[
+                        const SizedBox(height: 12),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: OutlinedButton.icon(
+                            onPressed: () => _openPdfByPrescription(patient, prescription),
+                            icon: const Icon(Icons.open_in_new),
+                            label: const Text('Apri PDF'),
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      StatusBadge(text: expiryInfo.label, color: expiryInfo.color),
-                      const SizedBox(width: 8),
-                      StatusBadge(
-                        text: prescription.sourceType.toUpperCase(),
-                        color: prescription.dpcFlag ? AppColors.coral : AppColors.green,
-                      ),
+                      ],
                     ],
                   ),
                 );
               }).toList(),
             ),
+        ],
+      ),
     );
   }
 
-  Widget _buildDebts(List<Debt> debts) {
-    return _SectionCard(
-      title: 'Debiti',
-      emptyLabel: 'Nessun debito registrato.',
-      child: debts.isEmpty
-          ? null
-          : Column(
-              children: debts.map((Debt debt) {
-                return _LineItem(
-                  title: debt.description,
-                  subtitle:
-                      'Residuo € ${debt.residualAmount.toStringAsFixed(2)} · Scadenza ${_formatDate(debt.dueDate)}',
-                  badgeText: debt.status.toUpperCase(),
-                  badgeColor: AppColors.wine,
-                );
-              }).toList(),
-            ),
-    );
+  Future<void> _openPdfByPrescription(Patient patient, Prescription prescription) async {
+    final imports = await drivePdfImportsRepository.getImportsByPatient(patient.fiscalCode);
+    final match = imports.where((item) => item.id == prescription.id).toList();
+    if (match.isEmpty || match.first.webViewLink.trim().isEmpty) {
+      if (!mounted) return;
+      setState(() => uploadMessage = 'PDF non disponibile per questa ricetta.');
+      return;
+    }
+    await launchUrl(Uri.parse(match.first.webViewLink), webOnlyWindowName: '_blank');
   }
 
-  Widget _buildAdvances(List<Advance> advances) {
-    return _SectionCard(
-      title: 'Anticipi',
-      emptyLabel: 'Nessun anticipo registrato.',
-      child: advances.isEmpty
-          ? null
-          : Column(
-              children: advances.map((Advance advance) {
-                return _LineItem(
-                  title: advance.drugName,
-                  subtitle: '${advance.doctorName} · ${advance.note ?? 'Nessuna nota'}',
-                  badgeText: advance.matchedTherapyFlag ? 'MATCH' : 'CHECK',
-                  badgeColor: advance.matchedTherapyFlag ? AppColors.green : AppColors.amber,
-                );
-              }).toList(),
-            ),
-    );
+  String _prescriptionTitle(Prescription prescription) {
+    final String label = _prescriptionItemsLabel(prescription);
+    return label.isEmpty ? 'Ricetta' : label;
   }
 
-  Widget _buildBookings(List<Booking> bookings) {
-    return _SectionCard(
-      title: 'Prenotazioni',
-      emptyLabel: 'Nessuna prenotazione registrata.',
-      child: bookings.isEmpty
-          ? null
-          : Column(
-              children: bookings.map((Booking booking) {
-                return _LineItem(
-                  title: '${booking.drugName} x${booking.quantity}',
-                  subtitle:
-                      'Prevista ${_formatDate(booking.expectedDate)} · ${booking.note ?? 'Nessuna nota'}',
-                  badgeText: booking.status.toUpperCase(),
-                  badgeColor: AppColors.coral,
-                );
-              }).toList(),
+  String _prescriptionItemsLabel(Prescription prescription) {
+    return prescription.items
+        .map((item) => item.drugName.trim())
+        .where((String item) => item.isNotEmpty)
+        .join(', ');
+  }
+
+  Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: RichText(
+        text: TextSpan(
+          style: const TextStyle(color: Colors.white70, height: 1.4),
+          children: <InlineSpan>[
+            TextSpan(
+              text: '$label: ',
+              style: const TextStyle(fontWeight: FontWeight.w700),
             ),
+            TextSpan(
+              text: value,
+              style: const TextStyle(color: Colors.white),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -669,8 +1151,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     return '$day/$month/$year';
   }
 }
-
-
 
 class _MetaBadge extends StatelessWidget {
   final String label;
@@ -720,100 +1200,91 @@ class _PatientDetailData {
     required this.bookings,
     required this.prescriptions,
   });
+
+  double get totalDebt => debts.fold<double>(
+        0,
+        (double sum, Debt item) => sum + item.residualAmount,
+      );
+
+  int get totalRecipeCount => prescriptions.fold<int>(
+        0,
+        (int sum, Prescription item) => sum + item.prescriptionCount,
+      );
 }
 
-class _InfoCard extends StatelessWidget {
-  final String title;
-  final String value;
-
-  const _InfoCard({required this.title, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 220,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(color: AppColors.panelSoft, borderRadius: BorderRadius.circular(22)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(title, style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 10),
-          Text(value, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900)),
-        ],
-      ),
-    );
-  }
-}
-
-class _FlagCard extends StatelessWidget {
+class _ActionSummaryCard extends StatelessWidget {
   final String label;
   final String value;
+  final String subtitle;
   final Color color;
+  final VoidCallback onTap;
+  final VoidCallback? onClear;
 
-  const _FlagCard({required this.label, required this.value, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(24)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(label, style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 14, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 10),
-          Text(value, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900)),
-        ],
-      ),
-    );
-  }
-}
-
-class _SectionCard extends StatelessWidget {
-  final String title;
-  final String emptyLabel;
-  final Widget? child;
-
-  const _SectionCard({
-    required this.title,
-    required this.emptyLabel,
-    required this.child,
+  const _ActionSummaryCard({
+    required this.label,
+    required this.value,
+    required this.subtitle,
+    required this.color,
+    required this.onTap,
+    this.onClear,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: AppColors.panel,
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(title, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900)),
-          const SizedBox(height: 18),
-          child ?? Text(emptyLabel, style: const TextStyle(color: Colors.white70)),
-        ],
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(24),
+      child: Container(
+        width: 270,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(24)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.92),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: onClear,
+                  splashRadius: 18,
+                  icon: Icon(
+                    Icons.delete_outline,
+                    color: onClear == null ? Colors.white38 : Colors.white,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(value, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 6),
+            Text(subtitle, style: TextStyle(color: Colors.white.withValues(alpha: 0.84))),
+          ],
+        ),
       ),
     );
   }
 }
 
-class _LineItem extends StatelessWidget {
+class _ManagerRow extends StatelessWidget {
   final String title;
   final String subtitle;
-  final String badgeText;
-  final Color badgeColor;
+  final Widget badge;
+  final VoidCallback onDelete;
 
-  const _LineItem({
+  const _ManagerRow({
     required this.title,
     required this.subtitle,
-    required this.badgeText,
-    required this.badgeColor,
+    required this.badge,
+    required this.onDelete,
   });
 
   @override
@@ -823,6 +1294,7 @@ class _LineItem extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(color: AppColors.panelSoft, borderRadius: BorderRadius.circular(18)),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Expanded(
             child: Column(
@@ -830,11 +1302,18 @@ class _LineItem extends StatelessWidget {
               children: <Widget>[
                 Text(title, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
                 const SizedBox(height: 6),
-                Text(subtitle, style: const TextStyle(color: Colors.white70)),
+                Text(subtitle, style: const TextStyle(color: Colors.white70, height: 1.4)),
               ],
             ),
           ),
-          StatusBadge(text: badgeText, color: badgeColor),
+          const SizedBox(width: 10),
+          badge,
+          const SizedBox(width: 8),
+          IconButton(
+            onPressed: onDelete,
+            tooltip: 'Elimina',
+            icon: const Icon(Icons.delete_outline, color: AppColors.red),
+          ),
         ],
       ),
     );

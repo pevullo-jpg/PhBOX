@@ -27,4 +27,14 @@ class BookingsRepository {
     );
     return maps.map(Booking.fromMap).toList();
   }
+
+
+  Future<void> deleteBooking(String fiscalCode, String id) {
+    return datasource.deleteSubDocument(
+      collectionPath: AppCollections.patients,
+      documentId: fiscalCode,
+      subcollectionPath: AppCollections.bookings,
+      subDocumentId: id,
+    );
+  }
 }

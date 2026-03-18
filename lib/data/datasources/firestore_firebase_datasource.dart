@@ -59,6 +59,18 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
   }
 
   @override
+
+  @override
+  Future<void> deleteSubDocument({
+    required String collectionPath,
+    required String documentId,
+    required String subcollectionPath,
+    required String subDocumentId,
+  }) {
+    return firestore.collection(collectionPath).doc(documentId).collection(subcollectionPath).doc(subDocumentId).delete();
+  }
+
+  @override
   Future<List<Map<String, dynamic>>> getSubCollection({
     required String collectionPath,
     required String documentId,

@@ -36,4 +36,11 @@ abstract class FirestoreDatasource {
     String? orderBy,
     bool descending = false,
   });
+
+  Future<void> deleteSubDocument({
+    required String collectionPath,
+    required String documentId,
+    required String subcollectionPath,
+    required String subDocumentId,
+  });
 }

@@ -27,4 +27,14 @@ class DebtsRepository {
     );
     return maps.map(Debt.fromMap).toList();
   }
+
+
+  Future<void> deleteDebt(String fiscalCode, String id) {
+    return datasource.deleteSubDocument(
+      collectionPath: AppCollections.patients,
+      documentId: fiscalCode,
+      subcollectionPath: AppCollections.debts,
+      subDocumentId: id,
+    );
+  }
 }

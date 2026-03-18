@@ -27,4 +27,14 @@ class AdvancesRepository {
     );
     return maps.map(Advance.fromMap).toList();
   }
+
+
+  Future<void> deleteAdvance(String fiscalCode, String id) {
+    return datasource.deleteSubDocument(
+      collectionPath: AppCollections.patients,
+      documentId: fiscalCode,
+      subcollectionPath: AppCollections.advances,
+      subDocumentId: id,
+    );
+  }
 }

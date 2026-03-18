@@ -112,4 +112,30 @@ class PrescriptionsRepository {
       updatedAt: item.updatedAt,
     );
   }
+
+
+  Future<void> deletePrescription(String fiscalCode, String prescriptionId) async {
+    await datasource.deleteSubDocument(
+      collectionPath: AppCollections.patients,
+      documentId: fiscalCode,
+      subcollectionPath: AppCollections.prescriptions,
+      subDocumentId: prescriptionId,
+    );
+    await refreshPatientAggregates(fiscalCode);
+  }
+
+  Future<void> deleteAllPatientPrescriptions(String fiscalCode) async {
+    final List<Prescription> prescriptions = await getPatientPrescriptions(fiscalCode);
+    for (final Prescription prescription in prescriptions) {
+      try {
+        await datasource.deleteSubDocument(
+          collectionPath: AppCollections.patients,
+          documentId: fiscalCode,
+          subcollectionPath: AppCollections.prescriptions,
+          subDocumentId: prescription.id,
+        );
+      } catch (_) {}
+    }
+    await refreshPatientAggregates(fiscalCode);
+  }
 }

@@ -33,4 +33,19 @@ class DrivePdfImportsRepository {
     filtered.sort((DrivePdfImport a, DrivePdfImport b) => b.createdAt.compareTo(a.createdAt));
     return filtered;
   }
+
+
+  Future<void> deleteImport(String id) {
+    return datasource.deleteDocument(
+      collectionPath: AppCollections.drivePdfImports,
+      documentId: id,
+    );
+  }
+
+  Future<void> deleteImportsByPatient(String fiscalCode) async {
+    final List<DrivePdfImport> imports = await getImportsByPatient(fiscalCode);
+    for (final DrivePdfImport item in imports) {
+      await deleteImport(item.id);
+    }
+  }
 }
