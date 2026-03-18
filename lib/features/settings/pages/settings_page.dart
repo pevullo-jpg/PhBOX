@@ -17,6 +17,7 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   late final SettingsRepository repository;
   final TextEditingController expiryWarningController = TextEditingController();
+  final TextEditingController doctorsCatalogController = TextEditingController();
 
   bool isSaving = false;
   bool isLoading = true;
@@ -37,6 +38,7 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void dispose() {
     expiryWarningController.dispose();
+    doctorsCatalogController.dispose();
     super.dispose();
   }
 
@@ -52,6 +54,7 @@ class _SettingsPageState extends State<SettingsPage> {
       setState(() {
         currentSettings = settings;
         expiryWarningController.text = settings.expiryWarningDays.toString();
+        doctorsCatalogController.text = settings.doctorsCatalog.join('\n');
       });
     } catch (e) {
       if (!mounted) return;
@@ -76,8 +79,16 @@ class _SettingsPageState extends State<SettingsPage> {
 
     try {
       final int expiryWarningDays = int.tryParse(expiryWarningController.text.trim()) ?? 7;
+      final List<String> doctorsCatalog = doctorsCatalogController.text
+          .split(RegExp(r'[\n,;]+'))
+          .map((String item) => item.trim())
+          .where((String item) => item.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
       final AppSettings updated = currentSettings.copyWith(
         expiryWarningDays: expiryWarningDays,
+        doctorsCatalog: doctorsCatalog,
         updatedAt: DateTime.now(),
       );
       await repository.saveSettings(updated);
@@ -150,6 +161,27 @@ class _SettingsPageState extends State<SettingsPage> {
                     child: FilledButton(
                       onPressed: isSaving ? null : _save,
                       child: Text(isSaving ? 'Salvataggio...' : 'Salva'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+            SettingsFieldCard(
+              title: 'Medici disponibili',
+              subtitle: 'Elenco usato nel menu a tendina degli anticipi. Un medico per riga oppure separati da virgola.',
+              child: Column(
+                children: <Widget>[
+                  TextField(
+                    controller: doctorsCatalogController,
+                    minLines: 4,
+                    maxLines: 8,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Lista medici',
+                      alignLabelWithHint: true,
+                      labelStyle: TextStyle(color: Colors.white70),
                     ),
                   ),
                 ],

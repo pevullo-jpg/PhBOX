@@ -18,6 +18,7 @@ class AppSettings {
   final String emailIgnoredLabel;
   final String emailScanQuery;
   final int emailMaxResults;
+  final List<String> doctorsCatalog;
   final DateTime updatedAt;
 
   const AppSettings({
@@ -40,6 +41,7 @@ class AppSettings {
     this.emailIgnoredLabel = 'PhBOX Ignored',
     this.emailScanQuery = 'in:inbox has:attachment',
     this.emailMaxResults = 25,
+    this.doctorsCatalog = const <String>[],
     required this.updatedAt,
   });
 
@@ -63,6 +65,7 @@ class AppSettings {
     String? emailIgnoredLabel,
     String? emailScanQuery,
     int? emailMaxResults,
+    List<String>? doctorsCatalog,
     DateTime? updatedAt,
   }) {
     return AppSettings(
@@ -91,6 +94,7 @@ class AppSettings {
       emailIgnoredLabel: emailIgnoredLabel ?? this.emailIgnoredLabel,
       emailScanQuery: emailScanQuery ?? this.emailScanQuery,
       emailMaxResults: emailMaxResults ?? this.emailMaxResults,
+      doctorsCatalog: doctorsCatalog ?? this.doctorsCatalog,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -116,6 +120,7 @@ class AppSettings {
       'emailIgnoredLabel': emailIgnoredLabel,
       'emailScanQuery': emailScanQuery,
       'emailMaxResults': emailMaxResults,
+      'doctorsCatalog': doctorsCatalog,
       'updatedAt': updatedAt.toIso8601String(),
     };
   }
@@ -151,6 +156,7 @@ class AppSettings {
       emailScanQuery:
           (map['emailScanQuery'] ?? 'in:inbox has:attachment') as String,
       emailMaxResults: (map['emailMaxResults'] ?? 25) as int,
+      doctorsCatalog: List<String>.from(map['doctorsCatalog'] ?? const <String>[]),
       updatedAt: _readDate(map['updatedAt']) ?? DateTime.now(),
     );
   }

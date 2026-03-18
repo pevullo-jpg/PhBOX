@@ -31,4 +31,11 @@ class PatientsRepository {
     );
     return maps.map(Patient.fromMap).toList();
   }
+
+  Future<void> deletePatient(String fiscalCode) {
+    return datasource.deleteDocument(
+      collectionPath: AppCollections.patients,
+      documentId: fiscalCode,
+    );
+  }
 }

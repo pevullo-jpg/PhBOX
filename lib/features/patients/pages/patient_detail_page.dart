@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/utils/prescription_expiry_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
+import '../../../data/models/app_settings.dart';
 import '../../../data/models/booking.dart';
 import '../../../data/models/debt.dart';
 import '../../../data/models/patient.dart';
@@ -16,6 +17,7 @@ import '../../../data/repositories/debts_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
+import '../../../data/repositories/settings_repository.dart';
 import '../../../shared/widgets/status_badge.dart';
 import '../../../theme/app_theme.dart';
 
@@ -38,6 +40,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   late final BookingsRepository bookingsRepository;
   late final PrescriptionsRepository prescriptionsRepository;
   late final DrivePdfImportsRepository drivePdfImportsRepository;
+  late final SettingsRepository settingsRepository;
 
   bool isSavingQuickAction = false;
   String uploadMessage = '';
@@ -56,6 +59,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       patientsRepository: patientsRepository,
     );
     drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
+    settingsRepository = SettingsRepository(datasource: datasource);
   }
 
   @override
@@ -238,7 +242,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       buildRow: (Advance advance) => _ManagerRow(
         title: advance.drugName,
         subtitle:
-            '${advance.doctorName.isEmpty ? '-' : advance.doctorName}${advance.note == null || advance.note!.trim().isEmpty ? '' : ' · ${advance.note!.trim()}'}',
+            '${_formatDate(advance.createdAt)} · ${advance.doctorName.isEmpty ? '-' : advance.doctorName}${advance.note == null || advance.note!.trim().isEmpty ? '' : ' · ${advance.note!.trim()}'}',
         badge: StatusBadge(
           text: advance.matchedTherapyFlag ? 'MATCH' : advance.status.toUpperCase(),
           color: advance.matchedTherapyFlag ? AppColors.green : AppColors.amber,
@@ -257,7 +261,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       buildRow: (Booking booking) => _ManagerRow(
         title: '${booking.drugName} x${booking.quantity}',
         subtitle:
-            'Prevista ${_formatDate(booking.expectedDate)}${booking.note == null || booking.note!.trim().isEmpty ? '' : ' · ${booking.note!.trim()}'}',
+            'Inserita ${_formatDate(booking.createdAt)} · Prevista ${_formatDate(booking.expectedDate)}${booking.note == null || booking.note!.trim().isEmpty ? '' : ' · ${booking.note!.trim()}'}',
         badge: StatusBadge(text: booking.status.toUpperCase(), color: AppColors.coral),
         onDelete: () => _deleteSingleBooking(patient, booking),
       ),
@@ -466,15 +470,23 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   }
 
   Future<void> _openAddAdvanceDialog(Patient patient) async {
+    final AppSettings settings = await settingsRepository.getSettings();
+    final List<String> doctors = <String>{
+      ...settings.doctorsCatalog.map((String item) => item.trim()).where((String item) => item.isNotEmpty),
+      if ((patient.doctorName ?? '').trim().isNotEmpty) patient.doctorName!.trim(),
+    }.toList()
+      ..sort();
     final TextEditingController drugController = TextEditingController();
-    final TextEditingController doctorController =
-        TextEditingController(text: (patient.doctorName ?? '').trim());
     final TextEditingController noteController = TextEditingController(
       text: (patient.exemptionCode ?? '').trim().isEmpty
           ? ''
           : 'Esenzione: ${patient.exemptionCode!.trim()}',
     );
+    String? selectedDoctor = doctors.isNotEmpty
+        ? ((patient.doctorName ?? '').trim().isNotEmpty ? patient.doctorName!.trim() : doctors.first)
+        : null;
     bool matchedTherapyFlag = false;
+    final String todayLabel = _formatDate(DateTime.now());
 
     final bool? confirmed = await showDialog<bool>(
       context: context,
@@ -491,41 +503,51 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
-                      if ((patient.doctorName ?? '').trim().isNotEmpty ||
-                          (patient.exemptionCode ?? '').trim().isNotEmpty) ...<Widget>[
-                        const Text(
-                          'Suggerimenti memoria assistito',
-                          style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
+                      Text('Data registrazione: $todayLabel', style: const TextStyle(color: Colors.white70)),
+                      const SizedBox(height: 12),
+                      if ((patient.exemptionCode ?? '').trim().isNotEmpty) ...<Widget>[
+                        ActionChip(
+                          label: Text('Esenzione: ${patient.exemptionCode!.trim()}'),
+                          onPressed: () {
+                            final String prefix = 'Esenzione: ${patient.exemptionCode!.trim()}';
+                            if (!noteController.text.contains(prefix)) {
+                              noteController.text = noteController.text.trim().isEmpty
+                                  ? prefix
+                                  : '$prefix · ${noteController.text.trim()}';
+                            }
+                          },
                         ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: <Widget>[
-                            if ((patient.doctorName ?? '').trim().isNotEmpty)
-                              ActionChip(
-                                label: Text('Medico: ${patient.doctorName!.trim()}'),
-                                onPressed: () => doctorController.text = patient.doctorName!.trim(),
-                              ),
-                            if ((patient.exemptionCode ?? '').trim().isNotEmpty)
-                              ActionChip(
-                                label: Text('Esenzione: ${patient.exemptionCode!.trim()}'),
-                                onPressed: () {
-                                  final String prefix = 'Esenzione: ${patient.exemptionCode!.trim()}';
-                                  if (!noteController.text.contains(prefix)) {
-                                    noteController.text = noteController.text.trim().isEmpty
-                                        ? prefix
-                                        : '$prefix · ${noteController.text.trim()}';
-                                  }
-                                },
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 12),
                       ],
                       _dialogField(controller: drugController, label: 'Farmaco / articolo'),
                       const SizedBox(height: 12),
-                      _dialogField(controller: doctorController, label: 'Medico'),
+                      if (doctors.isEmpty)
+                        const Text('Nessun medico configurato in Impostazioni.', style: TextStyle(color: Colors.white70))
+                      else
+                        DropdownButtonFormField<String>(
+                          value: selectedDoctor,
+                          dropdownColor: AppColors.panelSoft,
+                          decoration: InputDecoration(
+                            labelText: 'Medico',
+                            labelStyle: const TextStyle(color: Colors.white70),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(color: Colors.white24),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(color: Colors.white70),
+                            ),
+                          ),
+                          style: const TextStyle(color: Colors.white),
+                          items: doctors
+                              .map((String doctor) => DropdownMenuItem<String>(
+                                    value: doctor,
+                                    child: Text(doctor, overflow: TextOverflow.ellipsis),
+                                  ))
+                              .toList(),
+                          onChanged: (String? value) => setModalState(() => selectedDoctor = value),
+                        ),
                       const SizedBox(height: 12),
                       _dialogField(controller: noteController, label: 'Nota', maxLines: 3),
                       const SizedBox(height: 12),
@@ -562,7 +584,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
 
     if (confirmed != true) {
       drugController.dispose();
-      doctorController.dispose();
       noteController.dispose();
       return;
     }
@@ -574,14 +595,14 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       });
 
       final String drugName = drugController.text.trim();
-      final String doctorName = doctorController.text.trim();
+      final String doctorName = (selectedDoctor ?? '').trim();
       final String note = noteController.text.trim();
 
       if (drugName.isEmpty) {
         throw Exception('Inserisci il nome dell’anticipo.');
       }
       if (doctorName.isEmpty) {
-        throw Exception('Seleziona o inserisci il medico.');
+        throw Exception('Seleziona il medico dalle impostazioni.');
       }
 
       final Advance advance = Advance(
@@ -611,7 +632,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       });
     } finally {
       drugController.dispose();
-      doctorController.dispose();
       noteController.dispose();
       if (mounted) {
         setState(() {
@@ -624,7 +644,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   Future<void> _openAddBookingDialog(Patient patient) async {
     final TextEditingController drugController = TextEditingController();
     final TextEditingController quantityController = TextEditingController(text: '1');
-    final TextEditingController expectedDateController = TextEditingController();
+    final TextEditingController expectedDateController = TextEditingController(text: _formatDate(DateTime.now()));
     final TextEditingController noteController = TextEditingController();
 
     final bool? confirmed = await showDialog<bool>(
@@ -647,6 +667,8 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                     keyboardType: TextInputType.number,
                     inputFormatters: <TextInputFormatter>[FilteringTextInputFormatter.digitsOnly],
                   ),
+                  const SizedBox(height: 12),
+                  const Text('Data registrazione: oggi', style: TextStyle(color: Colors.white70)),
                   const SizedBox(height: 12),
                   _dialogField(controller: expectedDateController, label: 'Data prevista (gg/mm/aaaa)'),
                   const SizedBox(height: 12),
