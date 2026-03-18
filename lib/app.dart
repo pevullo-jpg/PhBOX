@@ -24,7 +24,7 @@ class _FarmaciaAppState extends State<FarmaciaApp> {
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Farmacia Desk',
+      title: 'PhBOX',
       theme: AppTheme.darkTheme,
       home: Scaffold(
         backgroundColor: AppColors.background,
@@ -38,7 +38,7 @@ class _FarmaciaAppState extends State<FarmaciaApp> {
                 children: <Widget>[
                   const SizedBox(height: 20),
                   const Text(
-                    'Farmacia Desk',
+                    'PhBOX',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 24,

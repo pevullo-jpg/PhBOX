@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/demo/demo_advances.dart';
 import '../../../data/demo/demo_bookings.dart';
@@ -9,14 +10,14 @@ import '../../../data/demo/demo_prescriptions.dart';
 import '../../../data/models/advance.dart';
 import '../../../data/models/booking.dart';
 import '../../../data/models/debt.dart';
+import '../../../data/models/drive_pdf_import.dart';
 import '../../../data/models/patient.dart';
 import '../../../data/models/prescription.dart';
-import '../../../data/models/prescription_intake.dart';
 import '../../../data/repositories/advances_repository.dart';
 import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
+import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
-import '../../../data/repositories/prescription_intakes_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../shared/widgets/filter_chip_widget.dart';
 import '../../../shared/widgets/header_bar.dart';
@@ -24,8 +25,6 @@ import '../../../shared/widgets/stat_card.dart';
 import '../../../shared/widgets/status_badge.dart';
 import '../../../shared/widgets/table_header.dart';
 import '../../../theme/app_theme.dart';
-import '../../../core/services/google_drive_service.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../patients/pages/patient_detail_page.dart';
 
 class DashboardPage extends StatefulWidget {
@@ -51,7 +50,7 @@ class _DashboardPageState extends State<DashboardPage> {
   late final DebtsRepository debtsRepository;
   late final BookingsRepository bookingsRepository;
   late final PrescriptionsRepository prescriptionsRepository;
-  late final PrescriptionIntakesRepository prescriptionIntakesRepository;
+  late final DrivePdfImportsRepository drivePdfImportsRepository;
 
   @override
   void initState() {
@@ -67,7 +66,7 @@ class _DashboardPageState extends State<DashboardPage> {
       datasource: datasource,
       patientsRepository: patientsRepository,
     );
-    prescriptionIntakesRepository = PrescriptionIntakesRepository(datasource: datasource);
+    drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
   }
 
   @override
@@ -140,27 +139,30 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Future<void> _openDrivePdf(String driveFileId) async {
-    final Uri uri = Uri.parse(GoogleDriveService.buildFileViewUrl(driveFileId));
+  Future<void> _openDrivePdf(DrivePdfImport item) async {
+    final String url = item.webViewLink.isNotEmpty
+        ? item.webViewLink
+        : 'https://drive.google.com/file/d/${item.driveFileId}/view';
+    final Uri uri = Uri.parse(url);
     await launchUrl(uri, webOnlyWindowName: '_blank');
   }
 
   Future<void> _openPatientPdfFiles(
     Patient patient,
-    List<PrescriptionIntake> intakes,
+    List<DrivePdfImport> imports,
   ) async {
-    final List<PrescriptionIntake> matching = intakes.where((PrescriptionIntake intake) {
-      final String intakeFiscal = intake.fiscalCode.trim().toUpperCase();
+    final List<DrivePdfImport> matching = imports.where((DrivePdfImport item) {
+      final String importFiscal = item.patientFiscalCode.trim().toUpperCase();
       final String patientFiscal = patient.fiscalCode.trim().toUpperCase();
-      if (intakeFiscal.isNotEmpty && patientFiscal.isNotEmpty && intakeFiscal == patientFiscal) {
+      if (importFiscal.isNotEmpty && patientFiscal.isNotEmpty && importFiscal == patientFiscal) {
         return true;
       }
-      return _sameLooseName(intake.patientName, patient.fullName);
+      return _sameLooseName(item.patientFullName, patient.fullName);
     }).toList();
 
     if (matching.isEmpty) return;
     if (matching.length == 1) {
-      await _openDrivePdf(matching.first.driveFileId);
+      await _openDrivePdf(matching.first);
       return;
     }
 
@@ -185,17 +187,18 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                ...matching.map((PrescriptionIntake item) {
-                  final String dateLabel = item.prescriptionDate == null
+                ...matching.map((DrivePdfImport item) {
+                  final DateTime? date = item.prescriptionDate;
+                  final String dateLabel = date == null
                       ? 'data non disponibile'
-                      : '${item.prescriptionDate!.day.toString().padLeft(2, '0')}/${item.prescriptionDate!.month.toString().padLeft(2, '0')}/${item.prescriptionDate!.year}';
+                      : '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
                   return ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.picture_as_pdf, color: AppColors.coral),
                     title: Text(item.fileName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
                     subtitle: Text(dateLabel, style: const TextStyle(color: Colors.white70)),
                     trailing: TextButton(
-                      onPressed: () => _openDrivePdf(item.driveFileId),
+                      onPressed: () => _openDrivePdf(item),
                       child: const Text('Apri'),
                     ),
                   );
@@ -214,19 +217,18 @@ class _DashboardPageState extends State<DashboardPage> {
     return left.isNotEmpty && left == right;
   }
 
-
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<_DashboardData>(
       future: _loadDashboardData(),
       builder: (BuildContext context, AsyncSnapshot<_DashboardData> snapshot) {
         final List<Patient> patients = snapshot.data?.patients ?? const <Patient>[];
-        final List<PrescriptionIntake> allIntakes = snapshot.data?.intakes ?? const <PrescriptionIntake>[];
+        final List<DrivePdfImport> allImports = snapshot.data?.imports ?? const <DrivePdfImport>[];
         final List<Patient> filteredPatients = applyFilters(patients);
         final double totalDebts =
             patients.fold<double>(0, (double sum, Patient p) => sum + p.debtTotal);
         final int totalRecipes =
-            patients.where((Patient p) => p.archivedRecipeCount > 0).length;
+            patients.fold<int>(0, (int sum, Patient p) => sum + p.archivedRecipeCount);
         final int totalDpc = patients.where((Patient p) => p.hasDpc).length;
         final int totalAdvances =
             patients.where((Patient p) => p.hasAdvance).length;
@@ -260,149 +262,55 @@ class _DashboardPageState extends State<DashboardPage> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: <Widget>[
-                                Row(
-                                  children: <Widget>[
-                                    ElevatedButton.icon(
-                                      onPressed: isSeeding
-                                          ? null
-                                          : () async {
-                                              await seedAll();
-                                              if (mounted) {
-                                                setState(() {});
-                                              }
-                                            },
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: AppColors.yellow,
-                                        foregroundColor: Colors.black,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                          vertical: 14,
-                                        ),
-                                      ),
-                                      icon: const Icon(Icons.cloud_upload),
-                                      label: Text(
-                                        isSeeding
-                                            ? 'Caricamento...'
-                                            : 'Seed completo test',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    if (seedMessage.isNotEmpty)
-                                      Expanded(
-                                        child: Text(
-                                          seedMessage,
-                                          style: const TextStyle(
-                                            color: Colors.white70,
-                                          ),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                                const SizedBox(height: 20),
                                 Wrap(
                                   spacing: 16,
                                   runSpacing: 16,
                                   children: <Widget>[
-                                    StatCard(
-                                      title: 'Assistiti con ricette',
-                                      value: '$totalRecipes',
-                                      color: AppColors.yellow,
-                                      darkText: true,
+                                    StatCard(title: 'Assistiti', value: '${patients.length}', color: AppColors.green),
+                                    StatCard(title: 'Ricette archiviate', value: '$totalRecipes', color: AppColors.coral),
+                                    StatCard(title: 'Debito totale', value: '€ ${totalDebts.toStringAsFixed(2)}', color: AppColors.wine),
+                                    StatCard(title: 'DPC', value: '$totalDpc', color: AppColors.amber),
+                                    StatCard(title: 'Anticipi', value: '$totalAdvances', color: AppColors.yellow),
+                                    StatCard(title: 'Prenotazioni', value: '$totalBookings', color: AppColors.coral),
+                                  ],
+                                ),
+                                const SizedBox(height: 24),
+                                Wrap(
+                                  spacing: 10,
+                                  runSpacing: 10,
+                                  children: <Widget>[
+                                    FilterChipWidget(
+                                      label: 'Solo DPC',
+                                      active: filterDpc,
+                                      onTap: () => setState(() => filterDpc = !filterDpc),
                                     ),
-                                    StatCard(
-                                      title: 'Assistiti con DPC',
-                                      value: '$totalDpc',
-                                      color: AppColors.coral,
+                                    FilterChipWidget(
+                                      label: 'Con ricette',
+                                      active: filterRicette,
+                                      onTap: () => setState(() => filterRicette = !filterRicette),
                                     ),
-                                    StatCard(
-                                      title: 'Assistiti con anticipi',
-                                      value: '$totalAdvances',
-                                      color: AppColors.pink,
-                                      darkText: true,
+                                    FilterChipWidget(
+                                      label: 'Con debiti',
+                                      active: filterDebiti,
+                                      onTap: () => setState(() => filterDebiti = !filterDebiti),
                                     ),
-                                    StatCard(
-                                      title: 'Assistiti con prenotazioni',
-                                      value: '$totalBookings',
-                                      color: AppColors.panelSoft,
+                                    FilterChipWidget(
+                                      label: 'Con anticipi',
+                                      active: filterAnticipi,
+                                      onTap: () => setState(() => filterAnticipi = !filterAnticipi),
                                     ),
-                                    StatCard(
-                                      title: 'Debito totale',
-                                      value: '€ ${totalDebts.toStringAsFixed(2)}',
-                                      color: AppColors.wine,
+                                    FilterChipWidget(
+                                      label: 'Con prenotazioni',
+                                      active: filterPrenotazioni,
+                                      onTap: () => setState(() => filterPrenotazioni = !filterPrenotazioni),
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 20),
-                                Container(
-                                  padding: const EdgeInsets.all(18),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.panel,
-                                    borderRadius: BorderRadius.circular(28),
-                                    border: Border.all(color: Colors.white10),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: <Widget>[
-                                      const Text(
-                                        'Filtri dashboard',
-                                        style: TextStyle(
-                                          fontSize: 22,
-                                          fontWeight: FontWeight.w900,
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 14),
-                                      Wrap(
-                                        spacing: 12,
-                                        runSpacing: 12,
-                                        children: <Widget>[
-                                          FilterChipWidget(
-                                            label: 'DPC',
-                                            selected: filterDpc,
-                                            onTap: () => setState(
-                                              () => filterDpc = !filterDpc,
-                                            ),
-                                          ),
-                                          FilterChipWidget(
-                                            label: 'Ricette',
-                                            selected: filterRicette,
-                                            onTap: () => setState(
-                                              () => filterRicette = !filterRicette,
-                                            ),
-                                          ),
-                                          FilterChipWidget(
-                                            label: 'Anticipi',
-                                            selected: filterAnticipi,
-                                            onTap: () => setState(
-                                              () => filterAnticipi = !filterAnticipi,
-                                            ),
-                                          ),
-                                          FilterChipWidget(
-                                            label: 'Debiti',
-                                            selected: filterDebiti,
-                                            onTap: () => setState(
-                                              () => filterDebiti = !filterDebiti,
-                                            ),
-                                          ),
-                                          FilterChipWidget(
-                                            label: 'Prenotazioni',
-                                            selected: filterPrenotazioni,
-                                            onTap: () => setState(
-                                              () => filterPrenotazioni =
-                                                  !filterPrenotazioni,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ),
-
-                                const SizedBox(height: 20),
+                                if (seedMessage.isNotEmpty) ...<Widget>[
+                                  const SizedBox(height: 18),
+                                  Text(seedMessage, style: const TextStyle(color: Colors.white70)),
+                                ],
+                                const SizedBox(height: 24),
                                 Container(
                                   width: double.infinity,
                                   padding: const EdgeInsets.all(20),
@@ -411,124 +319,90 @@ class _DashboardPageState extends State<DashboardPage> {
                                     borderRadius: BorderRadius.circular(28),
                                     border: Border.all(color: Colors.white10),
                                   ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: <Widget>[
-                                      const Text(
-                                        'Archivio assistiti',
-                                        style: TextStyle(
-                                          fontSize: 28,
-                                          fontWeight: FontWeight.w900,
-                                          color: Colors.white,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 18),
-                                      SingleChildScrollView(
-                                        scrollDirection: Axis.horizontal,
-                                        child: DataTable(
-                                          headingRowColor:
-                                              const WidgetStatePropertyAll<Color>(
-                                            Color(0xFF1A1A1A),
-                                          ),
-                                          dataRowMinHeight: 62,
-                                          dataRowMaxHeight: 74,
-                                          columns: const <DataColumn>[
-                                            DataColumn(
-                                              label: TableHeader('Assistito'),
+                                  child: filteredPatients.isEmpty
+                                      ? const Text(
+                                          'Nessun assistito presente.',
+                                          style: TextStyle(color: Colors.white70),
+                                        )
+                                      : SingleChildScrollView(
+                                          scrollDirection: Axis.horizontal,
+                                          child: DataTable(
+                                            headingRowColor: const WidgetStatePropertyAll<Color>(
+                                              Color(0xFF1A1A1A),
                                             ),
-                                            DataColumn(
-                                              label: TableHeader('Codice fiscale'),
-                                            ),
-                                            DataColumn(
-                                              label: TableHeader('Città'),
-                                            ),
-                                            DataColumn(
-                                              label: TableHeader('Medico'),
-                                            ),
-                                            DataColumn(
-                                              label: TableHeader('Ricette'),
-                                            ),
-                                            DataColumn(
-                                              label: TableHeader('DPC'),
-                                            ),
-                                            DataColumn(
-                                              label: TableHeader('Anticipi'),
-                                            ),
-                                            DataColumn(
-                                              label: TableHeader('Prenotazioni'),
-                                            ),
-                                            DataColumn(
-                                              label: TableHeader('Debito'),
-                                            ),
-                                          ],
-                                          rows: filteredPatients.map((Patient p) {
-                                            return DataRow(
-                                              onSelectChanged: (_) =>
-                                                  openPatientDetail(p),
-                                              cells: <DataCell>[
-                                                DataCell(
-                                                  Text(
-                                                    p.fullName,
-                                                    style: _rowLinkStyle,
-                                                  ),
-                                                ),
-                                                DataCell(
-                                                  Text(p.fiscalCode, style: _rowStyle),
-                                                ),
-                                                DataCell(
-                                                  Text(p.city ?? '-', style: _rowStyle),
-                                                ),
-                                                DataCell(
-                                                  Text(p.doctorName ?? '-', style: _rowStyle),
-                                                ),
-                                                DataCell(
-                                                  p.archivedRecipeCount > 0
-                                                      ? InkWell(
-                                                          onTap: () => _openPatientPdfFiles(p, allIntakes),
-                                                          child: Text(
-                                                            '${p.archivedRecipeCount}',
-                                                            style: _rowLinkStyle,
+                                            columns: const <DataColumn>[
+                                              DataColumn(label: TableHeader('Assistito')),
+                                              DataColumn(label: TableHeader('CF')),
+                                              DataColumn(label: TableHeader('Città')),
+                                              DataColumn(label: TableHeader('Esenzione')),
+                                              DataColumn(label: TableHeader('Medico')),
+                                              DataColumn(label: TableHeader('Debito')),
+                                              DataColumn(label: TableHeader('Ricette')),
+                                              DataColumn(label: TableHeader('Flag')),
+                                              DataColumn(label: TableHeader('Azioni')),
+                                            ],
+                                            rows: filteredPatients.map((Patient patient) {
+                                              final List<Widget> flags = <Widget>[];
+                                              if (patient.hasDpc) {
+                                                flags.add(const StatusBadge(text: 'DPC', color: AppColors.coral));
+                                              }
+                                              if (patient.hasDebt) {
+                                                flags.add(const StatusBadge(text: 'DEBITO', color: AppColors.wine));
+                                              }
+                                              if (patient.hasAdvance) {
+                                                flags.add(const StatusBadge(text: 'ANTICIPO', color: AppColors.amber));
+                                              }
+                                              if (patient.hasBooking) {
+                                                flags.add(const StatusBadge(text: 'PRENOT.', color: AppColors.yellow));
+                                              }
+
+                                              final List<DrivePdfImport> patientImports = allImports.where((DrivePdfImport item) {
+                                                return item.patientFiscalCode.trim().toUpperCase() == patient.fiscalCode.trim().toUpperCase();
+                                              }).toList();
+                                              final int recipeCount = patient.archivedRecipeCount > 0
+                                                  ? patient.archivedRecipeCount
+                                                  : patientImports.fold<int>(0, (int sum, DrivePdfImport item) => sum + item.prescriptionCount);
+
+                                              return DataRow(
+                                                cells: <DataCell>[
+                                                  DataCell(Text(patient.fullName, style: _rowStyle)),
+                                                  DataCell(Text(patient.fiscalCode, style: _rowStyle)),
+                                                  DataCell(Text(patient.city ?? '-', style: _rowStyle)),
+                                                  DataCell(Text(patient.exemptionCode ?? '-', style: _rowStyle)),
+                                                  DataCell(Text(patient.doctorName ?? '-', style: _rowStyle)),
+                                                  DataCell(Text('€ ${patient.debtTotal.toStringAsFixed(2)}', style: _rowStyle)),
+                                                  DataCell(
+                                                    recipeCount == 0
+                                                        ? Text('0', style: _rowStyle)
+                                                        : InkWell(
+                                                            onTap: () => _openPatientPdfFiles(patient, allImports),
+                                                            child: Text(
+                                                              '$recipeCount',
+                                                              style: _rowStyle.copyWith(
+                                                                color: AppColors.coral,
+                                                                decoration: TextDecoration.underline,
+                                                              ),
+                                                            ),
                                                           ),
-                                                        )
-                                                      : Text('0', style: _rowStyle),
-                                                ),
-                                                DataCell(
-                                                  p.hasDpc
-                                                      ? const StatusBadge(
-                                                          text: 'DPC',
-                                                          color: AppColors.coral,
-                                                        )
-                                                      : const StatusBadge(
-                                                          text: 'NO',
-                                                          color: Color(0xFF2A2A2A),
-                                                        ),
-                                                ),
-                                                DataCell(
-                                                  Text(
-                                                    p.hasAdvance ? 'SI' : 'NO',
-                                                    style: _rowStyle,
                                                   ),
-                                                ),
-                                                DataCell(
-                                                  Text(
-                                                    p.hasBooking ? 'SI' : 'NO',
-                                                    style: _rowStyle,
+                                                  DataCell(
+                                                    Wrap(spacing: 6, runSpacing: 6, children: flags),
                                                   ),
-                                                ),
-                                                DataCell(
-                                                  Text(
-                                                    '€ ${p.debtTotal.toStringAsFixed(2)}',
-                                                    style: _rowStyle,
+                                                  DataCell(
+                                                    FilledButton(
+                                                      onPressed: () => openPatientDetail(patient),
+                                                      style: FilledButton.styleFrom(
+                                                        backgroundColor: AppColors.panelSoft,
+                                                        foregroundColor: Colors.white,
+                                                      ),
+                                                      child: const Text('Apri scheda'),
+                                                    ),
                                                   ),
-                                                ),
-                                              ],
-                                            );
-                                          }).toList(),
+                                                ],
+                                              );
+                                            }).toList(),
+                                          ),
                                         ),
-                                      ),
-                                    ],
-                                  ),
                                 ),
                               ],
                             ),
@@ -543,23 +417,66 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<_DashboardData> _loadDashboardData() async {
     final List<Patient> patients = await patientsRepository.getAllPatients();
-    final List<PrescriptionIntake> intakes = await prescriptionIntakesRepository.getAllIntakes();
-    return _DashboardData(patients: patients, intakes: intakes);
+    final List<DrivePdfImport> imports = await drivePdfImportsRepository.getAllImports();
+
+    final Map<String, List<DrivePdfImport>> importsByPatient = <String, List<DrivePdfImport>>{};
+    for (final DrivePdfImport item in imports) {
+      final String fiscalCode = item.patientFiscalCode.trim().toUpperCase();
+      if (fiscalCode.isEmpty) continue;
+      importsByPatient.putIfAbsent(fiscalCode, () => <DrivePdfImport>[]).add(item);
+    }
+
+    final List<Patient> enrichedPatients = patients.map((Patient patient) {
+      final List<DrivePdfImport> patientImports = importsByPatient[patient.fiscalCode.trim().toUpperCase()] ?? const <DrivePdfImport>[];
+      final int recipeCount = patientImports.fold<int>(0, (int sum, DrivePdfImport item) => sum + item.prescriptionCount);
+      final DateTime? lastDate = patientImports
+          .map((DrivePdfImport item) => item.prescriptionDate)
+          .whereType<DateTime>()
+          .fold<DateTime?>(null, (DateTime? current, DateTime value) {
+        if (current == null || value.isAfter(current)) {
+          return value;
+        }
+        return current;
+      });
+      final Set<String> therapies = <String>{
+        ...patient.therapiesSummary,
+        ...patientImports.expand((DrivePdfImport item) => item.therapy),
+      };
+      final bool hasDpc = patient.hasDpc || patientImports.any((DrivePdfImport item) => item.isDpc);
+      final String doctorName = patient.doctorName ??
+          patientImports.firstWhere(
+            (DrivePdfImport item) => item.doctorFullName.trim().isNotEmpty,
+            orElse: () => const DrivePdfImport(
+              id: '',
+              driveFileId: '',
+              fileName: '',
+              mimeType: 'application/pdf',
+              status: '',
+              createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+              updatedAt: DateTime.fromMillisecondsSinceEpoch(0),
+            ),
+          ).doctorFullName;
+      return patient.copyWith(
+        archivedRecipeCount: recipeCount > 0 ? recipeCount : patient.archivedRecipeCount,
+        hasDpc: hasDpc,
+        lastPrescriptionDate: lastDate ?? patient.lastPrescriptionDate,
+        therapiesSummary: therapies.where((String item) => item.trim().isNotEmpty).toList()..sort(),
+        doctorName: doctorName.isEmpty ? patient.doctorName : doctorName,
+      );
+    }).toList();
+
+    return _DashboardData(patients: enrichedPatients, imports: imports);
   }
 }
 
 class _DashboardData {
   final List<Patient> patients;
-  final List<PrescriptionIntake> intakes;
+  final List<DrivePdfImport> imports;
 
-  const _DashboardData({
-    required this.patients,
-    required this.intakes,
-  });
+  const _DashboardData({required this.patients, required this.imports});
 }
 
-const TextStyle _rowStyle =
-    TextStyle(color: Colors.white, fontWeight: FontWeight.w600);
-
-const TextStyle _rowLinkStyle =
-    TextStyle(color: AppColors.yellow, fontWeight: FontWeight.w700);
+const TextStyle _rowStyle = TextStyle(
+  color: Colors.white,
+  fontSize: 14,
+);

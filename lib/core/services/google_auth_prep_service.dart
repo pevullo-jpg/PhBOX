@@ -46,6 +46,13 @@ class GoogleAuthPrepService {
   GoogleSignIn? _cachedSignIn;
   String _cachedClientId = '';
 
+  GoogleSignIn getSignInInstance({required String clientId}) => _buildOrReuseSignIn(clientId);
+
+  void prime({required String clientId}) {
+    if (clientId.trim().isEmpty) return;
+    _buildOrReuseSignIn(clientId);
+  }
+
   GoogleSignIn _buildOrReuseSignIn(String clientId) {
     final String normalizedClientId = clientId.trim();
     if (_cachedSignIn != null && _cachedClientId == normalizedClientId) {
@@ -67,7 +74,7 @@ class GoogleAuthPrepService {
     GoogleSignInAccount? account = googleSignIn.currentUser;
     account ??= await googleSignIn.signInSilently();
 
-    if (account == null && interactive) {
+    if (account == null && interactive && !kIsWeb) {
       account = await googleSignIn.signIn();
     }
 
@@ -101,14 +108,14 @@ class GoogleAuthPrepService {
       throw Exception(
         interactive
             ? 'Login Google annullato.'
-            : 'Sessione Google assente o scaduta. Premi Collega account Google.',
+            : 'Sessione Google assente o scaduta. Su web usa il pulsante ufficiale Google e poi premi Verifica sessione.',
       );
     }
 
     final Map<String, String> authHeaders = await account.authHeaders;
     final String? token = _tokenFromAuthHeaders(authHeaders);
     if (token == null) {
-      throw Exception("Token Google non disponibile. Ricollega l'account Google.");
+      throw Exception("Token Google non disponibile. Su web autentica di nuovo l'account Google e poi ripeti la scansione.");
     }
 
     return <String, String>{
@@ -120,17 +127,20 @@ class GoogleAuthPrepService {
   Future<GoogleAuthPrepResult> signInForGoogleAccount({
     required String clientId,
   }) async {
-    final Map<String, String> headers = await getAuthHeaders(
-      clientId: clientId,
-      interactive: true,
-    );
-
     final GoogleSignIn googleSignIn = _buildOrReuseSignIn(clientId);
     final GoogleSignInAccount? account = googleSignIn.currentUser ?? await googleSignIn.signInSilently();
 
     if (account == null) {
+      if (kIsWeb) {
+        throw Exception('Su web usa il pulsante ufficiale Google qui sotto, poi premi Verifica sessione.');
+      }
       throw Exception('Login Google annullato.');
     }
+
+    final Map<String, String> headers = await getAuthHeaders(
+      clientId: clientId,
+      interactive: !kIsWeb,
+    );
 
     return GoogleAuthPrepResult(
       email: account.email,
@@ -183,7 +193,7 @@ class GoogleAuthPrepService {
 
       if (!canAccess) {
         if (!interactive) {
-          throw Exception('Permessi Google Drive/Gmail non ancora concessi. Premi di nuovo il pulsante della scansione.');
+          throw Exception('Permessi Google Drive/Gmail non ancora concessi. Premi il pulsante della scansione per autorizzarli.');
         }
 
         final bool granted = await googleSignIn.requestScopes(scopes);

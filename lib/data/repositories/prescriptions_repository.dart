@@ -1,8 +1,11 @@
 import '../../core/constants/app_constants.dart';
 import '../datasources/firestore_datasource.dart';
+import '../models/drive_pdf_import.dart';
 import '../models/patient.dart';
 import '../models/prescription.dart';
+import '../models/prescription_item.dart';
 import 'patients_repository.dart';
+import 'drive_pdf_imports_repository.dart';
 
 class PrescriptionsRepository {
   final FirestoreDatasource datasource;
@@ -33,7 +36,16 @@ class PrescriptionsRepository {
       orderBy: 'prescriptionDate',
       descending: true,
     );
-    return maps.map(Prescription.fromMap).toList();
+
+    if (maps.isNotEmpty) {
+      return maps.map(Prescription.fromMap).toList();
+    }
+
+    final DrivePdfImportsRepository importsRepository =
+        DrivePdfImportsRepository(datasource: datasource);
+    final List<DrivePdfImport> imports =
+        await importsRepository.getImportsByPatient(fiscalCode);
+    return imports.map(_importToPrescription).toList();
   }
 
   Future<void> refreshPatientAggregates(String fiscalCode) async {
@@ -75,5 +87,29 @@ class PrescriptionsRepository {
     );
 
     await patientsRepository.savePatient(updated);
+  }
+
+  Prescription _importToPrescription(DrivePdfImport item) {
+    final DateTime prescriptionDate = item.prescriptionDate ?? item.createdAt;
+    return Prescription(
+      id: item.id,
+      patientFiscalCode: item.patientFiscalCode,
+      patientName: item.patientFullName,
+      prescriptionDate: prescriptionDate,
+      expiryDate: prescriptionDate.add(const Duration(days: 30)),
+      doctorName: item.doctorFullName.isEmpty ? null : item.doctorFullName,
+      exemptionCode: item.exemptionCode.isEmpty ? null : item.exemptionCode,
+      city: item.city.isEmpty ? null : item.city,
+      dpcFlag: item.isDpc,
+      prescriptionCount: item.prescriptionCount,
+      sourceType: item.sourceType,
+      extractedText: null,
+      items: item.therapy
+          .where((String value) => value.trim().isNotEmpty)
+          .map((String value) => PrescriptionItem(drugName: value.trim()))
+          .toList(),
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+    );
   }
 }

@@ -1,5 +1,4 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../core/utils/prescription_expiry_utils.dart';
@@ -14,7 +13,6 @@ import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
-import '../../../core/services/mock_prescription_parser_service.dart';
 import '../../../shared/widgets/status_badge.dart';
 import '../../../theme/app_theme.dart';
 
@@ -36,9 +34,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   late final DebtsRepository debtsRepository;
   late final BookingsRepository bookingsRepository;
   late final PrescriptionsRepository prescriptionsRepository;
-  final MockPrescriptionParserService parser = MockPrescriptionParserService();
-
-  bool isUploading = false;
   bool isSavingQuickAction = false;
   String uploadMessage = '';
 
@@ -89,8 +84,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: <Widget>[
                               _buildHeader(data.patient!),
-                              const SizedBox(height: 20),
-                              _buildUploadArea(),
                               const SizedBox(height: 20),
                               Row(
                                 children: <Widget>[
@@ -477,150 +470,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     final int month = int.parse(match.group(2)!);
     final int year = int.parse(match.group(3)!);
     return DateTime(year, month, day);
-  }
-
-  Future<void> uploadMockPrescription() async {
-    setState(() {
-      isUploading = true;
-      uploadMessage = '';
-    });
-
-    try {
-      final FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: <String>['jpg', 'jpeg', 'png', 'pdf', 'txt'],
-        withData: false,
-      );
-
-      if (result == null || result.files.isEmpty) {
-        setState(() {
-          uploadMessage = 'Upload annullato.';
-        });
-        return;
-      }
-
-      final PlatformFile file = result.files.first;
-      final MockPrescriptionParserResult parsed = parser.parse(
-        fileName: file.name,
-        rawText: file.name,
-      );
-
-      if (parsed.fiscalCode != widget.fiscalCode) {
-        setState(() {
-          uploadMessage =
-              'Il parser mock ha associato la ricetta a ${parsed.patientName}, non a questo assistito.';
-        });
-        return;
-      }
-
-      final Prescription prescription = parsed.toPrescription();
-      await prescriptionsRepository.savePrescription(prescription);
-
-      setState(() {
-        uploadMessage =
-            'Ricetta mock caricata, scadenza valutata e anagrafica aggiornata.';
-      });
-    } catch (e) {
-      setState(() {
-        uploadMessage = 'Errore upload mock: $e';
-      });
-    } finally {
-      setState(() {
-        isUploading = false;
-      });
-    }
-  }
-
-  Widget _buildHeader(Patient patient) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: AppColors.panel,
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(patient.fullName, style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w900)),
-                    const SizedBox(height: 8),
-                    Text(patient.fiscalCode, style: const TextStyle(color: Colors.white70, fontSize: 16)),
-                  ],
-                ),
-              ),
-              patient.hasDpc
-                  ? const StatusBadge(text: 'DPC', color: AppColors.coral)
-                  : const StatusBadge(text: 'NO DPC', color: Color(0xFF2A2A2A)),
-            ],
-          ),
-          const SizedBox(height: 24),
-          Wrap(
-            spacing: 16,
-            runSpacing: 16,
-            children: <Widget>[
-              _InfoCard(title: 'Città', value: patient.city ?? '-'),
-              _InfoCard(title: 'Esenzione', value: patient.exemptionCode ?? '-'),
-              _InfoCard(title: 'Medico', value: patient.doctorName ?? '-'),
-              _InfoCard(title: 'Ricette archiviate', value: '${patient.archivedRecipeCount}'),
-              _InfoCard(title: 'Debito totale', value: '€ ${patient.debtTotal.toStringAsFixed(2)}'),
-              _InfoCard(title: 'Ultima ricetta', value: _formatDate(patient.lastPrescriptionDate)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildUploadArea() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: AppColors.panel,
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          const Text(
-            'Upload ricetta mock',
-            style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'Carica un file con nome che contenga Mario, Luigi, Giuseppe o Maria. Il parser mock estrarrà i dati, salverà una ricetta e aggiornerà automaticamente l\'anagrafica assistito.',
-            style: TextStyle(color: Colors.white70, height: 1.5),
-          ),
-          const SizedBox(height: 18),
-          ElevatedButton.icon(
-            onPressed: isUploading ? null : uploadMockPrescription,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.yellow,
-              foregroundColor: Colors.black,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            ),
-            icon: const Icon(Icons.upload_file),
-            label: Text(
-              isUploading ? 'Caricamento...' : 'Carica ricetta mock',
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ),
-          if (uploadMessage.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 12),
-            Text(uploadMessage, style: const TextStyle(color: Colors.white70)),
-          ],
-        ],
-      ),
-    );
   }
 
   Widget _buildTherapies(Patient patient) {

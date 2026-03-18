@@ -7,11 +7,11 @@ class DrivePdfImportsRepository {
 
   const DrivePdfImportsRepository({required this.datasource});
 
-  Future<void> saveImport(DrivePdfImport import) {
+  Future<void> saveImport(DrivePdfImport importItem) {
     return datasource.setDocument(
       collectionPath: AppCollections.drivePdfImports,
-      documentId: import.id,
-      data: import.toMap(),
+      documentId: importItem.id,
+      data: importItem.toMap(),
     );
   }
 
@@ -22,5 +22,15 @@ class DrivePdfImportsRepository {
       descending: true,
     );
     return maps.map(DrivePdfImport.fromMap).toList();
+  }
+
+  Future<List<DrivePdfImport>> getImportsByPatient(String fiscalCode) async {
+    final String normalized = fiscalCode.trim().toUpperCase();
+    final List<DrivePdfImport> all = await getAllImports();
+    final List<DrivePdfImport> filtered = all.where((DrivePdfImport item) {
+      return item.patientFiscalCode.trim().toUpperCase() == normalized;
+    }).toList();
+    filtered.sort((DrivePdfImport a, DrivePdfImport b) => b.createdAt.compareTo(a.createdAt));
+    return filtered;
   }
 }
