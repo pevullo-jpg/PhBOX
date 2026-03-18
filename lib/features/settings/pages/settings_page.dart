@@ -140,6 +140,7 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 20),
             SettingsFieldCard(
               title: 'Front-end',
+              subtitle: 'Parametri locali del front-end PhBOX.',
               child: Column(
                 children: <Widget>[
                   TextField(
@@ -165,6 +166,7 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 16),
             SettingsFieldCard(
               title: 'Contratto backend',
+              subtitle: 'Collezioni e responsabilità esposte da PhBOXscript verso il front.',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: const <Widget>[
@@ -179,6 +181,7 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 16),
             SettingsFieldCard(
               title: 'Import recenti dal backend',
+              subtitle: 'Ultimi documenti importati dal backend Google Script in Firestore.',
               child: recentImports.isEmpty
                   ? const Text('Nessun import presente.', style: TextStyle(color: Colors.white70))
                   : Column(

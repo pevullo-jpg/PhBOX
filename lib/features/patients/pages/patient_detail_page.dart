@@ -472,6 +472,51 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     return DateTime(year, month, day);
   }
 
+
+
+  Widget _buildHeader(Patient patient) {
+    final DateTime? lastDate = patient.lastPrescriptionDate;
+    final String lastDateLabel = lastDate == null
+        ? '-'
+        : '${lastDate.day.toString().padLeft(2, '0')}/${lastDate.month.toString().padLeft(2, '0')}/${lastDate.year}';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.panel,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            patient.fullName.isEmpty ? 'Assistito' : patient.fullName,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: <Widget>[
+              _MetaBadge(label: 'CF', value: patient.fiscalCode),
+              _MetaBadge(label: 'Città', value: (patient.city ?? '').trim().isEmpty ? '-' : patient.city!.trim()),
+              _MetaBadge(label: 'Esenzione', value: (patient.exemptionCode ?? '').trim().isEmpty ? '-' : patient.exemptionCode!.trim()),
+              _MetaBadge(label: 'Medico', value: (patient.doctorName ?? '').trim().isEmpty ? '-' : patient.doctorName!.trim()),
+              _MetaBadge(label: 'Ultima ricetta', value: lastDateLabel),
+              _MetaBadge(label: 'Ricette', value: '${patient.archivedRecipeCount}'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTherapies(Patient patient) {
     return Container(
       width: double.infinity,
@@ -622,6 +667,42 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     final String month = date.month.toString().padLeft(2, '0');
     final String year = date.year.toString();
     return '$day/$month/$year';
+  }
+}
+
+
+
+class _MetaBadge extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _MetaBadge({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.panelSoft,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: RichText(
+        text: TextSpan(
+          style: const TextStyle(color: Colors.white),
+          children: <InlineSpan>[
+            TextSpan(
+              text: '$label: ',
+              style: const TextStyle(fontWeight: FontWeight.w800, color: Colors.white70),
+            ),
+            TextSpan(
+              text: value,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

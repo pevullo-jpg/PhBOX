@@ -281,27 +281,27 @@ class _DashboardPageState extends State<DashboardPage> {
                                   children: <Widget>[
                                     FilterChipWidget(
                                       label: 'Solo DPC',
-                                      active: filterDpc,
+                                      selected: filterDpc,
                                       onTap: () => setState(() => filterDpc = !filterDpc),
                                     ),
                                     FilterChipWidget(
                                       label: 'Con ricette',
-                                      active: filterRicette,
+                                      selected: filterRicette,
                                       onTap: () => setState(() => filterRicette = !filterRicette),
                                     ),
                                     FilterChipWidget(
                                       label: 'Con debiti',
-                                      active: filterDebiti,
+                                      selected: filterDebiti,
                                       onTap: () => setState(() => filterDebiti = !filterDebiti),
                                     ),
                                     FilterChipWidget(
                                       label: 'Con anticipi',
-                                      active: filterAnticipi,
+                                      selected: filterAnticipi,
                                       onTap: () => setState(() => filterAnticipi = !filterAnticipi),
                                     ),
                                     FilterChipWidget(
                                       label: 'Con prenotazioni',
-                                      active: filterPrenotazioni,
+                                      selected: filterPrenotazioni,
                                       onTap: () => setState(() => filterPrenotazioni = !filterPrenotazioni),
                                     ),
                                   ],
@@ -446,7 +446,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final String doctorName = patient.doctorName ??
           patientImports.firstWhere(
             (DrivePdfImport item) => item.doctorFullName.trim().isNotEmpty,
-            orElse: () => const DrivePdfImport(
+            orElse: () => DrivePdfImport(
               id: '',
               driveFileId: '',
               fileName: '',
