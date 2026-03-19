@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/utils/prescription_expiry_utils.dart';
@@ -18,6 +19,7 @@ import '../../../data/repositories/doctor_patient_links_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
+import '../../../data/repositories/settings_repository.dart';
 import '../../../features/patients/pages/patient_detail_page.dart';
 import '../../../theme/app_theme.dart';
 
@@ -38,6 +40,7 @@ class _DashboardPageState extends State<DashboardPage> {
   late final BookingsRepository _bookingsRepository;
   late final DrivePdfImportsRepository _drivePdfImportsRepository;
   late final DoctorPatientLinksRepository _doctorPatientLinksRepository;
+  late final SettingsRepository _settingsRepository;
 
   Future<_DashboardData>? _future;
   bool _onlyRicette = false;
@@ -61,6 +64,7 @@ class _DashboardPageState extends State<DashboardPage> {
     _bookingsRepository = BookingsRepository(datasource: datasource);
     _drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
     _doctorPatientLinksRepository = DoctorPatientLinksRepository(datasource: datasource);
+    _settingsRepository = SettingsRepository(datasource: datasource);
     _future = _load();
     _searchController.addListener(() => setState(() {}));
   }
@@ -75,6 +79,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final patients = await _patientsRepository.getAllPatients();
     final imports = await _drivePdfImportsRepository.getAllImports();
     final doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
+    final settings = await _settingsRepository.getSettings();
 
     final summaries = await Future.wait(
       patients.map((patient) async {
@@ -101,7 +106,7 @@ class _DashboardPageState extends State<DashboardPage> {
       return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
     });
 
-    return _DashboardData(summaries: summaries);
+    return _DashboardData(summaries: summaries, doctorsCatalog: settings.doctorsCatalog);
   }
 
   void _refresh() {
@@ -223,7 +228,15 @@ class _DashboardPageState extends State<DashboardPage> {
                       Expanded(
                         child: Text(title, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
                       ),
-                      if (headerAction != null) headerAction,
+                      if (headerAction != null) ...[
+                        headerAction,
+                        const SizedBox(width: 8),
+                      ],
+                      IconButton(
+                        tooltip: 'Chiudi',
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close, color: Colors.white70),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 16),
@@ -282,6 +295,235 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+
+  Future<void> _addDebtFromDashboard(_PatientDashboardSummary summary) async {
+    final descriptionController = TextEditingController();
+    final amountController = TextEditingController();
+    final noteController = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.panel,
+        title: const Text('Nuovo debito', style: TextStyle(color: Colors.white)),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _dialogField(descriptionController, 'Causale'),
+              const SizedBox(height: 12),
+              _dialogField(
+                amountController,
+                'Importo (€)',
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Data inserimento: ${_formatDate(DateTime.now())}', style: const TextStyle(color: Colors.white70)),
+              ),
+              const SizedBox(height: 12),
+              _dialogField(noteController, 'Nota', maxLines: 3),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Annulla', style: TextStyle(color: Colors.white70))),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Salva')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final amount = double.tryParse(amountController.text.trim().replaceAll(',', '.')) ?? 0;
+      if (descriptionController.text.trim().isEmpty || amount <= 0) {
+        throw Exception('Causale e importo sono obbligatori.');
+      }
+      final now = DateTime.now();
+      await _debtsRepository.saveDebt(
+        Debt(
+          id: 'debt_${now.microsecondsSinceEpoch}',
+          patientFiscalCode: summary.patient.fiscalCode,
+          patientName: summary.patient.fullName,
+          description: descriptionController.text.trim(),
+          amount: amount,
+          paidAmount: 0,
+          residualAmount: amount,
+          createdAt: now,
+          dueDate: now,
+          note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
+        ),
+      );
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      _refresh();
+    } catch (e) {
+      setState(() => _message = 'Errore salvataggio debito: $e');
+    } finally {
+      descriptionController.dispose();
+      amountController.dispose();
+      noteController.dispose();
+    }
+  }
+
+  Future<void> _addAdvanceFromDashboard(_PatientDashboardSummary summary) async {
+    final drugController = TextEditingController();
+    final noteController = TextEditingController();
+    String selectedDoctor = summary.doctorName.trim() == '-' ? '' : summary.doctorName.trim();
+    final data = await _future!;
+    final candidateList = <String>{
+      ...data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty),
+      if (selectedDoctor.isNotEmpty) selectedDoctor,
+    }.toList()
+      ..sort();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) => AlertDialog(
+            backgroundColor: AppColors.panel,
+            title: const Text('Nuovo anticipo', style: TextStyle(color: Colors.white)),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _dialogField(drugController, 'Farmaco / articolo'),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: selectedDoctor.isEmpty ? null : selectedDoctor,
+                    dropdownColor: AppColors.panelSoft,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Medico',
+                      hintText: 'Seleziona medico',
+                      hintStyle: const TextStyle(color: Colors.white54),
+                      labelStyle: const TextStyle(color: Colors.white70),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(color: Colors.white24),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(color: Colors.white70),
+                      ),
+                    ),
+                    items: candidateList.map((item) => DropdownMenuItem<String>(value: item, child: Text(item))).toList(),
+                    onChanged: (value) => setLocalState(() => selectedDoctor = value ?? ''),
+                  ),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Data registrazione: ${_formatDate(DateTime.now())}', style: const TextStyle(color: Colors.white70)),
+                  ),
+                  const SizedBox(height: 12),
+                  _dialogField(noteController, 'Nota', maxLines: 3),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Annulla', style: TextStyle(color: Colors.white70))),
+              FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Salva')),
+            ],
+          ),
+        );
+      },
+    );
+    if (confirmed != true) return;
+    try {
+      if (drugController.text.trim().isEmpty || selectedDoctor.trim().isEmpty) {
+        throw Exception('Farmaco e medico sono obbligatori.');
+      }
+      final now = DateTime.now();
+      await _advancesRepository.saveAdvance(
+        Advance(
+          id: 'adv_${now.microsecondsSinceEpoch}',
+          patientFiscalCode: summary.patient.fiscalCode,
+          patientName: summary.patient.fullName,
+          drugName: drugController.text.trim(),
+          doctorName: selectedDoctor.trim(),
+          note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      _refresh();
+    } catch (e) {
+      setState(() => _message = 'Errore salvataggio anticipo: $e');
+    } finally {
+      drugController.dispose();
+      noteController.dispose();
+    }
+  }
+
+  Future<void> _addBookingFromDashboard(_PatientDashboardSummary summary) async {
+    final drugController = TextEditingController();
+    final quantityController = TextEditingController(text: '1');
+    final noteController = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.panel,
+        title: const Text('Nuova prenotazione', style: TextStyle(color: Colors.white)),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _dialogField(drugController, 'Farmaco / articolo'),
+              const SizedBox(height: 12),
+              _dialogField(
+                quantityController,
+                'Quantità',
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Data prevista: ${_formatDate(DateTime.now())}', style: const TextStyle(color: Colors.white70)),
+              ),
+              const SizedBox(height: 12),
+              _dialogField(noteController, 'Nota', maxLines: 3),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Annulla', style: TextStyle(color: Colors.white70))),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Salva')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      if (drugController.text.trim().isEmpty) {
+        throw Exception('Farmaco obbligatorio.');
+      }
+      final now = DateTime.now();
+      await _bookingsRepository.saveBooking(
+        Booking(
+          id: 'book_${now.microsecondsSinceEpoch}',
+          patientFiscalCode: summary.patient.fiscalCode,
+          patientName: summary.patient.fullName,
+          drugName: drugController.text.trim(),
+          quantity: int.tryParse(quantityController.text.trim()) ?? 1,
+          createdAt: now,
+          expectedDate: now,
+          note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
+        ),
+      );
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      _refresh();
+    } catch (e) {
+      setState(() => _message = 'Errore salvataggio prenotazione: $e');
+    } finally {
+      drugController.dispose();
+      quantityController.dispose();
+      noteController.dispose();
+    }
+  }
+
   Future<void> _deleteAllDebts(_PatientDashboardSummary summary) async {
     for (final item in summary.debts) {
       await _debtsRepository.deleteDebt(summary.patient.fiscalCode, item.id);
@@ -326,15 +568,25 @@ class _DashboardPageState extends State<DashboardPage> {
     if (key == 'debiti') {
       await _openFlagModal(
         title: 'Debiti · ${summary.displayName}',
-        headerAction: IconButton(
-          tooltip: 'Elimina tutto',
-          onPressed: () { _deleteAllDebts(summary); },
-          icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
+        headerAction: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: 'Nuovo debito',
+              onPressed: () => _addDebtFromDashboard(summary),
+              icon: const Icon(Icons.add_circle_outline, color: AppColors.green),
+            ),
+            IconButton(
+              tooltip: 'Elimina tutto',
+              onPressed: () => _deleteAllDebts(summary),
+              icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
+            ),
+          ],
         ),
         items: summary.debts.map((item) {
           return _FlagItem(
             title: '${item.description} · € ${item.residualAmount.toStringAsFixed(2)}',
-            subtitle: 'Creazione ${_formatDate(item.createdAt)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
+            subtitle: 'Inserito ${_formatDate(item.createdAt)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
             onDelete: () async {
               await _debtsRepository.deleteDebt(summary.patient.fiscalCode, item.id);
               Navigator.of(context, rootNavigator: true).pop();
@@ -348,10 +600,20 @@ class _DashboardPageState extends State<DashboardPage> {
     if (key == 'anticipi') {
       await _openFlagModal(
         title: 'Anticipi · ${summary.displayName}',
-        headerAction: IconButton(
-          tooltip: 'Elimina tutto',
-          onPressed: () { _deleteAllAdvances(summary); },
-          icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
+        headerAction: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: 'Nuovo anticipo',
+              onPressed: () => _addAdvanceFromDashboard(summary),
+              icon: const Icon(Icons.add_circle_outline, color: AppColors.green),
+            ),
+            IconButton(
+              tooltip: 'Elimina tutto',
+              onPressed: () => _deleteAllAdvances(summary),
+              icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
+            ),
+          ],
         ),
         items: summary.advances.map((item) {
           return _FlagItem(
@@ -369,10 +631,20 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     await _openFlagModal(
       title: 'Prenotazioni · ${summary.displayName}',
-      headerAction: IconButton(
-        tooltip: 'Elimina tutto',
-        onPressed: () { _deleteAllBookings(summary); },
-        icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
+      headerAction: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'Nuova prenotazione',
+            onPressed: () => _addBookingFromDashboard(summary),
+            icon: const Icon(Icons.add_circle_outline, color: AppColors.green),
+          ),
+          IconButton(
+            tooltip: 'Elimina tutto',
+            onPressed: () => _deleteAllBookings(summary),
+            icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
+          ),
+        ],
       ),
       items: summary.bookings.map((item) {
         return _FlagItem(
@@ -389,53 +661,108 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _openAddPatientDialog() async {
+    final data = await _future!;
     final fiscalCodeController = TextEditingController();
     final nameController = TextEditingController();
     final surnameController = TextEditingController();
     final advanceController = TextEditingController();
     final bookingController = TextEditingController();
     final debtController = TextEditingController();
+    final debtDescriptionController = TextEditingController();
+    String selectedDoctor = '';
+    final doctorCandidates = data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList()..sort();
     final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          backgroundColor: AppColors.panel,
-          title: const Text('Nuovo assistito', style: TextStyle(color: Colors.white)),
-          content: SizedBox(
-            width: 460,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _dialogField(fiscalCodeController, 'Codice fiscale'),
-                  const SizedBox(height: 12),
-                  _dialogField(nameController, 'Nome'),
-                  const SizedBox(height: 12),
-                  _dialogField(surnameController, 'Cognome'),
-                  const SizedBox(height: 12),
-                  _dialogField(advanceController, 'Eventuale anticipo'),
-                  const SizedBox(height: 12),
-                  _dialogField(bookingController, 'Eventuale prenotazione'),
-                  const SizedBox(height: 12),
-                  _dialogField(
-                    debtController,
-                    'Eventuale debito (€)',
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            return AlertDialog(
+              backgroundColor: AppColors.panel,
+              title: const Text('Nuovo assistito', style: TextStyle(color: Colors.white)),
+              content: SizedBox(
+                width: 460,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _dialogField(fiscalCodeController, 'Codice fiscale'),
+                      const SizedBox(height: 12),
+                      _dialogField(nameController, 'Nome'),
+                      const SizedBox(height: 12),
+                      _dialogField(surnameController, 'Cognome'),
+                      const SizedBox(height: 12),
+                      _dialogField(advanceController, 'Eventuale anticipo', onChanged: (_) => setLocalState(() {})),
+                      if (advanceController.text.trim().isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          value: selectedDoctor.isEmpty ? null : selectedDoctor,
+                          dropdownColor: AppColors.panelSoft,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: InputDecoration(
+                            labelText: 'Medico',
+                            hintText: 'Seleziona medico',
+                            hintStyle: const TextStyle(color: Colors.white54),
+                            labelStyle: const TextStyle(color: Colors.white70),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(color: Colors.white24),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(color: Colors.white70),
+                            ),
+                          ),
+                          items: doctorCandidates.map((item) => DropdownMenuItem<String>(value: item, child: Text(item))).toList(),
+                          onChanged: (value) => setLocalState(() => selectedDoctor = value ?? ''),
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text('Data anticipo: ${_formatDate(DateTime.now())}', style: const TextStyle(color: Colors.white70)),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      _dialogField(bookingController, 'Eventuale prenotazione', onChanged: (_) => setLocalState(() {})),
+                      if (bookingController.text.trim().isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text('Data prenotazione: ${_formatDate(DateTime.now())}', style: const TextStyle(color: Colors.white70)),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      _dialogField(
+                        debtController,
+                        'Eventuale debito (€)',
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
+                        onChanged: (_) => setLocalState(() {}),
+                      ),
+                      if ((double.tryParse(debtController.text.trim().replaceAll(',', '.')) ?? 0) > 0) ...[
+                        const SizedBox(height: 12),
+                        _dialogField(debtDescriptionController, 'Causale debito'),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text('Data debito: ${_formatDate(DateTime.now())}', style: const TextStyle(color: Colors.white70)),
+                        ),
+                      ],
+                    ],
                   ),
-                ],
+                ),
               ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Salva'),
-            ),
-          ],
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Salva'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -446,6 +773,7 @@ class _DashboardPageState extends State<DashboardPage> {
       advanceController.dispose();
       bookingController.dispose();
       debtController.dispose();
+      debtDescriptionController.dispose();
       return;
     }
 
@@ -462,6 +790,14 @@ class _DashboardPageState extends State<DashboardPage> {
       final advanceText = advanceController.text.trim();
       final bookingText = bookingController.text.trim();
       final debtValue = double.tryParse(debtController.text.trim().replaceAll(',', '.')) ?? 0;
+      final debtDescription = debtDescriptionController.text.trim();
+
+      if (advanceText.isNotEmpty && selectedDoctor.trim().isEmpty) {
+        throw Exception("Per l'anticipo devi selezionare il medico.");
+      }
+      if (debtValue > 0 && debtDescription.isEmpty) {
+        throw Exception('Per il debito devi indicare la causale.');
+      }
 
       await _patientsRepository.savePatient(
         Patient(
@@ -477,14 +813,13 @@ class _DashboardPageState extends State<DashboardPage> {
       );
 
       if (advanceText.isNotEmpty) {
-        final id = 'adv_${now.microsecondsSinceEpoch}';
         await _advancesRepository.saveAdvance(
           Advance(
-            id: id,
+            id: 'adv_${now.microsecondsSinceEpoch}',
             patientFiscalCode: fiscalCode,
             patientName: fullName,
             drugName: advanceText,
-            doctorName: '',
+            doctorName: selectedDoctor.trim(),
             createdAt: now,
             updatedAt: now,
           ),
@@ -492,10 +827,9 @@ class _DashboardPageState extends State<DashboardPage> {
       }
 
       if (bookingText.isNotEmpty) {
-        final id = 'book_${now.microsecondsSinceEpoch}';
         await _bookingsRepository.saveBooking(
           Booking(
-            id: id,
+            id: 'book_${now.microsecondsSinceEpoch}',
             patientFiscalCode: fiscalCode,
             patientName: fullName,
             drugName: bookingText,
@@ -506,17 +840,17 @@ class _DashboardPageState extends State<DashboardPage> {
       }
 
       if (debtValue > 0) {
-        final id = 'debt_${now.microsecondsSinceEpoch}';
         await _debtsRepository.saveDebt(
           Debt(
-            id: id,
+            id: 'debt_${now.microsecondsSinceEpoch}',
             patientFiscalCode: fiscalCode,
             patientName: fullName,
-            description: 'Debito iniziale',
+            description: debtDescription,
             amount: debtValue,
             paidAmount: 0,
             residualAmount: debtValue,
             createdAt: now,
+            dueDate: now,
           ),
         );
       }
@@ -536,6 +870,7 @@ class _DashboardPageState extends State<DashboardPage> {
       advanceController.dispose();
       bookingController.dispose();
       debtController.dispose();
+      debtDescriptionController.dispose();
     }
   }
 
@@ -949,8 +1284,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
 class _DashboardData {
   final List<_PatientDashboardSummary> summaries;
+  final List<String> doctorsCatalog;
 
-  const _DashboardData({required this.summaries});
+  const _DashboardData({required this.summaries, required this.doctorsCatalog});
 }
 
 class _PatientDashboardSummary {
@@ -1028,13 +1364,13 @@ class _PatientDashboardSummary {
     final matchingDoctor = doctorLinks.where((item) {
       return item.patientFiscalCode == patient.fiscalCode.trim().toUpperCase();
     }).toList();
+    final prescriptionDoctor = prescriptions.map((e) => e.doctorName?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '');
+    final importDoctor = matchingImports.map((e) => e.doctorFullName.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '');
     final doctorName = matchingDoctor.isNotEmpty
         ? matchingDoctor.first.doctorName.trim()
         : ((patient.doctorName ?? '').trim().isNotEmpty
             ? patient.doctorName!.trim()
-            : (prescriptions.map((e) => e.doctorName?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '')).isNotEmpty
-                ? prescriptions.map((e) => e.doctorName?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '')
-                : matchingImports.map((e) => e.doctorFullName.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '-'));
+            : (prescriptionDoctor.isNotEmpty ? prescriptionDoctor : importDoctor));
     final exemptionCode = (patient.exemptionCode ?? '').trim().isNotEmpty
         ? patient.exemptionCode!.trim()
         : (() {

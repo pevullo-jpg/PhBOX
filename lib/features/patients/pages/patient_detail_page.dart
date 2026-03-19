@@ -330,7 +330,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   Future<void> _addDebt(Patient patient) async {
     final descriptionController = TextEditingController();
     final amountController = TextEditingController();
-    final dueDateController = TextEditingController();
     final noteController = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
@@ -342,7 +341,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _dialogField(descriptionController, 'Descrizione'),
+              _dialogField(descriptionController, 'Causale'),
               const SizedBox(height: 12),
               _dialogField(
                 amountController,
@@ -351,7 +350,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                 inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
               ),
               const SizedBox(height: 12),
-              _dialogField(dueDateController, 'Scadenza (gg/mm/aaaa)'),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Data inserimento: ${_formatDate(DateTime.now())}', style: const TextStyle(color: Colors.white70)),
+              ),
               const SizedBox(height: 12),
               _dialogField(noteController, 'Nota', maxLines: 3),
             ],
@@ -365,17 +367,22 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     );
     if (confirmed != true) return;
     try {
+      final amount = _parseEuro(amountController.text);
+      if (descriptionController.text.trim().isEmpty || amount <= 0) {
+        throw Exception('Causale e importo sono obbligatori.');
+      }
+      final now = DateTime.now();
       await _debtsRepository.saveDebt(
         Debt(
           id: _localId('debt'),
           patientFiscalCode: patient.fiscalCode,
           patientName: patient.fullName,
           description: descriptionController.text.trim(),
-          amount: _parseEuro(amountController.text),
+          amount: amount,
           paidAmount: 0,
-          residualAmount: _parseEuro(amountController.text),
-          createdAt: DateTime.now(),
-          dueDate: _parseItalianDate(dueDateController.text),
+          residualAmount: amount,
+          createdAt: now,
+          dueDate: now,
           note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
         ),
       );
@@ -385,7 +392,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     } finally {
       descriptionController.dispose();
       amountController.dispose();
-      dueDateController.dispose();
       noteController.dispose();
     }
   }
@@ -401,9 +407,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       if (selectedDoctor.trim().isNotEmpty && selectedDoctor.trim() != '-') selectedDoctor.trim(),
     }.toList()
       ..sort();
-    if (selectedDoctor == '-' && doctorCandidates.isNotEmpty) {
-      selectedDoctor = doctorCandidates.first;
-    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -425,6 +428,8 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                       style: const TextStyle(color: Colors.white),
                       decoration: InputDecoration(
                         labelText: 'Medico',
+                        hintText: 'Seleziona medico',
+                        hintStyle: const TextStyle(color: Colors.white54),
                         labelStyle: const TextStyle(color: Colors.white70),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(14),
@@ -461,14 +466,17 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     );
     if (confirmed != true) return;
     try {
-      final doctor = selectedDoctor.trim().isEmpty ? _fallbackDoctorFromHistory(data) : selectedDoctor.trim();
+      final doctor = selectedDoctor.trim();
+      if (drugController.text.trim().isEmpty || doctor.isEmpty || doctor == '-') {
+        throw Exception('Farmaco e medico sono obbligatori.');
+      }
       await _advancesRepository.saveAdvance(
         Advance(
           id: _localId('advance'),
           patientFiscalCode: patient.fiscalCode,
           patientName: patient.fullName,
           drugName: drugController.text.trim(),
-          doctorName: doctor == '-' ? '' : doctor,
+          doctorName: doctor,
           note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
@@ -499,7 +507,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   Future<void> _addBooking(Patient patient) async {
     final drugController = TextEditingController();
     final quantityController = TextEditingController(text: '1');
-    final expectedDateController = TextEditingController(text: _formatDate(DateTime.now()));
     final noteController = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
@@ -522,10 +529,8 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               const SizedBox(height: 12),
               Align(
                 alignment: Alignment.centerLeft,
-                child: Text('Data prevista predefinita: ${_formatDate(DateTime.now())}', style: const TextStyle(color: Colors.white70)),
+                child: Text('Data prevista: ${_formatDate(DateTime.now())}', style: const TextStyle(color: Colors.white70)),
               ),
-              const SizedBox(height: 12),
-              _dialogField(expectedDateController, 'Data prevista (gg/mm/aaaa)'),
               const SizedBox(height: 12),
               _dialogField(noteController, 'Nota', maxLines: 3),
             ],
@@ -547,7 +552,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
           drugName: drugController.text.trim(),
           quantity: int.tryParse(quantityController.text.trim()) ?? 1,
           createdAt: DateTime.now(),
-          expectedDate: _parseItalianDate(expectedDateController.text) ?? DateTime.now(),
+          expectedDate: DateTime.now(),
           note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
         ),
       );
@@ -557,7 +562,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     } finally {
       drugController.dispose();
       quantityController.dispose();
-      expectedDateController.dispose();
       noteController.dispose();
     }
   }
