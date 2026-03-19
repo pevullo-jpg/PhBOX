@@ -21,6 +21,8 @@ import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
+import '../../../shared/navigation/app_navigation.dart';
+import '../../../shared/widgets/floating_page_menu.dart';
 import '../../../theme/app_theme.dart';
 
 class PatientDetailPage extends StatefulWidget {
@@ -615,26 +617,26 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<_PatientDetailData>(
-      future: _future,
-      builder: (context, snapshot) {
-        final data = snapshot.data;
-        return Scaffold(
-          backgroundColor: AppColors.background,
-          appBar: AppBar(
-            backgroundColor: AppColors.background,
-            foregroundColor: Colors.white,
-            title: const Text('Scheda assistito'),
-          ),
-          body: snapshot.connectionState == ConnectionState.waiting
-              ? const Center(child: CircularProgressIndicator())
-              : snapshot.hasError
-                  ? Center(child: Text('Errore caricamento: ${snapshot.error}', style: const TextStyle(color: Colors.white)))
-                  : data == null || data.patient == null
-                      ? const Center(child: Text('Assistito non trovato.', style: TextStyle(color: Colors.white)))
-                      : Builder(
-                          builder: (context) {
-                            return SingleChildScrollView(
+    return Stack(
+      children: [
+        FutureBuilder<_PatientDetailData>(
+          future: _future,
+          builder: (context, snapshot) {
+            final data = snapshot.data;
+            return Scaffold(
+              backgroundColor: AppColors.background,
+              appBar: AppBar(
+                backgroundColor: AppColors.background,
+                foregroundColor: Colors.white,
+                title: const Text('Scheda assistito'),
+              ),
+              body: snapshot.connectionState == ConnectionState.waiting
+                  ? const Center(child: CircularProgressIndicator())
+                  : snapshot.hasError
+                      ? Center(child: Text('Errore caricamento: ${snapshot.error}', style: const TextStyle(color: Colors.white)))
+                      : data == null || data.patient == null
+                          ? const Center(child: Text('Assistito non trovato.', style: TextStyle(color: Colors.white)))
+                          : SingleChildScrollView(
                               padding: const EdgeInsets.all(20),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -766,11 +768,22 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                   ),
                                 ],
                               ),
-                            );
-                          },
-                        ),
-        );
-      },
+                            ),
+            );
+          },
+        ),
+        FloatingPageMenu(
+          currentIndex: appNavigationIndex.value,
+          includeBack: true,
+          onBack: () => Navigator.of(context).maybePop(),
+          pageIcon: Icons.badge_outlined,
+          pageTooltip: 'Scheda assistito',
+          onSelected: (index) {
+            appNavigationIndex.value = index;
+            Navigator.of(context).popUntil((route) => route.isFirst);
+          },
+        ),
+      ],
     );
   }
 

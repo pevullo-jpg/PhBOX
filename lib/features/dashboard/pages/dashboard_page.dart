@@ -43,7 +43,7 @@ class _DashboardPageState extends State<DashboardPage> {
   late final SettingsRepository _settingsRepository;
 
   Future<_DashboardData>? _future;
-  _DashboardCardFilter? _activeCardFilter;
+  final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
 
   @override
@@ -115,28 +115,29 @@ class _DashboardPageState extends State<DashboardPage> {
     final query = _searchController.text.trim().toLowerCase();
     return input.where((item) {
       if (!item.hasActiveContent) return false;
-      switch (_activeCardFilter) {
-        case _DashboardCardFilter.ricette:
-          if (item.recipeCount == 0) return false;
-          break;
-        case _DashboardCardFilter.dpc:
-          if (!item.hasDpc) return false;
-          break;
-        case _DashboardCardFilter.debiti:
-          if (item.debts.isEmpty) return false;
-          break;
-        case _DashboardCardFilter.anticipi:
-          if (item.advances.isEmpty) return false;
-          break;
-        case _DashboardCardFilter.prenotazioni:
-          if (item.bookings.isEmpty) return false;
-          break;
-        case _DashboardCardFilter.scadenze:
-          if (!item.hasExpiryAlert) return false;
-          break;
-        case _DashboardCardFilter.assistiti:
-        case null:
-          break;
+      for (final filter in _activeCardFilters) {
+        switch (filter) {
+          case _DashboardCardFilter.ricette:
+            if (item.recipeCount == 0) return false;
+            break;
+          case _DashboardCardFilter.dpc:
+            if (!item.hasDpc) return false;
+            break;
+          case _DashboardCardFilter.debiti:
+            if (item.debts.isEmpty) return false;
+            break;
+          case _DashboardCardFilter.anticipi:
+            if (item.advances.isEmpty) return false;
+            break;
+          case _DashboardCardFilter.prenotazioni:
+            if (item.bookings.isEmpty) return false;
+            break;
+          case _DashboardCardFilter.scadenze:
+            if (!item.hasExpiryAlert) return false;
+            break;
+          case _DashboardCardFilter.assistiti:
+            break;
+        }
       }
       if (query.isEmpty) return true;
       return item.displayName.toLowerCase().contains(query) ||
@@ -145,6 +146,17 @@ class _DashboardPageState extends State<DashboardPage> {
           item.exemptionCode.toLowerCase().contains(query) ||
           item.city.toLowerCase().contains(query);
     }).toList();
+  }
+
+
+  void _toggleCardFilter(_DashboardCardFilter filter) {
+    setState(() {
+      if (_activeCardFilters.contains(filter)) {
+        _activeCardFilters.remove(filter);
+      } else {
+        _activeCardFilters.add(filter);
+      }
+    });
   }
 
   Future<void> _openPdf(DrivePdfImport item) async {
@@ -1002,40 +1014,40 @@ class _DashboardPageState extends State<DashboardPage> {
                                   value: summaries.length.toString(),
                                   icon: Icons.people_alt_outlined,
                                   accent: AppColors.yellow,
-                                  isSelected: _activeCardFilter == _DashboardCardFilter.assistiti,
-                                  onTap: () => setState(() => _activeCardFilter = _activeCardFilter == _DashboardCardFilter.assistiti ? null : _DashboardCardFilter.assistiti),
+                                  isSelected: _activeCardFilters.contains(_DashboardCardFilter.assistiti),
+                                  onTap: () => _toggleCardFilter(_DashboardCardFilter.assistiti),
                                 ),
                                 _SummaryCard(
                                   title: 'Ricette',
                                   value: summaries.fold<int>(0, (sum, item) => sum + item.recipeCount).toString(),
                                   icon: Icons.receipt_long_outlined,
                                   accent: AppColors.green,
-                                  isSelected: _activeCardFilter == _DashboardCardFilter.ricette,
-                                  onTap: () => setState(() => _activeCardFilter = _activeCardFilter == _DashboardCardFilter.ricette ? null : _DashboardCardFilter.ricette),
+                                  isSelected: _activeCardFilters.contains(_DashboardCardFilter.ricette),
+                                  onTap: () => _toggleCardFilter(_DashboardCardFilter.ricette),
                                 ),
                                 _SummaryCard(
                                   title: 'Totale DPC',
                                   value: summaries.fold<int>(0, (sum, item) => sum + item.dpcItems.length).toString(),
                                   icon: Icons.local_shipping_outlined,
                                   accent: AppColors.coral,
-                                  isSelected: _activeCardFilter == _DashboardCardFilter.dpc,
-                                  onTap: () => setState(() => _activeCardFilter = _activeCardFilter == _DashboardCardFilter.dpc ? null : _DashboardCardFilter.dpc),
+                                  isSelected: _activeCardFilters.contains(_DashboardCardFilter.dpc),
+                                  onTap: () => _toggleCardFilter(_DashboardCardFilter.dpc),
                                 ),
                                 _SummaryCard(
                                   title: 'Debiti',
                                   value: '€ ${summaries.fold<double>(0, (sum, item) => sum + item.totalDebt).toStringAsFixed(2)}',
                                   icon: Icons.euro_outlined,
                                   accent: AppColors.wine,
-                                  isSelected: _activeCardFilter == _DashboardCardFilter.debiti,
-                                  onTap: () => setState(() => _activeCardFilter = _activeCardFilter == _DashboardCardFilter.debiti ? null : _DashboardCardFilter.debiti),
+                                  isSelected: _activeCardFilters.contains(_DashboardCardFilter.debiti),
+                                  onTap: () => _toggleCardFilter(_DashboardCardFilter.debiti),
                                 ),
                                 _SummaryCard(
                                   title: 'In scadenza',
                                   value: expiring.length.toString(),
                                   icon: Icons.warning_amber_rounded,
                                   accent: AppColors.amber,
-                                  isSelected: _activeCardFilter == _DashboardCardFilter.scadenze,
-                                  onTap: () => setState(() => _activeCardFilter = _activeCardFilter == _DashboardCardFilter.scadenze ? null : _DashboardCardFilter.scadenze),
+                                  isSelected: _activeCardFilters.contains(_DashboardCardFilter.scadenze),
+                                  onTap: () => _toggleCardFilter(_DashboardCardFilter.scadenze),
                                 ),
                               ],
                             ),

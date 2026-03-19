@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/app_settings.dart';
 import '../../../data/repositories/settings_repository.dart';
+import '../../../shared/navigation/app_navigation.dart';
+import '../../../shared/widgets/floating_page_menu.dart';
 import '../../../shared/widgets/settings_field_card.dart';
 import '../../../theme/app_theme.dart';
 
@@ -113,93 +115,103 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (isLoading) {
-      return const Scaffold(
-        backgroundColor: AppColors.background,
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
-
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            const Text(
-              'Impostazioni',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 30,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Nel front restano solo i parametri utili alla consultazione operativa.',
-              style: TextStyle(color: Colors.white70, height: 1.5),
-            ),
-            const SizedBox(height: 20),
-            SettingsFieldCard(
-              title: 'Scadenze',
-              subtitle: 'Numero di giorni di preavviso per evidenziare le ricette in prossimità di scadenza.',
+    return Stack(
+      children: [
+        if (isLoading)
+          const Scaffold(
+            backgroundColor: AppColors.background,
+            body: Center(child: CircularProgressIndicator()),
+          )
+        else
+          Scaffold(
+            backgroundColor: AppColors.background,
+            body: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  TextField(
-                    controller: expiryWarningController,
-                    keyboardType: TextInputType.number,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(
-                      labelText: 'Giorni preavviso scadenza',
-                      labelStyle: TextStyle(color: Colors.white70),
+                  const Text(
+                    'Impostazioni',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 30,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const SizedBox(height: 16),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton(
-                      onPressed: isSaving ? null : _save,
-                      child: Text(isSaving ? 'Salvataggio...' : 'Salva'),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Nel front restano solo i parametri utili alla consultazione operativa.',
+                    style: TextStyle(color: Colors.white70, height: 1.5),
+                  ),
+                  const SizedBox(height: 20),
+                  SettingsFieldCard(
+                    title: 'Scadenze',
+                    subtitle: 'Numero di giorni di preavviso per evidenziare le ricette in prossimità di scadenza.',
+                    child: Column(
+                      children: <Widget>[
+                        TextField(
+                          controller: expiryWarningController,
+                          keyboardType: TextInputType.number,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: const InputDecoration(
+                            labelText: 'Giorni preavviso scadenza',
+                            labelStyle: TextStyle(color: Colors.white70),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: FilledButton(
+                            onPressed: isSaving ? null : _save,
+                            child: Text(isSaving ? 'Salvataggio...' : 'Salva'),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
+                  const SizedBox(height: 20),
+                  SettingsFieldCard(
+                    title: 'Medici disponibili',
+                    subtitle: 'Elenco usato nel menu a tendina degli anticipi. Un medico per riga oppure separati da virgola.',
+                    child: Column(
+                      children: <Widget>[
+                        TextField(
+                          controller: doctorsCatalogController,
+                          minLines: 4,
+                          maxLines: 8,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: const InputDecoration(
+                            labelText: 'Lista medici',
+                            alignLabelWithHint: true,
+                            labelStyle: TextStyle(color: Colors.white70),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (message.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 16),
+                    Text(
+                      message,
+                      style: TextStyle(
+                        color: isErrorMessage ? AppColors.red : AppColors.green,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
-
-            const SizedBox(height: 20),
-            SettingsFieldCard(
-              title: 'Medici disponibili',
-              subtitle: 'Elenco usato nel menu a tendina degli anticipi. Un medico per riga oppure separati da virgola.',
-              child: Column(
-                children: <Widget>[
-                  TextField(
-                    controller: doctorsCatalogController,
-                    minLines: 4,
-                    maxLines: 8,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(
-                      labelText: 'Lista medici',
-                      alignLabelWithHint: true,
-                      labelStyle: TextStyle(color: Colors.white70),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (message.isNotEmpty) ...<Widget>[
-              const SizedBox(height: 16),
-              Text(
-                message,
-                style: TextStyle(
-                  color: isErrorMessage ? AppColors.red : AppColors.green,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ],
+          ),
+        FloatingPageMenu(
+          currentIndex: appNavigationIndex.value,
+          onSelected: (index) {
+            if (appNavigationIndex.value != index) {
+              appNavigationIndex.value = index;
+            }
+          },
         ),
-      ),
+      ],
     );
   }
 }
