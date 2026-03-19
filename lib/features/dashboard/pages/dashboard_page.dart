@@ -1248,10 +1248,20 @@ class _DashboardPageState extends State<DashboardPage> {
     return widgets;
   }
 
-  Widget _dialogField(TextEditingController controller, String label, {TextInputType? keyboardType}) {
+  Widget _dialogField(
+    TextEditingController controller,
+    String label, {
+    TextInputType? keyboardType,
+    List<TextInputFormatter>? inputFormatters,
+    int maxLines = 1,
+    ValueChanged<String>? onChanged,
+  }) {
     return TextField(
       controller: controller,
       keyboardType: keyboardType,
+      inputFormatters: inputFormatters,
+      maxLines: maxLines,
+      onChanged: onChanged,
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         labelText: label,
