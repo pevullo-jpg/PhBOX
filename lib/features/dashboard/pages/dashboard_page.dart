@@ -128,10 +128,22 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _openPdf(DrivePdfImport item) async {
-    final url = item.webViewLink.trim().isNotEmpty
-        ? item.webViewLink.trim()
-        : 'https://drive.google.com/file/d/${item.driveFileId}/view';
-    await launchUrl(Uri.parse(url), webOnlyWindowName: '_blank');
+    final String directLink = item.webViewLink.trim();
+    final String fallbackLink = item.driveFileId.trim().isNotEmpty
+        ? 'https://drive.google.com/file/d/${item.driveFileId.trim()}/view'
+        : '';
+    final String url = directLink.isNotEmpty ? directLink : fallbackLink;
+    if (url.isEmpty) {
+      setState(() {
+        _message = 'Link PDF assente nel record Firestore.';
+      });
+      return;
+    }
+    await launchUrl(
+      Uri.parse(url),
+      mode: LaunchMode.platformDefault,
+      webOnlyWindowName: '_blank',
+    );
   }
 
   Future<void> _openPdfList(_PatientDashboardSummary summary) async {
@@ -186,7 +198,12 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Future<void> _openFlagModal(String title, List<_FlagItem> items) async {
+
+  Future<void> _openFlagModal({
+    required String title,
+    required List<_FlagItem> items,
+    Widget? headerAction,
+  }) async {
     await showDialog<void>(
       context: context,
       builder: (context) {
@@ -200,7 +217,14 @@ class _DashboardPageState extends State<DashboardPage> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(title, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+                      ),
+                      if (headerAction != null) headerAction,
+                    ],
+                  ),
                   const SizedBox(height: 16),
                   ConstrainedBox(
                     constraints: const BoxConstraints(maxHeight: 500),
@@ -218,13 +242,28 @@ class _DashboardPageState extends State<DashboardPage> {
                                     borderRadius: BorderRadius.circular(16),
                                     border: Border.all(color: Colors.white10),
                                   ),
-                                  child: Column(
+                                  child: Row(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(item.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
-                                      if (item.subtitle.isNotEmpty) ...[
-                                        const SizedBox(height: 6),
-                                        Text(item.subtitle, style: const TextStyle(color: Colors.white70, height: 1.35)),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(item.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+                                            if (item.subtitle.isNotEmpty) ...[
+                                              const SizedBox(height: 6),
+                                              Text(item.subtitle, style: const TextStyle(color: Colors.white70, height: 1.35)),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                      if (item.onDelete != null) ...[
+                                        const SizedBox(width: 12),
+                                        IconButton(
+                                          tooltip: 'Elimina voce',
+                                          onPressed: item.onDelete == null ? null : () { item.onDelete!.call(); },
+                                          icon: const Icon(Icons.delete_outline, color: AppColors.red),
+                                        ),
                                       ],
                                     ],
                                   ),
@@ -242,6 +281,30 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  Future<void> _deleteAllDebts(_PatientDashboardSummary summary) async {
+    for (final item in summary.debts) {
+      await _debtsRepository.deleteDebt(summary.patient.fiscalCode, item.id);
+    }
+    Navigator.of(context, rootNavigator: true).pop();
+    _refresh();
+  }
+
+  Future<void> _deleteAllAdvances(_PatientDashboardSummary summary) async {
+    for (final item in summary.advances) {
+      await _advancesRepository.deleteAdvance(summary.patient.fiscalCode, item.id);
+    }
+    Navigator.of(context, rootNavigator: true).pop();
+    _refresh();
+  }
+
+  Future<void> _deleteAllBookings(_PatientDashboardSummary summary) async {
+    for (final item in summary.bookings) {
+      await _bookingsRepository.deleteBooking(summary.patient.fiscalCode, item.id);
+    }
+    Navigator.of(context, rootNavigator: true).pop();
+    _refresh();
+  }
+
   Future<void> _handleFlagTap(_PatientDashboardSummary summary, String key) async {
     if (key == 'ricette') {
       await _openPdfList(summary);
@@ -249,11 +312,11 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     if (key == 'dpc') {
       await _openFlagModal(
-        'DPC · ${summary.displayName}',
-        summary.prescriptions.where((item) => item.dpcFlag).map((item) {
+        title: 'DPC · ${summary.displayName}',
+        items: summary.dpcItems.map((item) {
           return _FlagItem(
-            title: _prescriptionTitle(item),
-            subtitle: '${_formatDate(item.prescriptionDate)} · ${item.doctorName ?? '-'}',
+            title: item.title,
+            subtitle: item.subtitle,
           );
         }).toList(),
       );
@@ -261,11 +324,21 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     if (key == 'debiti') {
       await _openFlagModal(
-        'Debiti · ${summary.displayName}',
-        summary.debts.map((item) {
+        title: 'Debiti · ${summary.displayName}',
+        headerAction: IconButton(
+          tooltip: 'Elimina tutto',
+          onPressed: () { _deleteAllDebts(summary); },
+          icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
+        ),
+        items: summary.debts.map((item) {
           return _FlagItem(
             title: '${item.description} · € ${item.residualAmount.toStringAsFixed(2)}',
             subtitle: 'Creazione ${_formatDate(item.createdAt)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
+            onDelete: () async {
+              await _debtsRepository.deleteDebt(summary.patient.fiscalCode, item.id);
+              Navigator.of(context, rootNavigator: true).pop();
+              _refresh();
+            },
           );
         }).toList(),
       );
@@ -273,28 +346,49 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     if (key == 'anticipi') {
       await _openFlagModal(
-        'Anticipi · ${summary.displayName}',
-        summary.advances.map((item) {
+        title: 'Anticipi · ${summary.displayName}',
+        headerAction: IconButton(
+          tooltip: 'Elimina tutto',
+          onPressed: () { _deleteAllAdvances(summary); },
+          icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
+        ),
+        items: summary.advances.map((item) {
           return _FlagItem(
             title: item.drugName,
             subtitle: '${item.doctorName.isEmpty ? '-' : item.doctorName} · ${_formatDate(item.createdAt)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
+            onDelete: () async {
+              await _advancesRepository.deleteAdvance(summary.patient.fiscalCode, item.id);
+              Navigator.of(context, rootNavigator: true).pop();
+              _refresh();
+            },
           );
         }).toList(),
       );
       return;
     }
     await _openFlagModal(
-      'Prenotazioni · ${summary.displayName}',
-      summary.bookings.map((item) {
+      title: 'Prenotazioni · ${summary.displayName}',
+      headerAction: IconButton(
+        tooltip: 'Elimina tutto',
+        onPressed: () { _deleteAllBookings(summary); },
+        icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
+      ),
+      items: summary.bookings.map((item) {
         return _FlagItem(
           title: '${item.drugName} x${item.quantity}',
           subtitle: 'Registrata ${_formatDate(item.createdAt)} · Prevista ${_formatDate(item.expectedDate)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
+          onDelete: () async {
+            await _bookingsRepository.deleteBooking(summary.patient.fiscalCode, item.id);
+            Navigator.of(context, rootNavigator: true).pop();
+            _refresh();
+          },
         );
       }).toList(),
     );
   }
 
   Future<void> _openAddPatientDialog() async {
+
     final fiscalCodeController = TextEditingController();
     final nameController = TextEditingController();
     final cityController = TextEditingController();
@@ -550,8 +644,8 @@ class _DashboardPageState extends State<DashboardPage> {
                           child: const Row(
                             children: [
                               SizedBox(width: 180, child: Text('Assistito', style: _headStyle)),
-                              SizedBox(width: 170, child: Text('CF', style: _headStyle)),
-                              SizedBox(width: 170, child: Text('Medico', style: _headStyle)),
+                              SizedBox(width: 220, child: Text('CF', style: _headStyle)),
+                              SizedBox(width: 240, child: Text('Medico', style: _headStyle)),
                               SizedBox(width: 120, child: Text('Esenzione', style: _headStyle)),
                               Expanded(child: Text('Flags', style: _headStyle)),
                               SizedBox(width: 52),
@@ -592,20 +686,27 @@ class _DashboardPageState extends State<DashboardPage> {
                                             ),
                                           ),
                                           SizedBox(
-                                            width: 170,
+                                            width: 220,
                                             child: TextButton(
                                               style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
                                               onPressed: () => _openPatient(item),
                                               child: Text(
                                                 item.patient.fiscalCode,
                                                 textAlign: TextAlign.left,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
                                                 style: const TextStyle(color: AppColors.yellow, fontSize: 18.2, fontWeight: FontWeight.w800),
                                               ),
                                             ),
                                           ),
                                           SizedBox(
-                                            width: 170,
-                                            child: Text(item.doctorName, style: const TextStyle(color: Colors.white, fontSize: 18.2)),
+                                            width: 240,
+                                            child: Text(
+                                              item.doctorNameUpper,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(color: Colors.white, fontSize: 18.2, fontWeight: FontWeight.w700),
+                                            ),
                                           ),
                                           SizedBox(
                                             width: 120,
@@ -615,13 +716,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                             child: Wrap(
                                               spacing: 8,
                                               runSpacing: 8,
-                                              children: [
-                                                _FlagChip(label: 'ricette ${item.recipeCount}', color: AppColors.green, onTap: () => _handleFlagTap(item, 'ricette')),
-                                                _FlagChip(label: 'DPC ${item.hasDpc ? 'SI' : 'NO'}', color: AppColors.coral, onTap: () => _handleFlagTap(item, 'dpc')),
-                                                _FlagChip(label: 'debiti € ${item.totalDebt.toStringAsFixed(2)}', color: AppColors.wine, onTap: () => _handleFlagTap(item, 'debiti')),
-                                                _FlagChip(label: 'anticipi ${item.advances.length}', color: AppColors.amber, onTap: () => _handleFlagTap(item, 'anticipi')),
-                                                _FlagChip(label: 'prenotazioni ${item.bookings.length}', color: AppColors.yellow, onTap: () => _handleFlagTap(item, 'prenotazioni')),
-                                              ],
+                                              children: _buildFlagChips(item),
                                             ),
                                           ),
                                           SizedBox(
@@ -647,6 +742,27 @@ class _DashboardPageState extends State<DashboardPage> {
         );
       },
     );
+  }
+
+
+  List<Widget> _buildFlagChips(_PatientDashboardSummary item) {
+    final widgets = <Widget>[];
+    if (item.recipeCount > 0 && item.imports.isNotEmpty) {
+      widgets.add(_FlagChip(label: 'ricette ${item.recipeCount}', color: AppColors.green, onTap: () => _handleFlagTap(item, 'ricette')));
+    }
+    if (item.dpcItems.isNotEmpty) {
+      widgets.add(_FlagChip(label: 'DPC ${item.dpcItems.length}', color: AppColors.coral, onTap: () => _handleFlagTap(item, 'dpc')));
+    }
+    if (item.totalDebt > 0) {
+      widgets.add(_FlagChip(label: 'debiti € ${item.totalDebt.toStringAsFixed(2)}', color: AppColors.wine, onTap: () => _handleFlagTap(item, 'debiti')));
+    }
+    if (item.advances.isNotEmpty) {
+      widgets.add(_FlagChip(label: 'anticipi ${item.advances.length}', color: AppColors.amber, onTap: () => _handleFlagTap(item, 'anticipi')));
+    }
+    if (item.bookings.isNotEmpty) {
+      widgets.add(_FlagChip(label: 'prenotazioni ${item.bookings.length}', color: AppColors.yellow, onTap: () => _handleFlagTap(item, 'prenotazioni')));
+    }
+    return widgets;
   }
 
   Widget _dialogField(TextEditingController controller, String label) {
@@ -721,6 +837,24 @@ class _PatientDashboardSummary {
 
   double get totalDebt => debts.fold<double>(0, (sum, item) => sum + item.residualAmount);
 
+  String get doctorNameUpper => doctorName.trim().isEmpty ? '-' : doctorName.trim().toUpperCase();
+
+  List<_FlagItem> get dpcItems {
+    final fromPrescriptions = prescriptions.where((item) => item.dpcFlag).map((item) {
+      return _FlagItem(
+        title: _dashboardPrescriptionTitle(item),
+        subtitle: '${_dashboardFormatDate(item.prescriptionDate)} · ${(item.doctorName ?? '-').trim().isEmpty ? '-' : item.doctorName!.trim()}',
+      );
+    });
+    final fromImports = imports.where((item) => item.isDpc).map((item) {
+      return _FlagItem(
+        title: item.therapy.isEmpty ? (item.fileName.trim().isEmpty ? 'DPC' : item.fileName.trim()) : item.therapy.join(', '),
+        subtitle: '${_dashboardFormatDate(item.prescriptionDate ?? item.createdAt)} · ${item.doctorFullName.trim().isEmpty ? '-' : item.doctorFullName.trim()}',
+      );
+    });
+    return [...fromPrescriptions, ...fromImports];
+  }
+
   static _PatientDashboardSummary build({
     required Patient patient,
     required List<Prescription> prescriptions,
@@ -730,26 +864,46 @@ class _PatientDashboardSummary {
     required List<Booking> bookings,
     required List<DoctorPatientLink> doctorLinks,
   }) {
+    final normalizedFiscalCode = patient.fiscalCode.trim().toUpperCase();
+    final normalizedFullName = patient.fullName.trim().toUpperCase();
     final matchingImports = imports.where((item) {
-      return item.patientFiscalCode.trim().toUpperCase() == patient.fiscalCode.trim().toUpperCase();
+      final importFiscalCode = item.patientFiscalCode.trim().toUpperCase();
+      final importFullName = item.patientFullName.trim().toUpperCase();
+      if (importFiscalCode.isNotEmpty) {
+        return importFiscalCode == normalizedFiscalCode;
+      }
+      return normalizedFullName.isNotEmpty && importFullName == normalizedFullName;
     }).toList();
     final matchingDoctor = doctorLinks.where((item) {
       return item.patientFiscalCode == patient.fiscalCode.trim().toUpperCase();
     }).toList();
     final doctorName = matchingDoctor.isNotEmpty
-        ? matchingDoctor.first.doctorName
+        ? matchingDoctor.first.doctorName.trim()
         : ((patient.doctorName ?? '').trim().isNotEmpty
             ? patient.doctorName!.trim()
-            : prescriptions.map((e) => e.doctorName?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '-'));
+            : (prescriptions.map((e) => e.doctorName?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '')).isNotEmpty
+                ? prescriptions.map((e) => e.doctorName?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '')
+                : matchingImports.map((e) => e.doctorFullName.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '-')));
     final exemptionCode = (patient.exemptionCode ?? '').trim().isNotEmpty
         ? patient.exemptionCode!.trim()
-        : prescriptions.map((e) => e.exemptionCode?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '-');
+        : (() {
+            final fromPrescription = prescriptions.map((e) => e.exemptionCode?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '');
+            if (fromPrescription.isNotEmpty) return fromPrescription;
+            return matchingImports.map((e) => e.exemptionCode.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '-');
+          })();
     final city = (patient.city ?? '').trim().isNotEmpty
         ? patient.city!.trim()
-        : prescriptions.map((e) => e.city?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '-');
-    final recipeCount = matchingImports.isNotEmpty
-        ? matchingImports.fold<int>(0, (sum, item) => sum + item.prescriptionCount)
-        : prescriptions.fold<int>(0, (sum, item) => sum + item.prescriptionCount);
+        : (() {
+            final fromPrescription = prescriptions.map((e) => e.city?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '');
+            if (fromPrescription.isNotEmpty) return fromPrescription;
+            return matchingImports.map((e) => e.city.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '-');
+          })();
+    final int importsRecipeCount = matchingImports.fold<int>(0, (sum, item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
+    final int prescriptionsRecipeCount = prescriptions.fold<int>(0, (sum, item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
+    final int patientRecipeCount = patient.archivedRecipeCount > 0 ? patient.archivedRecipeCount : 0;
+    final recipeCount = importsRecipeCount > 0
+        ? importsRecipeCount
+        : (prescriptionsRecipeCount > 0 ? prescriptionsRecipeCount : (matchingImports.isNotEmpty ? matchingImports.length : patientRecipeCount));
     final hasDpc = prescriptions.any((item) => item.dpcFlag) || matchingImports.any((item) => item.isDpc);
     final hasExpiryAlert = prescriptions.any((item) {
       final info = PrescriptionExpiryUtils.evaluate(item.expiryDate);
@@ -775,8 +929,22 @@ class _PatientDashboardSummary {
 class _FlagItem {
   final String title;
   final String subtitle;
+  final Future<void> Function()? onDelete;
 
-  const _FlagItem({required this.title, required this.subtitle});
+  const _FlagItem({required this.title, required this.subtitle, this.onDelete});
+}
+
+String _dashboardPrescriptionTitle(Prescription prescription) {
+  final label = prescription.items.map((e) => e.drugName.trim()).where((e) => e.isNotEmpty).join(', ');
+  return label.isEmpty ? 'Ricetta' : label;
+}
+
+String _dashboardFormatDate(DateTime? date) {
+  if (date == null) return '-';
+  final day = date.day.toString().padLeft(2, '0');
+  final month = date.month.toString().padLeft(2, '0');
+  final year = date.year.toString();
+  return '$day/$month/$year';
 }
 
 class _FilterToggle extends StatelessWidget {

@@ -154,10 +154,17 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   }
 
   Future<void> _openPdf(DrivePdfImport item) async {
-    final url = item.webViewLink.trim().isNotEmpty
-        ? item.webViewLink.trim()
-        : 'https://drive.google.com/file/d/${item.driveFileId}/view';
-    await launchUrl(Uri.parse(url), webOnlyWindowName: '_blank');
+    final String directLink = item.webViewLink.trim();
+    final String fallbackLink = item.driveFileId.trim().isNotEmpty
+        ? 'https://drive.google.com/file/d/${item.driveFileId.trim()}/view'
+        : '';
+    final String url = directLink.isNotEmpty ? directLink : fallbackLink;
+    if (url.isEmpty) return;
+    await launchUrl(
+      Uri.parse(url),
+      mode: LaunchMode.platformDefault,
+      webOnlyWindowName: '_blank',
+    );
   }
 
   Future<void> _openManageDialog({
