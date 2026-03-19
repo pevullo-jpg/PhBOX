@@ -626,90 +626,135 @@ class _DashboardPageState extends State<DashboardPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Dashboard assistiti', style: TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w900)),
-                          SizedBox(height: 6),
-                          Text('Solo Firestore. PDF aperti con webViewLink.', style: TextStyle(color: Colors.white70)),
-                        ],
-                      ),
-                    ),
-                    FilledButton.icon(
-                      onPressed: _openAddPatientDialog,
-                      icon: const Icon(Icons.add),
-                      label: const Text('Nuovo assistito'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: _searchController,
-                  style: const TextStyle(color: Colors.white, fontSize: 18),
-                  decoration: InputDecoration(
-                    hintText: 'Cerca per nome, CF, medico, esenzione, città',
-                    hintStyle: const TextStyle(color: Colors.white54),
-                    prefixIcon: const Icon(Icons.search),
-                    filled: true,
-                    fillColor: AppColors.panel,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    _FilterToggle(label: 'Ricette', value: _onlyRicette, onChanged: (v) => setState(() => _onlyRicette = v)),
-                    _FilterToggle(label: 'DPC', value: _onlyDpc, onChanged: (v) => setState(() => _onlyDpc = v)),
-                    _FilterToggle(label: 'Debiti', value: _onlyDebiti, onChanged: (v) => setState(() => _onlyDebiti = v)),
-                    _FilterToggle(label: 'Anticipi', value: _onlyAnticipi, onChanged: (v) => setState(() => _onlyAnticipi = v)),
-                    _FilterToggle(label: 'Prenotazioni', value: _onlyPrenotazioni, onChanged: (v) => setState(() => _onlyPrenotazioni = v)),
-                  ],
-                ),
                 if (_message.isNotEmpty) ...[
-                  const SizedBox(height: 12),
                   Text(_message, style: const TextStyle(color: AppColors.green, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 12),
                 ],
-                const SizedBox(height: 18),
                 if (data != null) ...[
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _SummaryCard(
-                        title: 'Assistiti attivi',
-                        value: summaries.length.toString(),
-                        icon: Icons.people_alt_outlined,
-                        accent: AppColors.yellow,
+                      Expanded(
+                        child: Wrap(
+                          spacing: 12,
+                          runSpacing: 12,
+                          children: [
+                            _SummaryCard(
+                              title: 'Assistiti attivi',
+                              value: summaries.length.toString(),
+                              icon: Icons.people_alt_outlined,
+                              accent: AppColors.yellow,
+                            ),
+                            _SummaryCard(
+                              title: 'Ricette',
+                              value: summaries.fold<int>(0, (sum, item) => sum + item.recipeCount).toString(),
+                              icon: Icons.receipt_long_outlined,
+                              accent: AppColors.green,
+                            ),
+                            _SummaryCard(
+                              title: 'Totale DPC',
+                              value: summaries.fold<int>(0, (sum, item) => sum + item.dpcItems.length).toString(),
+                              icon: Icons.local_shipping_outlined,
+                              accent: AppColors.coral,
+                            ),
+                            _SummaryCard(
+                              title: 'Debiti',
+                              value: '€ ${summaries.fold<double>(0, (sum, item) => sum + item.totalDebt).toStringAsFixed(2)}',
+                              icon: Icons.euro_outlined,
+                              accent: AppColors.wine,
+                            ),
+                            _SummaryCard(
+                              title: 'In scadenza',
+                              value: expiring.length.toString(),
+                              icon: Icons.warning_amber_rounded,
+                              accent: AppColors.amber,
+                            ),
+                          ],
+                        ),
                       ),
-                      _SummaryCard(
-                        title: 'Ricette',
-                        value: summaries.fold<int>(0, (sum, item) => sum + item.recipeCount).toString(),
-                        icon: Icons.receipt_long_outlined,
-                        accent: AppColors.green,
+                      const SizedBox(width: 14),
+                      SizedBox(
+                        width: 320,
+                        child: Column(
+                          children: [
+                            TextField(
+                              controller: _searchController,
+                              style: const TextStyle(color: Colors.white, fontSize: 16),
+                              decoration: InputDecoration(
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                hintText: 'Cerca assistito',
+                                hintStyle: const TextStyle(color: Colors.white54),
+                                prefixIcon: const Icon(Icons.search, size: 20),
+                                filled: true,
+                                fillColor: AppColors.panel,
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: FilledButton.icon(
+                                onPressed: _openAddPatientDialog,
+                                icon: const Icon(Icons.add),
+                                label: const Text('Nuovo assistito'),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      _SummaryCard(
-                        title: 'Totale DPC',
-                        value: summaries.fold<int>(0, (sum, item) => sum + item.dpcItems.length).toString(),
-                        icon: Icons.local_shipping_outlined,
-                        accent: AppColors.coral,
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      _FilterToggle(label: 'Ricette', value: _onlyRicette, onChanged: (v) => setState(() => _onlyRicette = v)),
+                      _FilterToggle(label: 'DPC', value: _onlyDpc, onChanged: (v) => setState(() => _onlyDpc = v)),
+                      _FilterToggle(label: 'Debiti', value: _onlyDebiti, onChanged: (v) => setState(() => _onlyDebiti = v)),
+                      _FilterToggle(label: 'Anticipi', value: _onlyAnticipi, onChanged: (v) => setState(() => _onlyAnticipi = v)),
+                      _FilterToggle(label: 'Prenotazioni', value: _onlyPrenotazioni, onChanged: (v) => setState(() => _onlyPrenotazioni = v)),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                ] else ...[
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _searchController,
+                          style: const TextStyle(color: Colors.white, fontSize: 16),
+                          decoration: InputDecoration(
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                            hintText: 'Cerca assistito',
+                            hintStyle: const TextStyle(color: Colors.white54),
+                            prefixIcon: const Icon(Icons.search, size: 20),
+                            filled: true,
+                            fillColor: AppColors.panel,
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                          ),
+                        ),
                       ),
-                      _SummaryCard(
-                        title: 'Debiti',
-                        value: '€ ${summaries.fold<double>(0, (sum, item) => sum + item.totalDebt).toStringAsFixed(2)}',
-                        icon: Icons.euro_outlined,
-                        accent: AppColors.wine,
+                      const SizedBox(width: 12),
+                      FilledButton.icon(
+                        onPressed: _openAddPatientDialog,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Nuovo assistito'),
                       ),
-                      _SummaryCard(
-                        title: 'In scadenza',
-                        value: expiring.length.toString(),
-                        icon: Icons.warning_amber_rounded,
-                        accent: AppColors.amber,
-                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      _FilterToggle(label: 'Ricette', value: _onlyRicette, onChanged: (v) => setState(() => _onlyRicette = v)),
+                      _FilterToggle(label: 'DPC', value: _onlyDpc, onChanged: (v) => setState(() => _onlyDpc = v)),
+                      _FilterToggle(label: 'Debiti', value: _onlyDebiti, onChanged: (v) => setState(() => _onlyDebiti = v)),
+                      _FilterToggle(label: 'Anticipi', value: _onlyAnticipi, onChanged: (v) => setState(() => _onlyAnticipi = v)),
+                      _FilterToggle(label: 'Prenotazioni', value: _onlyPrenotazioni, onChanged: (v) => setState(() => _onlyPrenotazioni = v)),
                     ],
                   ),
                   const SizedBox(height: 18),
@@ -727,30 +772,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (expiring.isNotEmpty) ...[
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: AppColors.panel,
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(color: AppColors.amber),
-                            ),
-                            child: Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                const Text('Ricette in scadenza:', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
-                                ...expiring.map((item) => ActionChip(
-                                      backgroundColor: AppColors.panelSoft,
-                                      label: Text(item.displayName, style: const TextStyle(color: Colors.white)),
-                                      onPressed: () => _openPatient(item),
-                                    )),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                        ],
+
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
                           decoration: BoxDecoration(
@@ -771,13 +793,20 @@ class _DashboardPageState extends State<DashboardPage> {
                         ),
                         const SizedBox(height: 10),
                         Expanded(
-                          child: summaries.isEmpty
-                              ? const Center(child: Text('Nessun assistito.', style: TextStyle(color: Colors.white70, fontSize: 18)))
-                              : ListView.separated(
-                                  itemCount: summaries.length,
+                          child: Builder(
+                            builder: (context) {
+                              final orderedSummaries = [...summaries]..sort((a, b) {
+                                if (a.hasExpiryAlert == b.hasExpiryAlert) return 0;
+                                return a.hasExpiryAlert ? -1 : 1;
+                              });
+                              if (orderedSummaries.isEmpty) {
+                                return const Center(child: Text('Nessun assistito.', style: TextStyle(color: Colors.white70, fontSize: 18)));
+                              }
+                              return ListView.separated(
+                                  itemCount: orderedSummaries.length,
                                   separatorBuilder: (_, __) => const SizedBox(height: 10),
                                   itemBuilder: (context, index) {
-                                    final item = summaries[index];
+                                    final item = orderedSummaries[index];
                                     return Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
                                       decoration: BoxDecoration(
@@ -848,7 +877,9 @@ class _DashboardPageState extends State<DashboardPage> {
                                       ),
                                     );
                                   },
-                                ),
+                                );
+                            },
+                          ),
                         ),
                       ],
                     ),
