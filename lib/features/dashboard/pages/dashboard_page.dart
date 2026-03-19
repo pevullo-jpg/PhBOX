@@ -1087,41 +1087,38 @@ class _SummaryCard extends StatelessWidget {
       width: 220,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [accent.withOpacity(0.34), AppColors.panel],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: accent.withOpacity(0.75)),
-        boxShadow: [
-          BoxShadow(
-            color: accent.withOpacity(0.16),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
-          ),
-        ],
+        color: accent,
+        borderRadius: BorderRadius.circular(24),
       ),
       child: Row(
         children: [
           Container(
-            width: 42,
-            height: 42,
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
-              color: accent.withOpacity(0.20),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: accent.withOpacity(0.65)),
+              color: Colors.white.withOpacity(0.18),
+              borderRadius: BorderRadius.circular(14),
             ),
-            child: Icon(icon, color: accent),
+            child: Icon(icon, color: Colors.white),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: TextStyle(color: accent.withOpacity(0.92), fontSize: 13, fontWeight: FontWeight.w800)),
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800),
+                ),
                 const SizedBox(height: 4),
-                Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900),
+                ),
               ],
             ),
           ),
@@ -1163,15 +1160,17 @@ class _FlagChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(40),
+      borderRadius: BorderRadius.circular(18),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.18),
-          borderRadius: BorderRadius.circular(40),
-          border: Border.all(color: color),
+          color: color,
+          borderRadius: BorderRadius.circular(18),
         ),
-        child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 15.5)),
+        child: Text(
+          label,
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5),
+        ),
       ),
     );
   }
