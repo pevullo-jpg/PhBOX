@@ -1,31 +1,25 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import '../../../core/utils/prescription_expiry_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
-import '../../../data/demo/demo_advances.dart';
-import '../../../data/demo/demo_bookings.dart';
-import '../../../data/demo/demo_debts.dart';
-import '../../../data/demo/demo_patients.dart';
-import '../../../data/demo/demo_prescriptions.dart';
 import '../../../data/models/advance.dart';
 import '../../../data/models/booking.dart';
 import '../../../data/models/debt.dart';
+import '../../../data/models/doctor_patient_link.dart';
 import '../../../data/models/drive_pdf_import.dart';
 import '../../../data/models/patient.dart';
 import '../../../data/models/prescription.dart';
 import '../../../data/repositories/advances_repository.dart';
 import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
+import '../../../data/repositories/doctor_patient_links_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
-import '../../../shared/widgets/filter_chip_widget.dart';
-import '../../../shared/widgets/header_bar.dart';
-import '../../../shared/widgets/stat_card.dart';
-import '../../../shared/widgets/status_badge.dart';
-import '../../../shared/widgets/table_header.dart';
+import '../../../features/patients/pages/patient_detail_page.dart';
 import '../../../theme/app_theme.dart';
-import '../../patients/pages/patient_detail_page.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -35,174 +29,155 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
-  final TextEditingController searchController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
 
-  bool filterDpc = false;
-  bool filterRicette = false;
-  bool filterAnticipi = false;
-  bool filterDebiti = false;
-  bool filterPrenotazioni = false;
-  bool isSeeding = false;
-  String seedMessage = '';
+  late final PatientsRepository _patientsRepository;
+  late final PrescriptionsRepository _prescriptionsRepository;
+  late final AdvancesRepository _advancesRepository;
+  late final DebtsRepository _debtsRepository;
+  late final BookingsRepository _bookingsRepository;
+  late final DrivePdfImportsRepository _drivePdfImportsRepository;
+  late final DoctorPatientLinksRepository _doctorPatientLinksRepository;
 
-  late final PatientsRepository patientsRepository;
-  late final AdvancesRepository advancesRepository;
-  late final DebtsRepository debtsRepository;
-  late final BookingsRepository bookingsRepository;
-  late final PrescriptionsRepository prescriptionsRepository;
-  late final DrivePdfImportsRepository drivePdfImportsRepository;
+  Future<_DashboardData>? _future;
+  bool _onlyRicette = false;
+  bool _onlyDpc = false;
+  bool _onlyDebiti = false;
+  bool _onlyAnticipi = false;
+  bool _onlyPrenotazioni = false;
+  String _message = '';
 
   @override
   void initState() {
     super.initState();
-    final FirestoreFirebaseDatasource datasource =
-        FirestoreFirebaseDatasource(FirebaseFirestore.instance);
-
-    patientsRepository = PatientsRepository(datasource: datasource);
-    advancesRepository = AdvancesRepository(datasource: datasource);
-    debtsRepository = DebtsRepository(datasource: datasource);
-    bookingsRepository = BookingsRepository(datasource: datasource);
-    prescriptionsRepository = PrescriptionsRepository(
+    final datasource = FirestoreFirebaseDatasource(FirebaseFirestore.instance);
+    _patientsRepository = PatientsRepository(datasource: datasource);
+    _prescriptionsRepository = PrescriptionsRepository(
       datasource: datasource,
-      patientsRepository: patientsRepository,
+      patientsRepository: _patientsRepository,
     );
-    drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
+    _advancesRepository = AdvancesRepository(datasource: datasource);
+    _debtsRepository = DebtsRepository(datasource: datasource);
+    _bookingsRepository = BookingsRepository(datasource: datasource);
+    _drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
+    _doctorPatientLinksRepository = DoctorPatientLinksRepository(datasource: datasource);
+    _future = _load();
+    _searchController.addListener(() => setState(() {}));
   }
 
   @override
   void dispose() {
-    searchController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
-  List<Patient> applyFilters(List<Patient> patients) {
-    final String query = searchController.text.trim().toLowerCase();
+  Future<_DashboardData> _load() async {
+    final patients = await _patientsRepository.getAllPatients();
+    final imports = await _drivePdfImportsRepository.getAllImports();
+    final doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
 
-    return patients.where((Patient p) {
-      if (filterDpc && !p.hasDpc) return false;
-      if (filterRicette && p.archivedRecipeCount == 0) return false;
-      if (filterAnticipi && !p.hasAdvance) return false;
-      if (filterDebiti && !p.hasDebt) return false;
-      if (filterPrenotazioni && !p.hasBooking) return false;
-      if (query.isEmpty) return true;
+    final summaries = await Future.wait(
+      patients.map((patient) async {
+        final prescriptions = await _prescriptionsRepository.getPatientPrescriptions(patient.fiscalCode);
+        final debts = await _debtsRepository.getPatientDebts(patient.fiscalCode);
+        final advances = await _advancesRepository.getPatientAdvances(patient.fiscalCode);
+        final bookings = await _bookingsRepository.getPatientBookings(patient.fiscalCode);
+        return _PatientDashboardSummary.build(
+          patient: patient,
+          prescriptions: prescriptions,
+          imports: imports,
+          debts: debts,
+          advances: advances,
+          bookings: bookings,
+          doctorLinks: doctorLinks,
+        );
+      }),
+    );
 
-      return p.fullName.toLowerCase().contains(query) ||
-          p.fiscalCode.toLowerCase().contains(query) ||
-          (p.city ?? '').toLowerCase().contains(query) ||
-          (p.doctorName ?? '').toLowerCase().contains(query);
-    }).toList();
-  }
-
-  Future<void> seedAll() async {
-    setState(() {
-      isSeeding = true;
-      seedMessage = '';
+    summaries.sort((a, b) {
+      if (a.hasExpiryAlert != b.hasExpiryAlert) {
+        return a.hasExpiryAlert ? -1 : 1;
+      }
+      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
     });
 
-    try {
-      for (final Patient patient in demoPatients) {
-        await patientsRepository.savePatient(patient);
-      }
-      for (final Advance advance in demoAdvances) {
-        await advancesRepository.saveAdvance(advance);
-      }
-      for (final Debt debt in demoDebts) {
-        await debtsRepository.saveDebt(debt);
-      }
-      for (final Booking booking in demoBookings) {
-        await bookingsRepository.saveBooking(booking);
-      }
-      for (final Prescription prescription in demoPrescriptions) {
-        await prescriptionsRepository.savePrescription(prescription);
-      }
-
-      setState(() {
-        seedMessage =
-            'Seed completo: patients + subcollections + prescriptions caricati.';
-      });
-    } catch (e) {
-      setState(() {
-        seedMessage = 'Errore seed: $e';
-      });
-    } finally {
-      setState(() {
-        isSeeding = false;
-      });
-    }
+    return _DashboardData(summaries: summaries);
   }
 
-  void openPatientDetail(Patient patient) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => PatientDetailPage(fiscalCode: patient.fiscalCode),
-      ),
-    );
+  void _refresh() {
+    setState(() {
+      _future = _load();
+    });
   }
 
-  Future<void> _openDrivePdf(DrivePdfImport item) async {
-    final String url = item.webViewLink.isNotEmpty
-        ? item.webViewLink
-        : 'https://drive.google.com/file/d/${item.driveFileId}/view';
-    final Uri uri = Uri.parse(url);
-    await launchUrl(uri, webOnlyWindowName: '_blank');
-  }
-
-  Future<void> _openPatientPdfFiles(
-    Patient patient,
-    List<DrivePdfImport> imports,
-  ) async {
-    final List<DrivePdfImport> matching = imports.where((DrivePdfImport item) {
-      final String importFiscal = item.patientFiscalCode.trim().toUpperCase();
-      final String patientFiscal = patient.fiscalCode.trim().toUpperCase();
-      if (importFiscal.isNotEmpty && patientFiscal.isNotEmpty && importFiscal == patientFiscal) {
-        return true;
-      }
-      return _sameLooseName(item.patientFullName, patient.fullName);
+  List<_PatientDashboardSummary> _applyFilters(List<_PatientDashboardSummary> input) {
+    final query = _searchController.text.trim().toLowerCase();
+    return input.where((item) {
+      if (_onlyRicette && item.recipeCount == 0) return false;
+      if (_onlyDpc && !item.hasDpc) return false;
+      if (_onlyDebiti && item.debts.isEmpty) return false;
+      if (_onlyAnticipi && item.advances.isEmpty) return false;
+      if (_onlyPrenotazioni && item.bookings.isEmpty) return false;
+      if (query.isEmpty) return true;
+      return item.displayName.toLowerCase().contains(query) ||
+          item.patient.fiscalCode.toLowerCase().contains(query) ||
+          item.doctorName.toLowerCase().contains(query) ||
+          item.exemptionCode.toLowerCase().contains(query) ||
+          item.city.toLowerCase().contains(query);
     }).toList();
+  }
 
-    if (matching.isEmpty) return;
-    if (matching.length == 1) {
-      await _openDrivePdf(matching.first);
+  Future<void> _openPdf(DrivePdfImport item) async {
+    final url = item.webViewLink.trim().isNotEmpty
+        ? item.webViewLink.trim()
+        : 'https://drive.google.com/file/d/${item.driveFileId}/view';
+    await launchUrl(Uri.parse(url), webOnlyWindowName: '_blank');
+  }
+
+  Future<void> _openPdfList(_PatientDashboardSummary summary) async {
+    if (summary.imports.isEmpty) return;
+    if (summary.imports.length == 1) {
+      await _openPdf(summary.imports.first);
       return;
     }
-
-    if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: AppColors.panel,
-      builder: (BuildContext context) {
+      builder: (context) {
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(20),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
+              children: [
                 Text(
-                  'PDF di ${patient.fullName}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w900,
-                  ),
+                  'PDF ${summary.displayName}',
+                  style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900),
                 ),
                 const SizedBox(height: 12),
-                ...matching.map((DrivePdfImport item) {
-                  final DateTime? date = item.prescriptionDate;
-                  final String dateLabel = date == null
-                      ? 'data non disponibile'
-                      : '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
-                  return ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.picture_as_pdf, color: AppColors.coral),
-                    title: Text(item.fileName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                    subtitle: Text(dateLabel, style: const TextStyle(color: Colors.white70)),
-                    trailing: TextButton(
-                      onPressed: () => _openDrivePdf(item),
-                      child: const Text('Apri'),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 420),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: summary.imports.map((item) {
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.picture_as_pdf, color: AppColors.coral),
+                          title: Text(item.fileName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                          subtitle: Text(
+                            _formatDate(item.prescriptionDate ?? item.createdAt),
+                            style: const TextStyle(color: Colors.white70),
+                          ),
+                          trailing: TextButton(
+                            onPressed: () => _openPdf(item),
+                            child: const Text('Apri'),
+                          ),
+                        );
+                      }).toList(),
                     ),
-                  );
-                }),
+                  ),
+                ),
               ],
             ),
           ),
@@ -211,131 +186,54 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  bool _sameLooseName(String a, String b) {
-    final String left = a.toUpperCase().replaceAll(RegExp(r'[^A-ZÀ-ÖØ-Ý]'), '');
-    final String right = b.toUpperCase().replaceAll(RegExp(r'[^A-ZÀ-ÖØ-Ý]'), '');
-    return left.isNotEmpty && left == right;
-  }
-
-  List<DrivePdfImport> _matchingImports(Patient patient, List<DrivePdfImport> imports) {
-    return imports.where((DrivePdfImport item) {
-      final String importFiscal = item.patientFiscalCode.trim().toUpperCase();
-      final String patientFiscal = patient.fiscalCode.trim().toUpperCase();
-      if (importFiscal.isNotEmpty && patientFiscal.isNotEmpty && importFiscal == patientFiscal) {
-        return true;
-      }
-      return _sameLooseName(item.patientFullName, patient.fullName);
-    }).toList();
-  }
-
-  int _recipeCountForPatient(Patient patient, List<DrivePdfImport> imports) {
-    final int importsCount = _matchingImports(patient, imports)
-        .fold<int>(0, (int sum, DrivePdfImport item) => sum + item.prescriptionCount);
-    return importsCount > 0 ? importsCount : patient.archivedRecipeCount;
-  }
-
-  Future<void> _openFlagManager(String flag, Patient patient, List<DrivePdfImport> allImports) async {
-    if (flag == 'DPC') {
-      await _openPatientPdfFiles(patient, allImports);
-      return;
-    }
+  Future<void> _openFlagModal(String title, List<_FlagItem> items) async {
     await showDialog<void>(
       context: context,
-      builder: (BuildContext dialogContext) {
+      builder: (context) {
         return Dialog(
           backgroundColor: AppColors.panel,
           child: SizedBox(
-            width: 700,
+            width: 760,
             child: Padding(
               padding: const EdgeInsets.all(20),
-              child: FutureBuilder<List<_FlagEntry>>(
-                future: _loadFlagEntries(flag, patient),
-                builder: (BuildContext context, AsyncSnapshot<List<_FlagEntry>> snapshot) {
-                  final List<_FlagEntry> items = snapshot.data ?? const <_FlagEntry>[];
-                  return Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Row(
-                        children: <Widget>[
-                          Expanded(
-                            child: Text(
-                              '$flag · ${patient.fullName}',
-                              style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900),
-                            ),
-                          ),
-                          TextButton(
-                            onPressed: () {
-                              Navigator.of(dialogContext).pop();
-                              openPatientDetail(patient);
-                            },
-                            child: const Text('Apri scheda'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      if (snapshot.connectionState == ConnectionState.waiting)
-                        const Center(child: CircularProgressIndicator())
-                      else if (items.isEmpty)
-                        const Text('Nessuna voce disponibile.', style: TextStyle(color: Colors.white70))
-                      else
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 420),
-                          child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 16),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 500),
+                    child: items.isEmpty
+                        ? const Text('Nessuna voce.', style: TextStyle(color: Colors.white70))
+                        : SingleChildScrollView(
                             child: Column(
-                              children: items.map((_FlagEntry item) {
+                              children: items.map((item) {
                                 return Container(
+                                  width: double.infinity,
                                   margin: const EdgeInsets.only(bottom: 10),
                                   padding: const EdgeInsets.all(14),
                                   decoration: BoxDecoration(
                                     color: AppColors.panelSoft,
                                     borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(color: Colors.white10),
                                   ),
-                                  child: Row(
-                                    children: <Widget>[
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: <Widget>[
-                                            Text(item.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-                                            const SizedBox(height: 4),
-                                            Text(item.subtitle, style: const TextStyle(color: Colors.white70)),
-                                          ],
-                                        ),
-                                      ),
-                                      IconButton(
-                                        onPressed: () async {
-                                          final bool? ok = await showDialog<bool>(
-                                            context: dialogContext,
-                                            builder: (BuildContext confirmContext) => AlertDialog(
-                                              backgroundColor: AppColors.panel,
-                                              title: const Text('Conferma eliminazione', style: TextStyle(color: Colors.white)),
-                                              content: const Text('Eliminare questa voce?', style: TextStyle(color: Colors.white70)),
-                                              actions: <Widget>[
-                                                TextButton(onPressed: () => Navigator.of(confirmContext).pop(false), child: const Text('Annulla')),
-                                                FilledButton(onPressed: () => Navigator.of(confirmContext).pop(true), child: const Text('Elimina')),
-                                              ],
-                                            ),
-                                          );
-                                          if (ok == true) {
-                                            await item.onDelete();
-                                            if (mounted) setState(() {});
-                                            if (dialogContext.mounted) Navigator.of(dialogContext).pop();
-                                            await _openFlagManager(flag, patient, allImports);
-                                          }
-                                        },
-                                        icon: const Icon(Icons.delete_outline, color: AppColors.red),
-                                      ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(item.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+                                      if (item.subtitle.isNotEmpty) ...[
+                                        const SizedBox(height: 6),
+                                        Text(item.subtitle, style: const TextStyle(color: Colors.white70, height: 1.35)),
+                                      ],
                                     ],
                                   ),
                                 );
                               }).toList(),
                             ),
                           ),
-                        ),
-                    ],
-                  );
-                },
+                  ),
+                ],
               ),
             ),
           ),
@@ -344,359 +242,587 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Future<List<_FlagEntry>> _loadFlagEntries(String flag, Patient patient) async {
-    if (flag == 'DEBITO') {
-      final List<Debt> debts = await debtsRepository.getPatientDebts(patient.fiscalCode);
-      return debts.map((Debt debt) => _FlagEntry(
-        title: debt.description,
-        subtitle: 'Residuo € ${debt.residualAmount.toStringAsFixed(2)}',
-        onDelete: () async => debtsRepository.deleteDebt(patient.fiscalCode, debt.id),
-      )).toList();
+  Future<void> _handleFlagTap(_PatientDashboardSummary summary, String key) async {
+    if (key == 'ricette') {
+      await _openPdfList(summary);
+      return;
     }
-    if (flag == 'ANTICIPO') {
-      final List<Advance> advances = await advancesRepository.getPatientAdvances(patient.fiscalCode);
-      return advances.map((Advance advance) => _FlagEntry(
-        title: advance.drugName,
-        subtitle: '${_formatDate(advance.createdAt)} · ${advance.doctorName}',
-        onDelete: () async => advancesRepository.deleteAdvance(patient.fiscalCode, advance.id),
-      )).toList();
+    if (key == 'dpc') {
+      await _openFlagModal(
+        'DPC · ${summary.displayName}',
+        summary.prescriptions.where((item) => item.dpcFlag).map((item) {
+          return _FlagItem(
+            title: _prescriptionTitle(item),
+            subtitle: '${_formatDate(item.prescriptionDate)} · ${item.doctorName ?? '-'}',
+          );
+        }).toList(),
+      );
+      return;
     }
-    final List<Booking> bookings = await bookingsRepository.getPatientBookings(patient.fiscalCode);
-    return bookings.map((Booking booking) => _FlagEntry(
-      title: '${booking.drugName} x${booking.quantity}',
-      subtitle: 'Prevista ${_formatDate(booking.expectedDate)}',
-      onDelete: () async => bookingsRepository.deleteBooking(patient.fiscalCode, booking.id),
-    )).toList();
+    if (key == 'debiti') {
+      await _openFlagModal(
+        'Debiti · ${summary.displayName}',
+        summary.debts.map((item) {
+          return _FlagItem(
+            title: '${item.description} · € ${item.residualAmount.toStringAsFixed(2)}',
+            subtitle: 'Creazione ${_formatDate(item.createdAt)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
+          );
+        }).toList(),
+      );
+      return;
+    }
+    if (key == 'anticipi') {
+      await _openFlagModal(
+        'Anticipi · ${summary.displayName}',
+        summary.advances.map((item) {
+          return _FlagItem(
+            title: item.drugName,
+            subtitle: '${item.doctorName.isEmpty ? '-' : item.doctorName} · ${_formatDate(item.createdAt)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
+          );
+        }).toList(),
+      );
+      return;
+    }
+    await _openFlagModal(
+      'Prenotazioni · ${summary.displayName}',
+      summary.bookings.map((item) {
+        return _FlagItem(
+          title: '${item.drugName} x${item.quantity}',
+          subtitle: 'Registrata ${_formatDate(item.createdAt)} · Prevista ${_formatDate(item.expectedDate)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
+        );
+      }).toList(),
+    );
   }
 
-  Future<void> _deletePatientRow(Patient patient) async {
+  Future<void> _openAddPatientDialog() async {
+    final fiscalCodeController = TextEditingController();
+    final nameController = TextEditingController();
+    final cityController = TextEditingController();
+    final exemptionController = TextEditingController();
     final bool? confirmed = await showDialog<bool>(
       context: context,
-      builder: (BuildContext dialogContext) => AlertDialog(
-        backgroundColor: AppColors.panel,
-        title: const Text('Eliminare riga assistito', style: TextStyle(color: Colors.white)),
-        content: Text('Verranno eliminati debiti, anticipi, prenotazioni e ricette di ${patient.fullName}.', style: const TextStyle(color: Colors.white70)),
-        actions: <Widget>[
-          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Annulla')),
-          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Elimina tutto')),
-        ],
-      ),
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: AppColors.panel,
+          title: const Text('Nuovo assistito', style: TextStyle(color: Colors.white)),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _dialogField(fiscalCodeController, 'Codice fiscale'),
+                const SizedBox(height: 12),
+                _dialogField(nameController, 'Nome e cognome'),
+                const SizedBox(height: 12),
+                _dialogField(cityController, 'Città'),
+                const SizedBox(height: 12),
+                _dialogField(exemptionController, 'Esenzione'),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Salva'),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true) return;
 
-    final List<Debt> debts = await debtsRepository.getPatientDebts(patient.fiscalCode);
-    final List<Advance> advances = await advancesRepository.getPatientAdvances(patient.fiscalCode);
-    final List<Booking> bookings = await bookingsRepository.getPatientBookings(patient.fiscalCode);
-    final List<Prescription> prescriptions = await prescriptionsRepository.getPatientPrescriptions(patient.fiscalCode);
-    for (final Debt debt in debts) { await debtsRepository.deleteDebt(patient.fiscalCode, debt.id); }
-    for (final Advance advance in advances) { await advancesRepository.deleteAdvance(patient.fiscalCode, advance.id); }
-    for (final Booking booking in bookings) { await bookingsRepository.deleteBooking(patient.fiscalCode, booking.id); }
-    for (final Prescription prescription in prescriptions) {
-      if (prescription.sourceType == 'script') {
-        await drivePdfImportsRepository.deleteImport(prescription.id);
-      } else {
-        await prescriptionsRepository.deletePrescription(patient.fiscalCode, prescription.id);
+    try {
+      final fiscalCode = fiscalCodeController.text.trim().toUpperCase();
+      final name = nameController.text.trim();
+      if (fiscalCode.isEmpty || name.isEmpty) {
+        throw Exception('Codice fiscale e nome sono obbligatori.');
       }
+      await _patientsRepository.savePatient(
+        Patient(
+          fiscalCode: fiscalCode,
+          fullName: name,
+          city: cityController.text.trim().isEmpty ? null : cityController.text.trim(),
+          exemptionCode: exemptionController.text.trim().isEmpty ? null : exemptionController.text.trim(),
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        ),
+      );
+      setState(() {
+        _message = 'Assistito inserito correttamente.';
+      });
+      _refresh();
+    } catch (e) {
+      setState(() {
+        _message = 'Errore inserimento assistito: $e';
+      });
+    } finally {
+      fiscalCodeController.dispose();
+      nameController.dispose();
+      cityController.dispose();
+      exemptionController.dispose();
     }
-    await drivePdfImportsRepository.deleteImportsByPatient(patient.fiscalCode);
-    await patientsRepository.deletePatient(patient.fiscalCode);
-    if (mounted) setState(() => seedMessage = 'Riga assistito eliminata.');
   }
 
-  String _formatDate(DateTime? date) {
-    if (date == null) return '-';
-    final String day = date.day.toString().padLeft(2, '0');
-    final String month = date.month.toString().padLeft(2, '0');
-    return '$day/$month/${date.year}';
+  Future<void> _deletePatientEverything(_PatientDashboardSummary summary) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: AppColors.panel,
+          title: const Text('Eliminazione totale', style: TextStyle(color: Colors.white)),
+          content: Text(
+            'Eliminare debiti, anticipi, prenotazioni e ricette di ${summary.displayName}?',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.red),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Elimina'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) return;
+
+    try {
+      for (final debt in summary.debts) {
+        await _debtsRepository.deleteDebt(summary.patient.fiscalCode, debt.id);
+      }
+      for (final advance in summary.advances) {
+        await _advancesRepository.deleteAdvance(summary.patient.fiscalCode, advance.id);
+      }
+      for (final booking in summary.bookings) {
+        await _bookingsRepository.deleteBooking(summary.patient.fiscalCode, booking.id);
+      }
+      await _prescriptionsRepository.deleteAllPatientPrescriptions(summary.patient.fiscalCode);
+      await _drivePdfImportsRepository.deleteImportsByPatient(summary.patient.fiscalCode);
+      final updated = summary.patient.copyWith(
+        hasDebt: false,
+        debtTotal: 0,
+        hasAdvance: false,
+        hasBooking: false,
+        hasDpc: false,
+        archivedRecipeCount: 0,
+        lastPrescriptionDate: null,
+        therapiesSummary: const <String>[],
+        updatedAt: DateTime.now(),
+      );
+      await _patientsRepository.savePatient(updated);
+      setState(() {
+        _message = 'Dati assistito eliminati.';
+      });
+      _refresh();
+    } catch (e) {
+      setState(() {
+        _message = 'Errore eliminazione totale: $e';
+      });
+    }
+  }
+
+  void _openPatient(_PatientDashboardSummary summary) {
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute<void>(
+            builder: (_) => PatientDetailPage(fiscalCode: summary.patient.fiscalCode),
+          ),
+        )
+        .then((_) => _refresh());
   }
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<_DashboardData>(
-      future: _loadDashboardData(),
-      builder: (BuildContext context, AsyncSnapshot<_DashboardData> snapshot) {
-        final List<Patient> patients = snapshot.data?.patients ?? const <Patient>[];
-        final List<DrivePdfImport> allImports = snapshot.data?.imports ?? const <DrivePdfImport>[];
-        final List<Patient> filteredPatients = applyFilters(patients);
-        final double totalDebts =
-            patients.fold<double>(0, (double sum, Patient p) => sum + p.debtTotal);
-        final int totalRecipes =
-            patients.fold<int>(0, (int sum, Patient p) => sum + _recipeCountForPatient(p, allImports));
-        final int totalDpc = patients.where((Patient p) => p.hasDpc).length;
-        final int totalAdvances =
-            patients.where((Patient p) => p.hasAdvance).length;
-        final int totalBookings =
-            patients.where((Patient p) => p.hasBooking).length;
-
+      future: _future,
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        final summaries = data == null ? const <_PatientDashboardSummary>[] : _applyFilters(data.summaries);
+        final expiring = summaries.where((item) => item.hasExpiryAlert).toList();
         return Scaffold(
           backgroundColor: AppColors.background,
-          body: Column(
-            children: <Widget>[
-              HeaderBar(
-                title: 'Dashboard operativa farmacia',
-                searchController: searchController,
-                onChanged: (_) => setState(() {}),
-              ),
-              Expanded(
-                child: snapshot.connectionState == ConnectionState.waiting
-                    ? const Center(child: CircularProgressIndicator())
-                    : snapshot.hasError
-                        ? Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: Text(
-                                'Errore Firestore: ${snapshot.error}',
-                                style: const TextStyle(color: Colors.white),
-                              ),
+          body: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Dashboard assistiti', style: TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w900)),
+                          SizedBox(height: 6),
+                          Text('Solo Firestore. PDF aperti con webViewLink.', style: TextStyle(color: Colors.white70)),
+                        ],
+                      ),
+                    ),
+                    FilledButton.icon(
+                      onPressed: _openAddPatientDialog,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Nuovo assistito'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _searchController,
+                  style: const TextStyle(color: Colors.white, fontSize: 18),
+                  decoration: InputDecoration(
+                    hintText: 'Cerca per nome, CF, medico, esenzione, città',
+                    hintStyle: const TextStyle(color: Colors.white54),
+                    prefixIcon: const Icon(Icons.search),
+                    filled: true,
+                    fillColor: AppColors.panel,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    _FilterToggle(label: 'Ricette', value: _onlyRicette, onChanged: (v) => setState(() => _onlyRicette = v)),
+                    _FilterToggle(label: 'DPC', value: _onlyDpc, onChanged: (v) => setState(() => _onlyDpc = v)),
+                    _FilterToggle(label: 'Debiti', value: _onlyDebiti, onChanged: (v) => setState(() => _onlyDebiti = v)),
+                    _FilterToggle(label: 'Anticipi', value: _onlyAnticipi, onChanged: (v) => setState(() => _onlyAnticipi = v)),
+                    _FilterToggle(label: 'Prenotazioni', value: _onlyPrenotazioni, onChanged: (v) => setState(() => _onlyPrenotazioni = v)),
+                  ],
+                ),
+                if (_message.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text(_message, style: const TextStyle(color: AppColors.green, fontWeight: FontWeight.w700)),
+                ],
+                const SizedBox(height: 18),
+                if (snapshot.connectionState == ConnectionState.waiting)
+                  const Expanded(child: Center(child: CircularProgressIndicator()))
+                else if (snapshot.hasError)
+                  Expanded(
+                    child: Center(
+                      child: Text('Errore dashboard: ${snapshot.error}', style: const TextStyle(color: Colors.white)),
+                    ),
+                  )
+                else
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (expiring.isNotEmpty) ...[
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: AppColors.panel,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(color: AppColors.amber),
                             ),
-                          )
-                        : SingleChildScrollView(
-                            padding: const EdgeInsets.all(20),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: <Widget>[
-                                Wrap(
-                                  spacing: 16,
-                                  runSpacing: 16,
-                                  children: <Widget>[
-                                    StatCard(title: 'Assistiti', value: '${patients.length}', color: AppColors.green),
-                                    StatCard(title: 'Ricette archiviate', value: '$totalRecipes', color: AppColors.coral),
-                                    StatCard(title: 'Debito totale', value: '€ ${totalDebts.toStringAsFixed(2)}', color: AppColors.wine),
-                                    StatCard(title: 'DPC', value: '$totalDpc', color: AppColors.amber),
-                                    StatCard(title: 'Anticipi', value: '$totalAdvances', color: AppColors.yellow),
-                                    StatCard(title: 'Prenotazioni', value: '$totalBookings', color: AppColors.coral),
-                                  ],
-                                ),
-                                const SizedBox(height: 24),
-                                Wrap(
-                                  spacing: 10,
-                                  runSpacing: 10,
-                                  children: <Widget>[
-                                    FilterChipWidget(
-                                      label: 'Solo DPC',
-                                      selected: filterDpc,
-                                      onTap: () => setState(() => filterDpc = !filterDpc),
-                                    ),
-                                    FilterChipWidget(
-                                      label: 'Con ricette',
-                                      selected: filterRicette,
-                                      onTap: () => setState(() => filterRicette = !filterRicette),
-                                    ),
-                                    FilterChipWidget(
-                                      label: 'Con debiti',
-                                      selected: filterDebiti,
-                                      onTap: () => setState(() => filterDebiti = !filterDebiti),
-                                    ),
-                                    FilterChipWidget(
-                                      label: 'Con anticipi',
-                                      selected: filterAnticipi,
-                                      onTap: () => setState(() => filterAnticipi = !filterAnticipi),
-                                    ),
-                                    FilterChipWidget(
-                                      label: 'Con prenotazioni',
-                                      selected: filterPrenotazioni,
-                                      onTap: () => setState(() => filterPrenotazioni = !filterPrenotazioni),
-                                    ),
-                                  ],
-                                ),
-                                if (seedMessage.isNotEmpty) ...<Widget>[
-                                  const SizedBox(height: 18),
-                                  Text(seedMessage, style: const TextStyle(color: Colors.white70)),
-                                ],
-                                const SizedBox(height: 24),
-                                Center(
-                                  child: ConstrainedBox(
-                                    constraints: const BoxConstraints(maxWidth: 1120),
-                                    child: Container(
-                                      width: double.infinity,
-                                      padding: const EdgeInsets.all(20),
-                                      decoration: BoxDecoration(
-                                        color: AppColors.panel,
-                                        borderRadius: BorderRadius.circular(28),
-                                        border: Border.all(color: Colors.white10),
-                                      ),
-                                      child: filteredPatients.isEmpty
-                                      ? const Text(
-                                          'Nessun assistito presente.',
-                                          style: TextStyle(color: Colors.white70),
-                                        )
-                                      : SingleChildScrollView(
-                                          scrollDirection: Axis.horizontal,
-                                          child: DataTable(
-                                            headingRowColor: const WidgetStatePropertyAll<Color>(
-                                              Color(0xFF1A1A1A),
-                                            ),
-                                            columns: const <DataColumn>[
-                                              DataColumn(label: TableHeader('Assistito')),
-                                              DataColumn(label: TableHeader('CF')),
-                                              DataColumn(label: TableHeader('Città')),
-                                              DataColumn(label: TableHeader('Esenzione')),
-                                              DataColumn(label: TableHeader('Medico')),
-                                              DataColumn(label: TableHeader('Debito')),
-                                              DataColumn(label: TableHeader('Ricette')),
-                                              DataColumn(label: TableHeader('Flag')),
-                                              DataColumn(label: TableHeader('Azioni')),
-                                            ],
-                                            rows: filteredPatients.map((Patient patient) {
-                                              final List<DrivePdfImport> patientImports = _matchingImports(patient, allImports);
-                                              final int recipeCount = _recipeCountForPatient(patient, allImports);
-                                              final List<Widget> flags = <Widget>[];
-                                              if (patient.hasDpc || patientImports.any((DrivePdfImport item) => item.isDpc)) {
-                                                flags.add(_ClickableFlag(label: 'DPC', color: AppColors.coral, onTap: () => _openFlagManager('DPC', patient, allImports)));
-                                              }
-                                              if (patient.hasDebt || patient.debtTotal > 0) {
-                                                flags.add(_ClickableFlag(label: 'DEBITO € ${patient.debtTotal.toStringAsFixed(2)}', color: AppColors.wine, onTap: () => _openFlagManager('DEBITO', patient, allImports)));
-                                              }
-                                              if (patient.hasAdvance) {
-                                                flags.add(_ClickableFlag(label: 'ANTICIPO', color: AppColors.amber, onTap: () => _openFlagManager('ANTICIPO', patient, allImports)));
-                                              }
-                                              if (patient.hasBooking) {
-                                                flags.add(_ClickableFlag(label: 'PRENOT.', color: AppColors.yellow, onTap: () => _openFlagManager('PRENOT.', patient, allImports)));
-                                              }
-
-                                              return DataRow(
-                                                cells: <DataCell>[
-                                                  DataCell(Text(patient.fullName, style: _rowStyle)),
-                                                  DataCell(Text(patient.fiscalCode, style: _rowStyle)),
-                                                  DataCell(Text(patient.city ?? '-', style: _rowStyle)),
-                                                  DataCell(Text(patient.exemptionCode ?? '-', style: _rowStyle)),
-                                                  DataCell(Text(patient.doctorName ?? '-', style: _rowStyle)),
-                                                  DataCell(Text('€ ${patient.debtTotal.toStringAsFixed(2)}', style: _rowStyle)),
-                                                  DataCell(
-                                                    recipeCount == 0
-                                                        ? Text('0', style: _rowStyle)
-                                                        : InkWell(
-                                                            onTap: () => _openPatientPdfFiles(patient, allImports),
-                                                            child: Text(
-                                                              '$recipeCount',
-                                                              style: _rowStyle.copyWith(
-                                                                color: AppColors.coral,
-                                                                decoration: TextDecoration.underline,
-                                                              ),
-                                                            ),
-                                                          ),
-                                                  ),
-                                                  DataCell(
-                                                    flags.isEmpty
-                                                        ? Text('-', style: _rowStyle)
-                                                        : SingleChildScrollView(
-                                                            scrollDirection: Axis.horizontal,
-                                                            child: Row(children: flags),
-                                                          ),
-                                                  ),
-                                                  DataCell(
-                                                    Row(
-                                                      mainAxisSize: MainAxisSize.min,
-                                                      children: <Widget>[
-                                                        FilledButton(
-                                                          onPressed: () => openPatientDetail(patient),
-                                                          style: FilledButton.styleFrom(
-                                                            backgroundColor: AppColors.panelSoft,
-                                                            foregroundColor: Colors.white,
-                                                          ),
-                                                          child: const Text('Apri scheda'),
-                                                        ),
-                                                        const SizedBox(width: 8),
-                                                        IconButton(
-                                                          tooltip: 'Elimina riga',
-                                                          onPressed: () => _deletePatientRow(patient),
-                                                          icon: const Icon(Icons.delete_outline, color: AppColors.red),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                ],
-                                              );
-                                            }).toList(),
-                                          ),
-                                        ),
-                                    ),
-                                  ),
-                                ),
+                            child: Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                const Text('Ricette in scadenza:', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
+                                ...expiring.map((item) => ActionChip(
+                                      backgroundColor: AppColors.panelSoft,
+                                      label: Text(item.displayName, style: const TextStyle(color: Colors.white)),
+                                      onPressed: () => _openPatient(item),
+                                    )),
                               ],
                             ),
                           ),
-              ),
-            ],
+                          const SizedBox(height: 14),
+                        ],
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                          decoration: BoxDecoration(
+                            color: AppColors.panel,
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(color: Colors.white10),
+                          ),
+                          child: const Row(
+                            children: [
+                              SizedBox(width: 180, child: Text('Assistito', style: _headStyle)),
+                              SizedBox(width: 170, child: Text('CF', style: _headStyle)),
+                              SizedBox(width: 170, child: Text('Medico', style: _headStyle)),
+                              SizedBox(width: 120, child: Text('Esenzione', style: _headStyle)),
+                              Expanded(child: Text('Flags', style: _headStyle)),
+                              SizedBox(width: 52),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Expanded(
+                          child: summaries.isEmpty
+                              ? const Center(child: Text('Nessun assistito.', style: TextStyle(color: Colors.white70, fontSize: 18)))
+                              : ListView.separated(
+                                  itemCount: summaries.length,
+                                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                                  itemBuilder: (context, index) {
+                                    final item = summaries[index];
+                                    return Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+                                      decoration: BoxDecoration(
+                                        color: item.hasExpiryAlert ? const Color(0x332A1B00) : AppColors.panel,
+                                        borderRadius: BorderRadius.circular(18),
+                                        border: Border.all(
+                                          color: item.hasExpiryAlert ? AppColors.amber : Colors.white10,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        crossAxisAlignment: CrossAxisAlignment.center,
+                                        children: [
+                                          SizedBox(
+                                            width: 180,
+                                            child: TextButton(
+                                              style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
+                                              onPressed: () => _openPatient(item),
+                                              child: Text(
+                                                item.displayName,
+                                                textAlign: TextAlign.left,
+                                                style: const TextStyle(color: Colors.white, fontSize: 18.2, fontWeight: FontWeight.w800),
+                                              ),
+                                            ),
+                                          ),
+                                          SizedBox(
+                                            width: 170,
+                                            child: TextButton(
+                                              style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
+                                              onPressed: () => _openPatient(item),
+                                              child: Text(
+                                                item.patient.fiscalCode,
+                                                textAlign: TextAlign.left,
+                                                style: const TextStyle(color: AppColors.yellow, fontSize: 18.2, fontWeight: FontWeight.w800),
+                                              ),
+                                            ),
+                                          ),
+                                          SizedBox(
+                                            width: 170,
+                                            child: Text(item.doctorName, style: const TextStyle(color: Colors.white, fontSize: 18.2)),
+                                          ),
+                                          SizedBox(
+                                            width: 120,
+                                            child: Text(item.exemptionCode, style: const TextStyle(color: Colors.white70, fontSize: 18.2)),
+                                          ),
+                                          Expanded(
+                                            child: Wrap(
+                                              spacing: 8,
+                                              runSpacing: 8,
+                                              children: [
+                                                _FlagChip(label: 'ricette ${item.recipeCount}', color: AppColors.green, onTap: () => _handleFlagTap(item, 'ricette')),
+                                                _FlagChip(label: 'DPC ${item.hasDpc ? 'SI' : 'NO'}', color: AppColors.coral, onTap: () => _handleFlagTap(item, 'dpc')),
+                                                _FlagChip(label: 'debiti € ${item.totalDebt.toStringAsFixed(2)}', color: AppColors.wine, onTap: () => _handleFlagTap(item, 'debiti')),
+                                                _FlagChip(label: 'anticipi ${item.advances.length}', color: AppColors.amber, onTap: () => _handleFlagTap(item, 'anticipi')),
+                                                _FlagChip(label: 'prenotazioni ${item.bookings.length}', color: AppColors.yellow, onTap: () => _handleFlagTap(item, 'prenotazioni')),
+                                              ],
+                                            ),
+                                          ),
+                                          SizedBox(
+                                            width: 52,
+                                            child: IconButton(
+                                              tooltip: 'Elimina tutto',
+                                              onPressed: () => _deletePatientEverything(item),
+                                              icon: const Icon(Icons.delete_outline, color: AppColors.red),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
           ),
         );
       },
     );
   }
 
-  Future<_DashboardData> _loadDashboardData() async {
-    final List<Patient> patients = await patientsRepository.getAllPatients();
-    final List<DrivePdfImport> imports = await drivePdfImportsRepository.getAllImports();
+  Widget _dialogField(TextEditingController controller, String label) {
+    return TextField(
+      controller: controller,
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(color: Colors.white70),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: Colors.white24),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: Colors.white70),
+        ),
+      ),
+    );
+  }
 
-    final List<Patient> enrichedPatients = patients.map((Patient patient) {
-      final List<DrivePdfImport> patientImports = _matchingImports(patient, imports);
-      final int recipeCount = patientImports.fold<int>(0, (int sum, DrivePdfImport item) => sum + item.prescriptionCount);
-      final DateTime? lastDate = patientImports
-          .map((DrivePdfImport item) => item.prescriptionDate)
-          .whereType<DateTime>()
-          .fold<DateTime?>(null, (DateTime? current, DateTime value) {
-        if (current == null || value.isAfter(current)) {
-          return value;
-        }
-        return current;
-      });
-      final Set<String> therapies = <String>{
-        ...patient.therapiesSummary,
-        ...patientImports.expand((DrivePdfImport item) => item.therapy),
-      };
-      final bool hasDpc = patient.hasDpc || patientImports.any((DrivePdfImport item) => item.isDpc);
-      final String? importDoctor = patientImports
-          .map((DrivePdfImport item) => item.doctorFullName.trim())
-          .firstWhere((String item) => item.isNotEmpty, orElse: () => '');
-      return patient.copyWith(
-        archivedRecipeCount: recipeCount > 0 ? recipeCount : patient.archivedRecipeCount,
-        hasDpc: hasDpc,
-        lastPrescriptionDate: lastDate ?? patient.lastPrescriptionDate,
-        therapiesSummary: therapies.where((String item) => item.trim().isNotEmpty).toList()..sort(),
-        doctorName: importDoctor != null && importDoctor.isNotEmpty ? importDoctor : patient.doctorName,
-      );
-    }).toList();
+  String _prescriptionTitle(Prescription prescription) {
+    final label = prescription.items.map((e) => e.drugName.trim()).where((e) => e.isNotEmpty).join(', ');
+    return label.isEmpty ? 'Ricetta' : label;
+  }
 
-    return _DashboardData(patients: enrichedPatients, imports: imports);
+  String _formatDate(DateTime? date) {
+    if (date == null) return '-';
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final year = date.year.toString();
+    return '$day/$month/$year';
   }
 }
 
-class _FlagEntry {
-  final String title;
-  final String subtitle;
-  final Future<void> Function() onDelete;
+class _DashboardData {
+  final List<_PatientDashboardSummary> summaries;
 
-  const _FlagEntry({required this.title, required this.subtitle, required this.onDelete});
+  const _DashboardData({required this.summaries});
 }
 
-class _ClickableFlag extends StatelessWidget {
+class _PatientDashboardSummary {
+  final Patient patient;
+  final String doctorName;
+  final String exemptionCode;
+  final String city;
+  final List<Prescription> prescriptions;
+  final List<DrivePdfImport> imports;
+  final List<Debt> debts;
+  final List<Advance> advances;
+  final List<Booking> bookings;
+  final bool hasDpc;
+  final int recipeCount;
+  final bool hasExpiryAlert;
+
+  const _PatientDashboardSummary({
+    required this.patient,
+    required this.doctorName,
+    required this.exemptionCode,
+    required this.city,
+    required this.prescriptions,
+    required this.imports,
+    required this.debts,
+    required this.advances,
+    required this.bookings,
+    required this.hasDpc,
+    required this.recipeCount,
+    required this.hasExpiryAlert,
+  });
+
+  String get displayName => patient.fullName.trim().isEmpty ? patient.fiscalCode : patient.fullName.trim();
+
+  double get totalDebt => debts.fold<double>(0, (sum, item) => sum + item.residualAmount);
+
+  static _PatientDashboardSummary build({
+    required Patient patient,
+    required List<Prescription> prescriptions,
+    required List<DrivePdfImport> imports,
+    required List<Debt> debts,
+    required List<Advance> advances,
+    required List<Booking> bookings,
+    required List<DoctorPatientLink> doctorLinks,
+  }) {
+    final matchingImports = imports.where((item) {
+      return item.patientFiscalCode.trim().toUpperCase() == patient.fiscalCode.trim().toUpperCase();
+    }).toList();
+    final matchingDoctor = doctorLinks.where((item) {
+      return item.patientFiscalCode == patient.fiscalCode.trim().toUpperCase();
+    }).toList();
+    final doctorName = matchingDoctor.isNotEmpty
+        ? matchingDoctor.first.doctorName
+        : ((patient.doctorName ?? '').trim().isNotEmpty
+            ? patient.doctorName!.trim()
+            : prescriptions.map((e) => e.doctorName?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '-'));
+    final exemptionCode = (patient.exemptionCode ?? '').trim().isNotEmpty
+        ? patient.exemptionCode!.trim()
+        : prescriptions.map((e) => e.exemptionCode?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '-');
+    final city = (patient.city ?? '').trim().isNotEmpty
+        ? patient.city!.trim()
+        : prescriptions.map((e) => e.city?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '-');
+    final recipeCount = matchingImports.isNotEmpty
+        ? matchingImports.fold<int>(0, (sum, item) => sum + item.prescriptionCount)
+        : prescriptions.fold<int>(0, (sum, item) => sum + item.prescriptionCount);
+    final hasDpc = prescriptions.any((item) => item.dpcFlag) || matchingImports.any((item) => item.isDpc);
+    final hasExpiryAlert = prescriptions.any((item) {
+      final info = PrescriptionExpiryUtils.evaluate(item.expiryDate);
+      return info.status == PrescriptionValidityStatus.expiringSoon || info.status == PrescriptionValidityStatus.expired;
+    });
+    return _PatientDashboardSummary(
+      patient: patient,
+      doctorName: doctorName.isEmpty ? '-' : doctorName,
+      exemptionCode: exemptionCode.isEmpty ? '-' : exemptionCode,
+      city: city.isEmpty ? '-' : city,
+      prescriptions: prescriptions,
+      imports: matchingImports,
+      debts: debts,
+      advances: advances,
+      bookings: bookings,
+      hasDpc: hasDpc,
+      recipeCount: recipeCount,
+      hasExpiryAlert: hasExpiryAlert,
+    );
+  }
+}
+
+class _FlagItem {
+  final String title;
+  final String subtitle;
+
+  const _FlagItem({required this.title, required this.subtitle});
+}
+
+class _FilterToggle extends StatelessWidget {
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const _FilterToggle({required this.label, required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return FilterChip(
+      selected: value,
+      onSelected: onChanged,
+      label: Text(label),
+      labelStyle: TextStyle(color: value ? Colors.black : Colors.white),
+      selectedColor: AppColors.yellow,
+      backgroundColor: AppColors.panel,
+      side: const BorderSide(color: Colors.white10),
+    );
+  }
+}
+
+class _FlagChip extends StatelessWidget {
   final String label;
   final Color color;
   final VoidCallback onTap;
 
-  const _ClickableFlag({required this.label, required this.color, required this.onTap});
+  const _FlagChip({required this.label, required this.color, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 6),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
-        child: StatusBadge(text: label, color: color),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(40),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.18),
+          borderRadius: BorderRadius.circular(40),
+          border: Border.all(color: color),
+        ),
+        child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 15.5)),
       ),
     );
   }
 }
 
-class _DashboardData {
-  final List<Patient> patients;
-  final List<DrivePdfImport> imports;
-
-  const _DashboardData({required this.patients, required this.imports});
-}
-
-const TextStyle _rowStyle = TextStyle(
-  color: Colors.white,
-  fontSize: 14,
-);
+const TextStyle _headStyle = TextStyle(color: Colors.white70, fontWeight: FontWeight.w800, fontSize: 15);

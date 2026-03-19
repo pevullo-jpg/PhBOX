@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
+
 import 'features/dashboard/pages/dashboard_page.dart';
-import 'features/expiries/pages/expiries_page.dart';
 import 'features/settings/pages/settings_page.dart';
 import 'theme/app_theme.dart';
 
@@ -16,9 +16,8 @@ class _FarmaciaAppState extends State<FarmaciaApp> {
 
   @override
   Widget build(BuildContext context) {
-    final List<Widget> pages = <Widget>[
+    final pages = <Widget>[
       const DashboardPage(),
-      const ExpiriesPage(),
       const SettingsPage(),
     ];
 
@@ -29,13 +28,13 @@ class _FarmaciaAppState extends State<FarmaciaApp> {
       home: Scaffold(
         backgroundColor: AppColors.background,
         body: Row(
-          children: <Widget>[
+          children: [
             Container(
               width: 220,
               color: const Color(0xFF070707),
               padding: const EdgeInsets.all(16),
               child: Column(
-                children: <Widget>[
+                children: [
                   const SizedBox(height: 20),
                   const Text(
                     'PhBOX',
@@ -44,6 +43,11 @@ class _FarmaciaAppState extends State<FarmaciaApp> {
                       fontSize: 24,
                       fontWeight: FontWeight.w900,
                     ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Frontend solo Firestore',
+                    style: TextStyle(color: Colors.white54, fontSize: 12),
                   ),
                   const SizedBox(height: 30),
                   ListTile(
@@ -62,25 +66,13 @@ class _FarmaciaAppState extends State<FarmaciaApp> {
                     selected: currentIndex == 1,
                     selectedTileColor: const Color(0xFF1C1C1C),
                     title: Text(
-                      'Scadenze',
+                      'Impostazioni',
                       style: TextStyle(
                         color: currentIndex == 1 ? Colors.white : Colors.white70,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                     onTap: () => setState(() => currentIndex = 1),
-                  ),
-                  ListTile(
-                    selected: currentIndex == 2,
-                    selectedTileColor: const Color(0xFF1C1C1C),
-                    title: Text(
-                      'Impostazioni',
-                      style: TextStyle(
-                        color: currentIndex == 2 ? Colors.white : Colors.white70,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    onTap: () => setState(() => currentIndex = 2),
                   ),
                 ],
               ),
