@@ -680,10 +680,36 @@ class _DashboardPageState extends State<DashboardPage> {
                     spacing: 12,
                     runSpacing: 12,
                     children: [
-                      _SummaryCard(title: 'Assistiti attivi', value: summaries.length.toString(), icon: Icons.people_alt_outlined),
-                      _SummaryCard(title: 'Ricette', value: summaries.fold<int>(0, (sum, item) => sum + item.recipeCount).toString(), icon: Icons.receipt_long_outlined),
-                      _SummaryCard(title: 'Debiti', value: '€ ${summaries.fold<double>(0, (sum, item) => sum + item.totalDebt).toStringAsFixed(2)}', icon: Icons.euro_outlined),
-                      _SummaryCard(title: 'In scadenza', value: expiring.length.toString(), icon: Icons.warning_amber_rounded),
+                      _SummaryCard(
+                        title: 'Assistiti attivi',
+                        value: summaries.length.toString(),
+                        icon: Icons.people_alt_outlined,
+                        accent: AppColors.yellow,
+                      ),
+                      _SummaryCard(
+                        title: 'Ricette',
+                        value: summaries.fold<int>(0, (sum, item) => sum + item.recipeCount).toString(),
+                        icon: Icons.receipt_long_outlined,
+                        accent: AppColors.green,
+                      ),
+                      _SummaryCard(
+                        title: 'Totale DPC',
+                        value: summaries.fold<int>(0, (sum, item) => sum + item.dpcItems.length).toString(),
+                        icon: Icons.local_shipping_outlined,
+                        accent: AppColors.coral,
+                      ),
+                      _SummaryCard(
+                        title: 'Debiti',
+                        value: '€ ${summaries.fold<double>(0, (sum, item) => sum + item.totalDebt).toStringAsFixed(2)}',
+                        icon: Icons.euro_outlined,
+                        accent: AppColors.wine,
+                      ),
+                      _SummaryCard(
+                        title: 'In scadenza',
+                        value: expiring.length.toString(),
+                        icon: Icons.warning_amber_rounded,
+                        accent: AppColors.amber,
+                      ),
                     ],
                   ),
                   const SizedBox(height: 18),
@@ -1046,8 +1072,14 @@ class _SummaryCard extends StatelessWidget {
   final String title;
   final String value;
   final IconData icon;
+  final Color accent;
 
-  const _SummaryCard({required this.title, required this.value, required this.icon});
+  const _SummaryCard({
+    required this.title,
+    required this.value,
+    required this.icon,
+    required this.accent,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1055,9 +1087,20 @@ class _SummaryCard extends StatelessWidget {
       width: 220,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.panel,
+        gradient: LinearGradient(
+          colors: [accent.withOpacity(0.34), AppColors.panel],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white10),
+        border: Border.all(color: accent.withOpacity(0.75)),
+        boxShadow: [
+          BoxShadow(
+            color: accent.withOpacity(0.16),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       child: Row(
         children: [
@@ -1065,17 +1108,18 @@ class _SummaryCard extends StatelessWidget {
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              color: AppColors.panelSoft,
+              color: accent.withOpacity(0.20),
               borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: accent.withOpacity(0.65)),
             ),
-            child: Icon(icon, color: Colors.white),
+            child: Icon(icon, color: accent),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w700)),
+                Text(title, style: TextStyle(color: accent.withOpacity(0.92), fontSize: 13, fontWeight: FontWeight.w800)),
                 const SizedBox(height: 4),
                 Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
               ],
