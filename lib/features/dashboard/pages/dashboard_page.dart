@@ -43,11 +43,7 @@ class _DashboardPageState extends State<DashboardPage> {
   late final SettingsRepository _settingsRepository;
 
   Future<_DashboardData>? _future;
-  bool _onlyRicette = false;
-  bool _onlyDpc = false;
-  bool _onlyDebiti = false;
-  bool _onlyAnticipi = false;
-  bool _onlyPrenotazioni = false;
+  _DashboardCardFilter? _activeCardFilter;
   String _message = '';
 
   @override
@@ -119,11 +115,29 @@ class _DashboardPageState extends State<DashboardPage> {
     final query = _searchController.text.trim().toLowerCase();
     return input.where((item) {
       if (!item.hasActiveContent) return false;
-      if (_onlyRicette && item.recipeCount == 0) return false;
-      if (_onlyDpc && !item.hasDpc) return false;
-      if (_onlyDebiti && item.debts.isEmpty) return false;
-      if (_onlyAnticipi && item.advances.isEmpty) return false;
-      if (_onlyPrenotazioni && item.bookings.isEmpty) return false;
+      switch (_activeCardFilter) {
+        case _DashboardCardFilter.ricette:
+          if (item.recipeCount == 0) return false;
+          break;
+        case _DashboardCardFilter.dpc:
+          if (!item.hasDpc) return false;
+          break;
+        case _DashboardCardFilter.debiti:
+          if (item.debts.isEmpty) return false;
+          break;
+        case _DashboardCardFilter.anticipi:
+          if (item.advances.isEmpty) return false;
+          break;
+        case _DashboardCardFilter.prenotazioni:
+          if (item.bookings.isEmpty) return false;
+          break;
+        case _DashboardCardFilter.scadenze:
+          if (!item.hasExpiryAlert) return false;
+          break;
+        case _DashboardCardFilter.assistiti:
+        case null:
+          break;
+      }
       if (query.isEmpty) return true;
       return item.displayName.toLowerCase().contains(query) ||
           item.patient.fiscalCode.toLowerCase().contains(query) ||
@@ -965,54 +979,73 @@ class _DashboardPageState extends State<DashboardPage> {
                   Text(_message, style: const TextStyle(color: AppColors.green, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 12),
                 ],
-                if (data != null) ...[
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Wrap(
-                          spacing: 12,
-                          runSpacing: 12,
-                          children: [
-                            _SummaryCard(
-                              title: 'Assistiti attivi',
-                              value: summaries.length.toString(),
-                              icon: Icons.people_alt_outlined,
-                              accent: AppColors.yellow,
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    const double cardWidth = 220;
+                    const double cardSpacing = 12;
+                    final double cardsBlockWidth = constraints.maxWidth >= ((cardWidth * 5) + (cardSpacing * 4))
+                        ? ((cardWidth * 5) + (cardSpacing * 4))
+                        : constraints.maxWidth;
+                    return Column(
+                      children: [
+                        const SizedBox(height: 10),
+                        Center(
+                          child: SizedBox(
+                            width: cardsBlockWidth,
+                            child: Wrap(
+                              alignment: WrapAlignment.center,
+                              spacing: cardSpacing,
+                              runSpacing: cardSpacing,
+                              children: [
+                                _SummaryCard(
+                                  title: 'Assistiti attivi',
+                                  value: summaries.length.toString(),
+                                  icon: Icons.people_alt_outlined,
+                                  accent: AppColors.yellow,
+                                  isSelected: _activeCardFilter == _DashboardCardFilter.assistiti,
+                                  onTap: () => setState(() => _activeCardFilter = _activeCardFilter == _DashboardCardFilter.assistiti ? null : _DashboardCardFilter.assistiti),
+                                ),
+                                _SummaryCard(
+                                  title: 'Ricette',
+                                  value: summaries.fold<int>(0, (sum, item) => sum + item.recipeCount).toString(),
+                                  icon: Icons.receipt_long_outlined,
+                                  accent: AppColors.green,
+                                  isSelected: _activeCardFilter == _DashboardCardFilter.ricette,
+                                  onTap: () => setState(() => _activeCardFilter = _activeCardFilter == _DashboardCardFilter.ricette ? null : _DashboardCardFilter.ricette),
+                                ),
+                                _SummaryCard(
+                                  title: 'Totale DPC',
+                                  value: summaries.fold<int>(0, (sum, item) => sum + item.dpcItems.length).toString(),
+                                  icon: Icons.local_shipping_outlined,
+                                  accent: AppColors.coral,
+                                  isSelected: _activeCardFilter == _DashboardCardFilter.dpc,
+                                  onTap: () => setState(() => _activeCardFilter = _activeCardFilter == _DashboardCardFilter.dpc ? null : _DashboardCardFilter.dpc),
+                                ),
+                                _SummaryCard(
+                                  title: 'Debiti',
+                                  value: '€ ${summaries.fold<double>(0, (sum, item) => sum + item.totalDebt).toStringAsFixed(2)}',
+                                  icon: Icons.euro_outlined,
+                                  accent: AppColors.wine,
+                                  isSelected: _activeCardFilter == _DashboardCardFilter.debiti,
+                                  onTap: () => setState(() => _activeCardFilter = _activeCardFilter == _DashboardCardFilter.debiti ? null : _DashboardCardFilter.debiti),
+                                ),
+                                _SummaryCard(
+                                  title: 'In scadenza',
+                                  value: expiring.length.toString(),
+                                  icon: Icons.warning_amber_rounded,
+                                  accent: AppColors.amber,
+                                  isSelected: _activeCardFilter == _DashboardCardFilter.scadenze,
+                                  onTap: () => setState(() => _activeCardFilter = _activeCardFilter == _DashboardCardFilter.scadenze ? null : _DashboardCardFilter.scadenze),
+                                ),
+                              ],
                             ),
-                            _SummaryCard(
-                              title: 'Ricette',
-                              value: summaries.fold<int>(0, (sum, item) => sum + item.recipeCount).toString(),
-                              icon: Icons.receipt_long_outlined,
-                              accent: AppColors.green,
-                            ),
-                            _SummaryCard(
-                              title: 'Totale DPC',
-                              value: summaries.fold<int>(0, (sum, item) => sum + item.dpcItems.length).toString(),
-                              icon: Icons.local_shipping_outlined,
-                              accent: AppColors.coral,
-                            ),
-                            _SummaryCard(
-                              title: 'Debiti',
-                              value: '€ ${summaries.fold<double>(0, (sum, item) => sum + item.totalDebt).toStringAsFixed(2)}',
-                              icon: Icons.euro_outlined,
-                              accent: AppColors.wine,
-                            ),
-                            _SummaryCard(
-                              title: 'In scadenza',
-                              value: expiring.length.toString(),
-                              icon: Icons.warning_amber_rounded,
-                              accent: AppColors.amber,
-                            ),
-                          ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 14),
-                      SizedBox(
-                        width: 320,
-                        child: Column(
-                          children: [
-                            TextField(
+                        const SizedBox(height: 12),
+                        Center(
+                          child: SizedBox(
+                            width: cardsBlockWidth,
+                            child: TextField(
                               controller: _searchController,
                               style: const TextStyle(color: Colors.white, fontSize: 16),
                               decoration: InputDecoration(
@@ -1026,74 +1059,22 @@ class _DashboardPageState extends State<DashboardPage> {
                                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
                               ),
                             ),
-                            const SizedBox(height: 10),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: FilledButton.icon(
-                                onPressed: _openAddPatientDialog,
-                                icon: const Icon(Icons.add),
-                                label: const Text('Nuovo assistito'),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      _FilterToggle(label: 'Ricette', value: _onlyRicette, onChanged: (v) => setState(() => _onlyRicette = v)),
-                      _FilterToggle(label: 'DPC', value: _onlyDpc, onChanged: (v) => setState(() => _onlyDpc = v)),
-                      _FilterToggle(label: 'Debiti', value: _onlyDebiti, onChanged: (v) => setState(() => _onlyDebiti = v)),
-                      _FilterToggle(label: 'Anticipi', value: _onlyAnticipi, onChanged: (v) => setState(() => _onlyAnticipi = v)),
-                      _FilterToggle(label: 'Prenotazioni', value: _onlyPrenotazioni, onChanged: (v) => setState(() => _onlyPrenotazioni = v)),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                ] else ...[
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _searchController,
-                          style: const TextStyle(color: Colors.white, fontSize: 16),
-                          decoration: InputDecoration(
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                            hintText: 'Cerca assistito',
-                            hintStyle: const TextStyle(color: Colors.white54),
-                            prefixIcon: const Icon(Icons.search, size: 20),
-                            filled: true,
-                            fillColor: AppColors.panel,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      FilledButton.icon(
-                        onPressed: _openAddPatientDialog,
-                        icon: const Icon(Icons.add),
-                        label: const Text('Nuovo assistito'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      _FilterToggle(label: 'Ricette', value: _onlyRicette, onChanged: (v) => setState(() => _onlyRicette = v)),
-                      _FilterToggle(label: 'DPC', value: _onlyDpc, onChanged: (v) => setState(() => _onlyDpc = v)),
-                      _FilterToggle(label: 'Debiti', value: _onlyDebiti, onChanged: (v) => setState(() => _onlyDebiti = v)),
-                      _FilterToggle(label: 'Anticipi', value: _onlyAnticipi, onChanged: (v) => setState(() => _onlyAnticipi = v)),
-                      _FilterToggle(label: 'Prenotazioni', value: _onlyPrenotazioni, onChanged: (v) => setState(() => _onlyPrenotazioni = v)),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                ],
+                        const SizedBox(height: 10),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: FilledButton.icon(
+                            onPressed: _openAddPatientDialog,
+                            icon: const Icon(Icons.add),
+                            label: const Text('Nuovo assistito'),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                      ],
+                    );
+                  },
+                ),
                 if (snapshot.connectionState == ConnectionState.waiting)
                   const Expanded(child: Center(child: CircularProgressIndicator()))
                 else if (snapshot.hasError)
@@ -1450,60 +1431,77 @@ class _SummaryCard extends StatelessWidget {
   final String value;
   final IconData icon;
   final Color accent;
+  final bool isSelected;
+  final VoidCallback onTap;
 
   const _SummaryCard({
     required this.title,
     required this.value,
     required this.icon,
     required this.accent,
+    required this.isSelected,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 220,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: accent,
+    return Material(
+      color: accent,
+      borderRadius: BorderRadius.circular(24),
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(24),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.18),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(icon, color: Colors.white),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900),
-                ),
-              ],
+        child: Container(
+          width: 220,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: isSelected ? Colors.white : Colors.transparent,
+              width: 2,
             ),
           ),
-        ],
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.18),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: Colors.white),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
+
+enum _DashboardCardFilter { assistiti, ricette, dpc, debiti, anticipi, prenotazioni, scadenze }
 
 class _FilterToggle extends StatelessWidget {
   final String label;
