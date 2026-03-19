@@ -113,6 +113,7 @@ class _DashboardPageState extends State<DashboardPage> {
   List<_PatientDashboardSummary> _applyFilters(List<_PatientDashboardSummary> input) {
     final query = _searchController.text.trim().toLowerCase();
     return input.where((item) {
+      if (!item.hasActiveContent) return false;
       if (_onlyRicette && item.recipeCount == 0) return false;
       if (_onlyDpc && !item.hasDpc) return false;
       if (_onlyDebiti && item.debts.isEmpty) return false;
@@ -388,11 +389,12 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _openAddPatientDialog() async {
-
     final fiscalCodeController = TextEditingController();
     final nameController = TextEditingController();
-    final cityController = TextEditingController();
-    final exemptionController = TextEditingController();
+    final surnameController = TextEditingController();
+    final advanceController = TextEditingController();
+    final bookingController = TextEditingController();
+    final debtController = TextEditingController();
     final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -400,18 +402,28 @@ class _DashboardPageState extends State<DashboardPage> {
           backgroundColor: AppColors.panel,
           title: const Text('Nuovo assistito', style: TextStyle(color: Colors.white)),
           content: SizedBox(
-            width: 420,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _dialogField(fiscalCodeController, 'Codice fiscale'),
-                const SizedBox(height: 12),
-                _dialogField(nameController, 'Nome e cognome'),
-                const SizedBox(height: 12),
-                _dialogField(cityController, 'Città'),
-                const SizedBox(height: 12),
-                _dialogField(exemptionController, 'Esenzione'),
-              ],
+            width: 460,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _dialogField(fiscalCodeController, 'Codice fiscale'),
+                  const SizedBox(height: 12),
+                  _dialogField(nameController, 'Nome'),
+                  const SizedBox(height: 12),
+                  _dialogField(surnameController, 'Cognome'),
+                  const SizedBox(height: 12),
+                  _dialogField(advanceController, 'Eventuale anticipo'),
+                  const SizedBox(height: 12),
+                  _dialogField(bookingController, 'Eventuale prenotazione'),
+                  const SizedBox(height: 12),
+                  _dialogField(
+                    debtController,
+                    'Eventuale debito (€)',
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  ),
+                ],
+              ),
             ),
           ),
           actions: [
@@ -427,24 +439,88 @@ class _DashboardPageState extends State<DashboardPage> {
         );
       },
     );
-    if (confirmed != true) return;
+    if (confirmed != true) {
+      fiscalCodeController.dispose();
+      nameController.dispose();
+      surnameController.dispose();
+      advanceController.dispose();
+      bookingController.dispose();
+      debtController.dispose();
+      return;
+    }
 
     try {
       final fiscalCode = fiscalCodeController.text.trim().toUpperCase();
       final name = nameController.text.trim();
-      if (fiscalCode.isEmpty || name.isEmpty) {
-        throw Exception('Codice fiscale e nome sono obbligatori.');
+      final surname = surnameController.text.trim();
+      if (fiscalCode.isEmpty || name.isEmpty || surname.isEmpty) {
+        throw Exception('Codice fiscale, nome e cognome sono obbligatori.');
       }
+
+      final now = DateTime.now();
+      final fullName = '$name $surname'.trim();
+      final advanceText = advanceController.text.trim();
+      final bookingText = bookingController.text.trim();
+      final debtValue = double.tryParse(debtController.text.trim().replaceAll(',', '.')) ?? 0;
+
       await _patientsRepository.savePatient(
         Patient(
           fiscalCode: fiscalCode,
-          fullName: name,
-          city: cityController.text.trim().isEmpty ? null : cityController.text.trim(),
-          exemptionCode: exemptionController.text.trim().isEmpty ? null : exemptionController.text.trim(),
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
+          fullName: fullName,
+          hasDebt: debtValue > 0,
+          debtTotal: debtValue > 0 ? debtValue : 0,
+          hasAdvance: advanceText.isNotEmpty,
+          hasBooking: bookingText.isNotEmpty,
+          createdAt: now,
+          updatedAt: now,
         ),
       );
+
+      if (advanceText.isNotEmpty) {
+        final id = 'adv_${now.microsecondsSinceEpoch}';
+        await _advancesRepository.saveAdvance(
+          Advance(
+            id: id,
+            patientFiscalCode: fiscalCode,
+            patientName: fullName,
+            drugName: advanceText,
+            doctorName: '',
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+      }
+
+      if (bookingText.isNotEmpty) {
+        final id = 'book_${now.microsecondsSinceEpoch}';
+        await _bookingsRepository.saveBooking(
+          Booking(
+            id: id,
+            patientFiscalCode: fiscalCode,
+            patientName: fullName,
+            drugName: bookingText,
+            createdAt: now,
+            expectedDate: now,
+          ),
+        );
+      }
+
+      if (debtValue > 0) {
+        final id = 'debt_${now.microsecondsSinceEpoch}';
+        await _debtsRepository.saveDebt(
+          Debt(
+            id: id,
+            patientFiscalCode: fiscalCode,
+            patientName: fullName,
+            description: 'Debito iniziale',
+            amount: debtValue,
+            paidAmount: 0,
+            residualAmount: debtValue,
+            createdAt: now,
+          ),
+        );
+      }
+
       setState(() {
         _message = 'Assistito inserito correttamente.';
       });
@@ -456,8 +532,10 @@ class _DashboardPageState extends State<DashboardPage> {
     } finally {
       fiscalCodeController.dispose();
       nameController.dispose();
-      cityController.dispose();
-      exemptionController.dispose();
+      surnameController.dispose();
+      advanceController.dispose();
+      bookingController.dispose();
+      debtController.dispose();
     }
   }
 
@@ -597,6 +675,19 @@ class _DashboardPageState extends State<DashboardPage> {
                   Text(_message, style: const TextStyle(color: AppColors.green, fontWeight: FontWeight.w700)),
                 ],
                 const SizedBox(height: 18),
+                if (data != null) ...[
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      _SummaryCard(title: 'Assistiti attivi', value: summaries.length.toString(), icon: Icons.people_alt_outlined),
+                      _SummaryCard(title: 'Ricette', value: summaries.fold<int>(0, (sum, item) => sum + item.recipeCount).toString(), icon: Icons.receipt_long_outlined),
+                      _SummaryCard(title: 'Debiti', value: '€ ${summaries.fold<double>(0, (sum, item) => sum + item.totalDebt).toStringAsFixed(2)}', icon: Icons.euro_outlined),
+                      _SummaryCard(title: 'In scadenza', value: expiring.length.toString(), icon: Icons.warning_amber_rounded),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                ],
                 if (snapshot.connectionState == ConnectionState.waiting)
                   const Expanded(child: Center(child: CircularProgressIndicator()))
                 else if (snapshot.hasError)
@@ -765,9 +856,10 @@ class _DashboardPageState extends State<DashboardPage> {
     return widgets;
   }
 
-  Widget _dialogField(TextEditingController controller, String label) {
+  Widget _dialogField(TextEditingController controller, String label, {TextInputType? keyboardType}) {
     return TextField(
       controller: controller,
+      keyboardType: keyboardType,
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         labelText: label,
@@ -838,6 +930,8 @@ class _PatientDashboardSummary {
   double get totalDebt => debts.fold<double>(0, (sum, item) => sum + item.residualAmount);
 
   String get doctorNameUpper => doctorName.trim().isEmpty ? '-' : doctorName.trim().toUpperCase();
+
+  bool get hasActiveContent => recipeCount > 0 || hasDpc || debts.isNotEmpty || advances.isNotEmpty || bookings.isNotEmpty;
 
   List<_FlagItem> get dpcItems {
     final fromPrescriptions = prescriptions.where((item) => item.dpcFlag).map((item) {
@@ -945,6 +1039,52 @@ String _dashboardFormatDate(DateTime? date) {
   final month = date.month.toString().padLeft(2, '0');
   final year = date.year.toString();
   return '$day/$month/$year';
+}
+
+
+class _SummaryCard extends StatelessWidget {
+  final String title;
+  final String value;
+  final IconData icon;
+
+  const _SummaryCard({required this.title, required this.value, required this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 220,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.panel,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: AppColors.panelSoft,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: Colors.white),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 4),
+                Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _FilterToggle extends StatelessWidget {
