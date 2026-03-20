@@ -774,6 +774,46 @@ class _DashboardPageState extends State<DashboardPage> {
     final debtDescriptionController = TextEditingController();
     String selectedDoctor = '';
     final doctorCandidates = data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList()..sort();
+
+    void fillFromExistingPatient(String rawValue, void Function(void Function()) setLocalState) {
+      final normalizedCf = rawValue.trim().toUpperCase();
+      if (fiscalCodeController.text != normalizedCf) {
+        fiscalCodeController.value = fiscalCodeController.value.copyWith(
+          text: normalizedCf,
+          selection: TextSelection.collapsed(offset: normalizedCf.length),
+          composing: TextRange.empty,
+        );
+      }
+      final existing = data.summaries.where((e) => e.patient.fiscalCode.trim().toUpperCase() == normalizedCf).cast<_PatientDashboardSummary?>().firstWhere(
+        (e) => e != null,
+        orElse: () => null,
+      );
+      if (existing == null) return;
+
+      final fullName = existing.patient.fullName.trim();
+      final parts = fullName.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
+      String inferredName = '';
+      String inferredSurname = '';
+      if (parts.length >= 2) {
+        inferredName = parts.first;
+        inferredSurname = parts.skip(1).join(' ');
+      } else if (parts.isNotEmpty) {
+        inferredSurname = parts.first;
+      }
+      final doctorFromMemory = existing.doctorName.trim();
+      setLocalState(() {
+        if (inferredName.isNotEmpty) {
+          nameController.text = inferredName;
+        }
+        if (inferredSurname.isNotEmpty) {
+          surnameController.text = inferredSurname;
+        }
+        if (doctorFromMemory.isNotEmpty && doctorFromMemory != '-' && doctorCandidates.contains(doctorFromMemory)) {
+          selectedDoctor = doctorFromMemory;
+        }
+      });
+    }
+
     final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
