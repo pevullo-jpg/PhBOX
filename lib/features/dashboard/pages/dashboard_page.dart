@@ -1016,6 +1016,47 @@ class _DashboardPageState extends State<DashboardPage> {
       );
       return;
     }
+    if (key == 'quick-edit') {
+      final selectedKey = await showDialog<String>(
+        context: context,
+        builder: (context) {
+          Widget option({required IconData icon, required String label, required String value}) {
+            return ListTile(
+              leading: CircleAvatar(
+                radius: 18,
+                backgroundColor: Colors.white12,
+                child: Icon(icon, color: Colors.white, size: 18),
+              ),
+              title: Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+              onTap: () => Navigator.of(context).pop(value),
+            );
+          }
+
+          return AlertDialog(
+            backgroundColor: AppColors.panel,
+            title: Text('Apri gestione · ${summary.displayName}', style: const TextStyle(color: Colors.white)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                option(icon: Icons.account_balance_wallet_outlined, label: 'Debiti', value: 'debiti'),
+                option(icon: Icons.payments_outlined, label: 'Anticipi', value: 'anticipi'),
+                option(icon: Icons.event_note_outlined, label: 'Prenotazioni', value: 'prenotazioni'),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Chiudi', style: TextStyle(color: Colors.white70)),
+              ),
+            ],
+          );
+        },
+      );
+      if (selectedKey != null && mounted) {
+        await _openEditableFlagModal(summary: summary, key: selectedKey);
+      }
+      return;
+    }
     if (key == 'debiti' || key == 'anticipi' || key == 'prenotazioni') {
       await _openEditableFlagModal(summary: summary, key: key);
       return;
@@ -1707,7 +1748,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
 
   List<Widget> _buildFlagChips(_PatientDashboardSummary item) {
-    final widgets = <Widget>[];
+    final widgets = <Widget>[
+      _QuickEditFlag(onTap: () => _handleFlagTap(item, 'quick-edit')),
+    ];
     if (item.recipeCount > 0 && item.imports.isNotEmpty) {
       widgets.add(_FlagChip(label: 'ricette ${item.recipeCount}', color: AppColors.green, onTap: () => _handleFlagTap(item, 'ricette')));
     }
@@ -2044,6 +2087,32 @@ class _FlagChip extends StatelessWidget {
         child: Text(
           label,
           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5),
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickEditFlag extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _QuickEditFlag({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Apri gestione',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: const BoxDecoration(
+            color: Color(0xFF7A7A7A),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.add, color: Colors.white, size: 20),
         ),
       ),
     );
