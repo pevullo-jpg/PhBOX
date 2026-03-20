@@ -521,144 +521,399 @@ class _DashboardPageState extends State<DashboardPage> {
     required _PatientDashboardSummary summary,
     required String key,
   }) async {
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        _PatientDashboardSummary currentSummary = summary;
-        bool busy = false;
+    final data = await _future!;
+    final doctorsCatalog = data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty).toList()..sort();
 
-        Future<void> reload(StateSetter setLocalState) async {
-          setLocalState(() => busy = true);
-          final refreshed = await _reloadSummary(summary.patient.fiscalCode);
-          if (refreshed != null) {
+    final debtDescriptionController = TextEditingController();
+    final debtAmountController = TextEditingController();
+    final debtNoteController = TextEditingController();
+
+    final advanceDrugController = TextEditingController();
+    final advanceNoteController = TextEditingController();
+
+    final bookingDrugController = TextEditingController();
+    final bookingQuantityController = TextEditingController(text: '1');
+    final bookingNoteController = TextEditingController();
+
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          _PatientDashboardSummary currentSummary = summary;
+          bool busy = false;
+          bool showAddForm = false;
+          String formError = '';
+          String selectedDoctor = summary.doctorName.trim() == '-' ? '' : summary.doctorName.trim();
+
+          Future<void> reload(StateSetter setLocalState) async {
+            final refreshed = await _reloadSummary(summary.patient.fiscalCode);
             setLocalState(() {
-              currentSummary = refreshed;
+              if (refreshed != null) {
+                currentSummary = refreshed;
+              }
               busy = false;
             });
-          } else {
-            setLocalState(() => busy = false);
           }
-        }
 
-        Future<void> runAndReload(StateSetter setLocalState, Future<bool> Function() action) async {
-          final changed = await action();
-          if (changed) {
-            await reload(setLocalState);
-          }
-        }
-
-        List<_FlagItem> buildItems(StateSetter setLocalState) {
-          if (key == 'debiti') {
-            return currentSummary.debts.map((item) => _FlagItem(
-              title: '${item.description} · € ${item.residualAmount.toStringAsFixed(2)}',
-              subtitle: 'Inserito ${_formatDate(item.createdAt)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
-              onDelete: () async {
-                await _debtsRepository.deleteDebt(currentSummary.patient.fiscalCode, item.id);
-                _refresh();
-                await reload(setLocalState);
-              },
-            )).toList();
-          }
-          if (key == 'anticipi') {
-            return currentSummary.advances.map((item) => _FlagItem(
-              title: item.drugName,
-              subtitle: '${item.doctorName.isEmpty ? '-' : item.doctorName} · ${_formatDate(item.createdAt)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
-              onDelete: () async {
-                await _advancesRepository.deleteAdvance(currentSummary.patient.fiscalCode, item.id);
-                _refresh();
-                await reload(setLocalState);
-              },
-            )).toList();
-          }
-          return currentSummary.bookings.map((item) => _FlagItem(
-            title: '${item.drugName} x${item.quantity}',
-            subtitle: 'Registrata ${_formatDate(item.createdAt)} · Prevista ${_formatDate(item.expectedDate)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
-            onDelete: () async {
-              await _bookingsRepository.deleteBooking(currentSummary.patient.fiscalCode, item.id);
-              _refresh();
+          Future<void> runBusyAction(StateSetter setLocalState, Future<void> Function() action) async {
+            setLocalState(() => busy = true);
+            try {
+              await action();
+            } finally {
               await reload(setLocalState);
-            },
-          )).toList();
-        }
-
-        String modalTitle() {
-          if (key == 'debiti') return 'Debiti · ${currentSummary.displayName}';
-          if (key == 'anticipi') return 'Anticipi · ${currentSummary.displayName}';
-          return 'Prenotazioni · ${currentSummary.displayName}';
-        }
-
-        return StatefulBuilder(
-          builder: (context, setLocalState) {
-            Widget headerAction;
-            if (key == 'debiti') {
-              headerAction = Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    tooltip: 'Nuovo debito',
-                    onPressed: busy ? null : () => runAndReload(setLocalState, () => _addDebtFromDashboard(currentSummary)),
-                    icon: const Icon(Icons.add_circle_outline, color: AppColors.green),
-                  ),
-                  IconButton(
-                    tooltip: 'Elimina tutto',
-                    onPressed: busy ? null : () => runAndReload(setLocalState, () => _deleteAllDebts(currentSummary)),
-                    icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
-                  ),
-                ],
-              );
-            } else if (key == 'anticipi') {
-              headerAction = Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    tooltip: 'Nuovo anticipo',
-                    onPressed: busy ? null : () => runAndReload(setLocalState, () => _addAdvanceFromDashboard(currentSummary)),
-                    icon: const Icon(Icons.add_circle_outline, color: AppColors.green),
-                  ),
-                  IconButton(
-                    tooltip: 'Elimina tutto',
-                    onPressed: busy ? null : () => runAndReload(setLocalState, () => _deleteAllAdvances(currentSummary)),
-                    icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
-                  ),
-                ],
-              );
-            } else {
-              headerAction = Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    tooltip: 'Nuova prenotazione',
-                    onPressed: busy ? null : () => runAndReload(setLocalState, () => _addBookingFromDashboard(currentSummary)),
-                    icon: const Icon(Icons.add_circle_outline, color: AppColors.green),
-                  ),
-                  IconButton(
-                    tooltip: 'Elimina tutto',
-                    onPressed: busy ? null : () => runAndReload(setLocalState, () => _deleteAllBookings(currentSummary)),
-                    icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
-                  ),
-                ],
-              );
             }
-            return Stack(
-              children: [
-                _buildFlagDialog(
-                  title: modalTitle(),
-                  items: buildItems(setLocalState),
-                  headerAction: headerAction,
-                ),
-                if (busy) const Positioned.fill(child: ColoredBox(color: Color(0x66000000), child: Center(child: CircularProgressIndicator()))),
-              ],
+          }
+
+          void clearInlineForm() {
+            debtDescriptionController.clear();
+            debtAmountController.clear();
+            debtNoteController.clear();
+            advanceDrugController.clear();
+            advanceNoteController.clear();
+            bookingDrugController.clear();
+            bookingQuantityController.text = '1';
+            bookingNoteController.clear();
+            formError = '';
+            selectedDoctor = currentSummary.doctorName.trim() == '-' ? '' : currentSummary.doctorName.trim();
+          }
+
+          Future<void> saveInlineForm(StateSetter setLocalState) async {
+            final now = DateTime.now();
+            final fiscalCode = currentSummary.patient.fiscalCode;
+            final patientName = currentSummary.patient.fullName;
+
+            try {
+              if (key == 'debiti') {
+                final description = debtDescriptionController.text.trim();
+                final amount = double.tryParse(debtAmountController.text.trim().replaceAll(',', '.')) ?? 0;
+                if (description.isEmpty || amount <= 0) {
+                  setLocalState(() => formError = 'Inserisci causale e importo validi.');
+                  return;
+                }
+                await _debtsRepository.saveDebt(
+                  Debt(
+                    id: 'debt_${now.microsecondsSinceEpoch}',
+                    patientFiscalCode: fiscalCode,
+                    patientName: patientName,
+                    description: description,
+                    amount: amount,
+                    paidAmount: 0,
+                    residualAmount: amount,
+                    createdAt: now,
+                    dueDate: now,
+                    note: debtNoteController.text.trim().isEmpty ? null : debtNoteController.text.trim(),
+                  ),
+                );
+              } else if (key == 'anticipi') {
+                final drugName = advanceDrugController.text.trim();
+                final doctorName = selectedDoctor.trim();
+                if (drugName.isEmpty || doctorName.isEmpty) {
+                  setLocalState(() => formError = 'Inserisci farmaco e medico.');
+                  return;
+                }
+                await _advancesRepository.saveAdvance(
+                  Advance(
+                    id: 'adv_${now.microsecondsSinceEpoch}',
+                    patientFiscalCode: fiscalCode,
+                    patientName: patientName,
+                    drugName: drugName,
+                    doctorName: doctorName,
+                    note: advanceNoteController.text.trim().isEmpty ? null : advanceNoteController.text.trim(),
+                    createdAt: now,
+                    updatedAt: now,
+                  ),
+                );
+              } else {
+                final drugName = bookingDrugController.text.trim();
+                final quantity = int.tryParse(bookingQuantityController.text.trim()) ?? 1;
+                if (drugName.isEmpty || quantity <= 0) {
+                  setLocalState(() => formError = 'Inserisci farmaco e quantità valide.');
+                  return;
+                }
+                await _bookingsRepository.saveBooking(
+                  Booking(
+                    id: 'book_${now.microsecondsSinceEpoch}',
+                    patientFiscalCode: fiscalCode,
+                    patientName: patientName,
+                    drugName: drugName,
+                    quantity: quantity,
+                    createdAt: now,
+                    expectedDate: now,
+                    note: bookingNoteController.text.trim().isEmpty ? null : bookingNoteController.text.trim(),
+                  ),
+                );
+              }
+
+              _refresh();
+              setLocalState(() {
+                showAddForm = false;
+                clearInlineForm();
+              });
+              await runBusyAction(setLocalState, () async {});
+            } catch (e) {
+              setLocalState(() {
+                formError = 'Errore salvataggio: $e';
+              });
+            }
+          }
+
+          List<_FlagItem> buildItems(StateSetter setLocalState) {
+            if (key == 'debiti') {
+              return currentSummary.debts
+                  .map((item) => _FlagItem(
+                        title: '${item.description} · € ${item.residualAmount.toStringAsFixed(2)}',
+                        subtitle: 'Inserito ${_formatDate(item.createdAt)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
+                        onDelete: () async {
+                          await runBusyAction(setLocalState, () async {
+                            await _debtsRepository.deleteDebt(currentSummary.patient.fiscalCode, item.id);
+                            _refresh();
+                          });
+                        },
+                      ))
+                  .toList();
+            }
+            if (key == 'anticipi') {
+              return currentSummary.advances
+                  .map((item) => _FlagItem(
+                        title: item.drugName,
+                        subtitle: '${item.doctorName.isEmpty ? '-' : item.doctorName} · ${_formatDate(item.createdAt)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
+                        onDelete: () async {
+                          await runBusyAction(setLocalState, () async {
+                            await _advancesRepository.deleteAdvance(currentSummary.patient.fiscalCode, item.id);
+                            _refresh();
+                          });
+                        },
+                      ))
+                  .toList();
+            }
+            return currentSummary.bookings
+                .map((item) => _FlagItem(
+                      title: '${item.drugName} x${item.quantity}',
+                      subtitle: 'Registrata ${_formatDate(item.createdAt)} · Prevista ${_formatDate(item.expectedDate)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
+                      onDelete: () async {
+                        await runBusyAction(setLocalState, () async {
+                          await _bookingsRepository.deleteBooking(currentSummary.patient.fiscalCode, item.id);
+                          _refresh();
+                        });
+                      },
+                    ))
+                .toList();
+          }
+
+          String modalTitle() {
+            if (key == 'debiti') return 'Debiti · ${currentSummary.displayName}';
+            if (key == 'anticipi') return 'Anticipi · ${currentSummary.displayName}';
+            return 'Prenotazioni · ${currentSummary.displayName}';
+          }
+
+          Widget buildInlineForm(StateSetter setLocalState) {
+            if (!showAddForm) return const SizedBox.shrink();
+            return Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.panelSoft,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    key == 'debiti' ? 'Nuovo debito' : key == 'anticipi' ? 'Nuovo anticipo' : 'Nuova prenotazione',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
+                  ),
+                  const SizedBox(height: 12),
+                  if (key == 'debiti') ...[
+                    _dialogField(debtDescriptionController, 'Causale'),
+                    const SizedBox(height: 12),
+                    _dialogField(
+                      debtAmountController,
+                      'Importo (€)',
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
+                    ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Data inserimento: ${_formatDate(DateTime.now())}', style: const TextStyle(color: Colors.white70)),
+                    ),
+                    const SizedBox(height: 12),
+                    _dialogField(debtNoteController, 'Nota', maxLines: 3),
+                  ] else if (key == 'anticipi') ...[
+                    _dialogField(advanceDrugController, 'Farmaco / articolo'),
+                  ] else ...[
+                    _dialogField(bookingDrugController, 'Farmaco / articolo'),
+                    const SizedBox(height: 12),
+                    _dialogField(
+                      bookingQuantityController,
+                      'Quantità',
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Data prevista: ${_formatDate(DateTime.now())}', style: const TextStyle(color: Colors.white70)),
+                    ),
+                    const SizedBox(height: 12),
+                    _dialogField(bookingNoteController, 'Nota', maxLines: 3),
+                  ],
+                  if (key == 'anticipi') ...[
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: selectedDoctor.isEmpty ? null : selectedDoctor,
+                      dropdownColor: AppColors.panelSoft,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: 'Medico',
+                        hintText: 'Seleziona medico',
+                        hintStyle: const TextStyle(color: Colors.white54),
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: const BorderSide(color: Colors.white24),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: const BorderSide(color: Colors.white70),
+                        ),
+                      ),
+                      items: ((<String>{...doctorsCatalog, if (selectedDoctor.isNotEmpty) selectedDoctor}.toList())..sort())
+                          .map((item) => DropdownMenuItem<String>(value: item, child: Text(item)))
+                          .toList(),
+                      onChanged: (value) => setLocalState(() => selectedDoctor = value ?? ''),
+                    ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Data registrazione: ${_formatDate(DateTime.now())}', style: const TextStyle(color: Colors.white70)),
+                    ),
+                    const SizedBox(height: 12),
+                    _dialogField(advanceNoteController, 'Nota', maxLines: 3),
+                  ],
+                  if (formError.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(formError, style: const TextStyle(color: AppColors.red, fontWeight: FontWeight.w700)),
+                  ],
+                  const SizedBox(height: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: busy
+                            ? null
+                            : () {
+                                setLocalState(() {
+                                  showAddForm = false;
+                                  clearInlineForm();
+                                });
+                              },
+                        child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: busy ? null : () => saveInlineForm(setLocalState),
+                        child: const Text('Salva'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             );
-          },
-        );
-      },
-    );
+          }
+
+          return StatefulBuilder(
+            builder: (context, setLocalState) {
+              Widget headerAction = Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: showAddForm
+                        ? 'Chiudi inserimento'
+                        : key == 'debiti'
+                            ? 'Nuovo debito'
+                            : key == 'anticipi'
+                                ? 'Nuovo anticipo'
+                                : 'Nuova prenotazione',
+                    onPressed: busy
+                        ? null
+                        : () {
+                            setLocalState(() {
+                              showAddForm = !showAddForm;
+                              if (!showAddForm) clearInlineForm();
+                              formError = '';
+                            });
+                          },
+                    icon: Icon(showAddForm ? Icons.remove_circle_outline : Icons.add_circle_outline, color: AppColors.green),
+                  ),
+                  IconButton(
+                    tooltip: 'Elimina tutto',
+                    onPressed: busy
+                        ? null
+                        : () => runBusyAction(setLocalState, () async {
+                              if (key == 'debiti') {
+                                for (final item in currentSummary.debts) {
+                                  await _debtsRepository.deleteDebt(currentSummary.patient.fiscalCode, item.id);
+                                }
+                              } else if (key == 'anticipi') {
+                                for (final item in currentSummary.advances) {
+                                  await _advancesRepository.deleteAdvance(currentSummary.patient.fiscalCode, item.id);
+                                }
+                              } else {
+                                for (final item in currentSummary.bookings) {
+                                  await _bookingsRepository.deleteBooking(currentSummary.patient.fiscalCode, item.id);
+                                }
+                              }
+                              _refresh();
+                            }),
+                    icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
+                  ),
+                ],
+              );
+              return Stack(
+                children: [
+                  _buildFlagDialog(
+                    title: modalTitle(),
+                    items: buildItems(setLocalState),
+                    headerAction: headerAction,
+                    inlineTop: buildInlineForm(setLocalState),
+                    dialogContext: dialogContext,
+                  ),
+                  if (busy)
+                    const Positioned.fill(
+                      child: ColoredBox(
+                        color: Color(0x66000000),
+                        child: Center(child: CircularProgressIndicator()),
+                      ),
+                    ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      debtDescriptionController.dispose();
+      debtAmountController.dispose();
+      debtNoteController.dispose();
+      advanceDrugController.dispose();
+      advanceNoteController.dispose();
+      bookingDrugController.dispose();
+      bookingQuantityController.dispose();
+      bookingNoteController.dispose();
+    }
   }
 
   Widget _buildFlagDialog({
     required String title,
     required List<_FlagItem> items,
     Widget? headerAction,
+    Widget? inlineTop,
+    BuildContext? dialogContext,
   }) {
     return Dialog(
       backgroundColor: AppColors.panel,
@@ -681,12 +936,16 @@ class _DashboardPageState extends State<DashboardPage> {
                   ],
                   IconButton(
                     tooltip: 'Chiudi',
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: () => Navigator.of(dialogContext ?? context).pop(),
                     icon: const Icon(Icons.close, color: Colors.white70),
                   ),
                 ],
               ),
               const SizedBox(height: 16),
+              if (inlineTop != null) ...[
+                inlineTop,
+                const SizedBox(height: 4),
+              ],
               ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 500),
                 child: items.isEmpty
@@ -722,7 +981,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                     const SizedBox(width: 12),
                                     IconButton(
                                       tooltip: 'Elimina voce',
-                                      onPressed: item.onDelete == null ? null : () { item.onDelete!.call(); },
+                                      onPressed: item.onDelete == null ? null : () async { await item.onDelete!.call(); },
                                       icon: const Icon(Icons.delete_outline, color: AppColors.red),
                                     ),
                                   ],
