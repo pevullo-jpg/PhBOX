@@ -766,6 +766,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _openAddPatientDialog() async {
     final data = await _future!;
     final fiscalCodeController = TextEditingController();
+    final fiscalCodeFocusNode = FocusNode();
     final nameController = TextEditingController();
     final surnameController = TextEditingController();
     final advanceController = TextEditingController();
@@ -774,6 +775,64 @@ class _DashboardPageState extends State<DashboardPage> {
     final debtDescriptionController = TextEditingController();
     String selectedDoctor = '';
     final doctorCandidates = data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList()..sort();
+
+    List<String> _splitPatientName(String fullName) {
+      final parts = fullName.trim().split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
+      if (parts.isEmpty) return const ['', ''];
+      if (parts.length == 1) return [parts.first, ''];
+      return [parts.first, parts.skip(1).join(' ')];
+    }
+
+    _PatientDashboardSummary? _findExactPatientByCf(String rawValue) {
+      final normalizedCf = rawValue.trim().toUpperCase();
+      for (final summary in data.summaries) {
+        if (summary.patient.fiscalCode.trim().toUpperCase() == normalizedCf) {
+          return summary;
+        }
+      }
+      return null;
+    }
+
+    List<_PatientDashboardSummary> _findPatientSuggestions(String rawValue) {
+      final normalizedQuery = rawValue.trim().toUpperCase();
+      if (normalizedQuery.isEmpty) return const [];
+      final startsWithMatches = <_PatientDashboardSummary>[];
+      final containsMatches = <_PatientDashboardSummary>[];
+      for (final summary in data.summaries) {
+        final patientCf = summary.patient.fiscalCode.trim().toUpperCase();
+        if (patientCf.isEmpty) continue;
+        if (patientCf.startsWith(normalizedQuery)) {
+          startsWithMatches.add(summary);
+        } else if (patientCf.contains(normalizedQuery)) {
+          containsMatches.add(summary);
+        }
+      }
+      final allMatches = [...startsWithMatches, ...containsMatches];
+      if (allMatches.length <= 6) return allMatches;
+      return allMatches.take(6).toList();
+    }
+
+    void _applyPatientSuggestion(_PatientDashboardSummary summary, void Function(void Function()) setLocalState) {
+      final normalizedCf = summary.patient.fiscalCode.trim().toUpperCase();
+      final nameParts = _splitPatientName(summary.patient.fullName);
+      final doctorFromMemory = summary.doctorName.trim();
+      setLocalState(() {
+        fiscalCodeController.value = fiscalCodeController.value.copyWith(
+          text: normalizedCf,
+          selection: TextSelection.collapsed(offset: normalizedCf.length),
+          composing: TextRange.empty,
+        );
+        if (nameParts.first.isNotEmpty) {
+          nameController.text = nameParts.first;
+        }
+        if (nameParts.last.isNotEmpty) {
+          surnameController.text = nameParts.last;
+        }
+        if (doctorFromMemory.isNotEmpty && doctorFromMemory != '-' && doctorCandidates.contains(doctorFromMemory)) {
+          selectedDoctor = doctorFromMemory;
+        }
+      });
+    }
 
     void fillFromExistingPatient(String rawValue, void Function(void Function()) setLocalState) {
       final normalizedCf = rawValue.trim().toUpperCase();
@@ -784,34 +843,10 @@ class _DashboardPageState extends State<DashboardPage> {
           composing: TextRange.empty,
         );
       }
-      final existing = data.summaries.where((e) => e.patient.fiscalCode.trim().toUpperCase() == normalizedCf).cast<_PatientDashboardSummary?>().firstWhere(
-        (e) => e != null,
-        orElse: () => null,
-      );
-      if (existing == null) return;
-
-      final fullName = existing.patient.fullName.trim();
-      final parts = fullName.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
-      String inferredName = '';
-      String inferredSurname = '';
-      if (parts.length >= 2) {
-        inferredName = parts.first;
-        inferredSurname = parts.skip(1).join(' ');
-      } else if (parts.isNotEmpty) {
-        inferredSurname = parts.first;
+      final existing = _findExactPatientByCf(normalizedCf);
+      if (existing != null) {
+        _applyPatientSuggestion(existing, setLocalState);
       }
-      final doctorFromMemory = existing.doctorName.trim();
-      setLocalState(() {
-        if (inferredName.isNotEmpty) {
-          nameController.text = inferredName;
-        }
-        if (inferredSurname.isNotEmpty) {
-          surnameController.text = inferredSurname;
-        }
-        if (doctorFromMemory.isNotEmpty && doctorFromMemory != '-' && doctorCandidates.contains(doctorFromMemory)) {
-          selectedDoctor = doctorFromMemory;
-        }
-      });
     }
 
     final bool? confirmed = await showDialog<bool>(
@@ -828,10 +863,70 @@ class _DashboardPageState extends State<DashboardPage> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _dialogField(
-                        fiscalCodeController,
-                        'Codice fiscale',
-                        onChanged: (value) => fillFromExistingPatient(value, setLocalState),
+                      RawAutocomplete<_PatientDashboardSummary>(
+                        textEditingController: fiscalCodeController,
+                        focusNode: fiscalCodeFocusNode,
+                        displayStringForOption: (option) => option.patient.fiscalCode.trim().toUpperCase(),
+                        optionsBuilder: (textEditingValue) {
+                          return _findPatientSuggestions(textEditingValue.text);
+                        },
+                        onSelected: (selection) {
+                          _applyPatientSuggestion(selection, setLocalState);
+                        },
+                        fieldViewBuilder: (context, textEditingController, focusNode, onFieldSubmitted) {
+                          return _dialogField(
+                            textEditingController,
+                            'Codice fiscale',
+                            focusNode: focusNode,
+                            onChanged: (value) => fillFromExistingPatient(value, setLocalState),
+                          );
+                        },
+                        optionsViewBuilder: (context, onSelected, options) {
+                          final optionList = options.toList(growable: false);
+                          if (optionList.isEmpty) {
+                            return const SizedBox.shrink();
+                          }
+                          return Align(
+                            alignment: Alignment.topLeft,
+                            child: Material(
+                              color: Colors.transparent,
+                              child: Container(
+                                width: 460,
+                                margin: const EdgeInsets.only(top: 6),
+                                decoration: BoxDecoration(
+                                  color: AppColors.panelSoft,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(color: Colors.white24),
+                                ),
+                                child: ListView.separated(
+                                  padding: EdgeInsets.zero,
+                                  shrinkWrap: true,
+                                  itemCount: optionList.length,
+                                  separatorBuilder: (_, __) => const Divider(height: 1, color: Colors.white10),
+                                  itemBuilder: (context, index) {
+                                    final option = optionList[index];
+                                    final normalizedCf = option.patient.fiscalCode.trim().toUpperCase();
+                                    final displayName = option.patient.fullName.trim().toUpperCase();
+                                    return InkWell(
+                                      onTap: () => onSelected(option),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(normalizedCf, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                                            const SizedBox(height: 2),
+                                            Text(displayName, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
+                          );
+                        },
                       ),
                       const SizedBox(height: 12),
                       _dialogField(nameController, 'Nome'),
@@ -915,6 +1010,7 @@ class _DashboardPageState extends State<DashboardPage> {
     );
     if (confirmed != true) {
       fiscalCodeController.dispose();
+      fiscalCodeFocusNode.dispose();
       nameController.dispose();
       surnameController.dispose();
       advanceController.dispose();
@@ -1012,6 +1108,7 @@ class _DashboardPageState extends State<DashboardPage> {
       });
     } finally {
       fiscalCodeController.dispose();
+      fiscalCodeFocusNode.dispose();
       nameController.dispose();
       surnameController.dispose();
       advanceController.dispose();
@@ -1373,6 +1470,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _dialogField(
     TextEditingController controller,
     String label, {
+    FocusNode? focusNode,
     TextInputType? keyboardType,
     List<TextInputFormatter>? inputFormatters,
     int maxLines = 1,
@@ -1380,6 +1478,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }) {
     return TextField(
       controller: controller,
+      focusNode: focusNode,
       keyboardType: keyboardType,
       inputFormatters: inputFormatters,
       maxLines: maxLines,
