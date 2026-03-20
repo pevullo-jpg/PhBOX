@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:math' as math;
+
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/utils/prescription_expiry_utils.dart';
@@ -239,90 +241,16 @@ class _DashboardPageState extends State<DashboardPage> {
     await showDialog<void>(
       context: context,
       builder: (context) {
-        return Dialog(
-          backgroundColor: AppColors.panel,
-          child: SizedBox(
-            width: 760,
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(title, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
-                      ),
-                      if (headerAction != null) ...[
-                        headerAction,
-                        const SizedBox(width: 8),
-                      ],
-                      IconButton(
-                        tooltip: 'Chiudi',
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.close, color: Colors.white70),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 500),
-                    child: items.isEmpty
-                        ? const Text('Nessuna voce.', style: TextStyle(color: Colors.white70))
-                        : SingleChildScrollView(
-                            child: Column(
-                              children: items.map((item) {
-                                return Container(
-                                  width: double.infinity,
-                                  margin: const EdgeInsets.only(bottom: 10),
-                                  padding: const EdgeInsets.all(14),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.panelSoft,
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(color: Colors.white10),
-                                  ),
-                                  child: Row(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text(item.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
-                                            if (item.subtitle.isNotEmpty) ...[
-                                              const SizedBox(height: 6),
-                                              Text(item.subtitle, style: const TextStyle(color: Colors.white70, height: 1.35)),
-                                            ],
-                                          ],
-                                        ),
-                                      ),
-                                      if (item.onDelete != null) ...[
-                                        const SizedBox(width: 12),
-                                        IconButton(
-                                          tooltip: 'Elimina voce',
-                                          onPressed: item.onDelete == null ? null : () { item.onDelete!.call(); },
-                                          icon: const Icon(Icons.delete_outline, color: AppColors.red),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                );
-                              }).toList(),
-                            ),
-                          ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+        return _buildFlagDialog(
+          title: title,
+          items: items,
+          headerAction: headerAction,
         );
       },
     );
   }
 
-
-  Future<void> _addDebtFromDashboard(_PatientDashboardSummary summary) async {
+  Future<bool> _addDebtFromDashboard(_PatientDashboardSummary summary) async {
     final descriptionController = TextEditingController();
     final amountController = TextEditingController();
     final noteController = TextEditingController();
@@ -360,7 +288,7 @@ class _DashboardPageState extends State<DashboardPage> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true) return false;
     try {
       final amount = double.tryParse(amountController.text.trim().replaceAll(',', '.')) ?? 0;
       if (descriptionController.text.trim().isEmpty || amount <= 0) {
@@ -381,10 +309,11 @@ class _DashboardPageState extends State<DashboardPage> {
           note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
         ),
       );
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
       _refresh();
+      return true;
     } catch (e) {
       setState(() => _message = 'Errore salvataggio debito: $e');
+      return false;
     } finally {
       descriptionController.dispose();
       amountController.dispose();
@@ -392,7 +321,7 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
-  Future<void> _addAdvanceFromDashboard(_PatientDashboardSummary summary) async {
+  Future<bool> _addAdvanceFromDashboard(_PatientDashboardSummary summary) async {
     final drugController = TextEditingController();
     final noteController = TextEditingController();
     String selectedDoctor = summary.doctorName.trim() == '-' ? '' : summary.doctorName.trim();
@@ -455,7 +384,7 @@ class _DashboardPageState extends State<DashboardPage> {
         );
       },
     );
-    if (confirmed != true) return;
+    if (confirmed != true) return false;
     try {
       if (drugController.text.trim().isEmpty || selectedDoctor.trim().isEmpty) {
         throw Exception('Farmaco e medico sono obbligatori.');
@@ -473,17 +402,18 @@ class _DashboardPageState extends State<DashboardPage> {
           updatedAt: now,
         ),
       );
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
       _refresh();
+      return true;
     } catch (e) {
       setState(() => _message = 'Errore salvataggio anticipo: $e');
+      return false;
     } finally {
       drugController.dispose();
       noteController.dispose();
     }
   }
 
-  Future<void> _addBookingFromDashboard(_PatientDashboardSummary summary) async {
+  Future<bool> _addBookingFromDashboard(_PatientDashboardSummary summary) async {
     final drugController = TextEditingController();
     final quantityController = TextEditingController(text: '1');
     final noteController = TextEditingController();
@@ -521,7 +451,7 @@ class _DashboardPageState extends State<DashboardPage> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true) return false;
     try {
       if (drugController.text.trim().isEmpty) {
         throw Exception('Farmaco obbligatorio.');
@@ -539,10 +469,11 @@ class _DashboardPageState extends State<DashboardPage> {
           note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
         ),
       );
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
       _refresh();
+      return true;
     } catch (e) {
       setState(() => _message = 'Errore salvataggio prenotazione: $e');
+      return false;
     } finally {
       drugController.dispose();
       quantityController.dispose();
@@ -550,28 +481,263 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
-  Future<void> _deleteAllDebts(_PatientDashboardSummary summary) async {
+  Future<bool> _deleteAllDebts(_PatientDashboardSummary summary) async {
     for (final item in summary.debts) {
       await _debtsRepository.deleteDebt(summary.patient.fiscalCode, item.id);
     }
-    Navigator.of(context, rootNavigator: true).pop();
     _refresh();
+    return true;
   }
 
-  Future<void> _deleteAllAdvances(_PatientDashboardSummary summary) async {
+  Future<bool> _deleteAllAdvances(_PatientDashboardSummary summary) async {
     for (final item in summary.advances) {
       await _advancesRepository.deleteAdvance(summary.patient.fiscalCode, item.id);
     }
-    Navigator.of(context, rootNavigator: true).pop();
     _refresh();
+    return true;
   }
 
-  Future<void> _deleteAllBookings(_PatientDashboardSummary summary) async {
+  Future<bool> _deleteAllBookings(_PatientDashboardSummary summary) async {
     for (final item in summary.bookings) {
       await _bookingsRepository.deleteBooking(summary.patient.fiscalCode, item.id);
     }
-    Navigator.of(context, rootNavigator: true).pop();
     _refresh();
+    return true;
+  }
+
+
+  Future<_PatientDashboardSummary?> _reloadSummary(String fiscalCode) async {
+    final data = await _load();
+    final normalized = fiscalCode.trim().toUpperCase();
+    for (final item in data.summaries) {
+      if (item.patient.fiscalCode.trim().toUpperCase() == normalized) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _openEditableFlagModal({
+    required _PatientDashboardSummary summary,
+    required String key,
+  }) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        _PatientDashboardSummary currentSummary = summary;
+        bool busy = false;
+
+        Future<void> reload(StateSetter setLocalState) async {
+          setLocalState(() => busy = true);
+          final refreshed = await _reloadSummary(summary.patient.fiscalCode);
+          if (refreshed != null) {
+            setLocalState(() {
+              currentSummary = refreshed;
+              busy = false;
+            });
+          } else {
+            setLocalState(() => busy = false);
+          }
+        }
+
+        Future<void> runAndReload(StateSetter setLocalState, Future<bool> Function() action) async {
+          final changed = await action();
+          if (changed) {
+            await reload(setLocalState);
+          }
+        }
+
+        List<_FlagItem> buildItems(StateSetter setLocalState) {
+          if (key == 'debiti') {
+            return currentSummary.debts.map((item) => _FlagItem(
+              title: '${item.description} · € ${item.residualAmount.toStringAsFixed(2)}',
+              subtitle: 'Inserito ${_formatDate(item.createdAt)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
+              onDelete: () async {
+                await _debtsRepository.deleteDebt(currentSummary.patient.fiscalCode, item.id);
+                _refresh();
+                await reload(setLocalState);
+              },
+            )).toList();
+          }
+          if (key == 'anticipi') {
+            return currentSummary.advances.map((item) => _FlagItem(
+              title: item.drugName,
+              subtitle: '${item.doctorName.isEmpty ? '-' : item.doctorName} · ${_formatDate(item.createdAt)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
+              onDelete: () async {
+                await _advancesRepository.deleteAdvance(currentSummary.patient.fiscalCode, item.id);
+                _refresh();
+                await reload(setLocalState);
+              },
+            )).toList();
+          }
+          return currentSummary.bookings.map((item) => _FlagItem(
+            title: '${item.drugName} x${item.quantity}',
+            subtitle: 'Registrata ${_formatDate(item.createdAt)} · Prevista ${_formatDate(item.expectedDate)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
+            onDelete: () async {
+              await _bookingsRepository.deleteBooking(currentSummary.patient.fiscalCode, item.id);
+              _refresh();
+              await reload(setLocalState);
+            },
+          )).toList();
+        }
+
+        String modalTitle() {
+          if (key == 'debiti') return 'Debiti · ${currentSummary.displayName}';
+          if (key == 'anticipi') return 'Anticipi · ${currentSummary.displayName}';
+          return 'Prenotazioni · ${currentSummary.displayName}';
+        }
+
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            Widget headerAction;
+            if (key == 'debiti') {
+              headerAction = Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Nuovo debito',
+                    onPressed: busy ? null : () => runAndReload(setLocalState, () => _addDebtFromDashboard(currentSummary)),
+                    icon: const Icon(Icons.add_circle_outline, color: AppColors.green),
+                  ),
+                  IconButton(
+                    tooltip: 'Elimina tutto',
+                    onPressed: busy ? null : () => runAndReload(setLocalState, () => _deleteAllDebts(currentSummary)),
+                    icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
+                  ),
+                ],
+              );
+            } else if (key == 'anticipi') {
+              headerAction = Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Nuovo anticipo',
+                    onPressed: busy ? null : () => runAndReload(setLocalState, () => _addAdvanceFromDashboard(currentSummary)),
+                    icon: const Icon(Icons.add_circle_outline, color: AppColors.green),
+                  ),
+                  IconButton(
+                    tooltip: 'Elimina tutto',
+                    onPressed: busy ? null : () => runAndReload(setLocalState, () => _deleteAllAdvances(currentSummary)),
+                    icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
+                  ),
+                ],
+              );
+            } else {
+              headerAction = Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Nuova prenotazione',
+                    onPressed: busy ? null : () => runAndReload(setLocalState, () => _addBookingFromDashboard(currentSummary)),
+                    icon: const Icon(Icons.add_circle_outline, color: AppColors.green),
+                  ),
+                  IconButton(
+                    tooltip: 'Elimina tutto',
+                    onPressed: busy ? null : () => runAndReload(setLocalState, () => _deleteAllBookings(currentSummary)),
+                    icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
+                  ),
+                ],
+              );
+            }
+            return Stack(
+              children: [
+                _buildFlagDialog(
+                  title: modalTitle(),
+                  items: buildItems(setLocalState),
+                  headerAction: headerAction,
+                ),
+                if (busy) const Positioned.fill(child: ColoredBox(color: Color(0x66000000), child: Center(child: CircularProgressIndicator()))),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildFlagDialog({
+    required String title,
+    required List<_FlagItem> items,
+    Widget? headerAction,
+  }) {
+    return Dialog(
+      backgroundColor: AppColors.panel,
+      child: SizedBox(
+        width: 760,
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(title, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+                  ),
+                  if (headerAction != null) ...[
+                    headerAction,
+                    const SizedBox(width: 8),
+                  ],
+                  IconButton(
+                    tooltip: 'Chiudi',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close, color: Colors.white70),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 500),
+                child: items.isEmpty
+                    ? const Text('Nessuna voce.', style: TextStyle(color: Colors.white70))
+                    : SingleChildScrollView(
+                        child: Column(
+                          children: items.map((item) {
+                            return Container(
+                              width: double.infinity,
+                              margin: const EdgeInsets.only(bottom: 10),
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: AppColors.panelSoft,
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: Colors.white10),
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(item.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+                                        if (item.subtitle.isNotEmpty) ...[
+                                          const SizedBox(height: 6),
+                                          Text(item.subtitle, style: const TextStyle(color: Colors.white70, height: 1.35)),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                  if (item.onDelete != null) ...[
+                                    const SizedBox(width: 12),
+                                    IconButton(
+                                      tooltip: 'Elimina voce',
+                                      onPressed: item.onDelete == null ? null : () { item.onDelete!.call(); },
+                                      icon: const Icon(Icons.delete_outline, color: AppColors.red),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _handleFlagTap(_PatientDashboardSummary summary, String key) async {
@@ -591,99 +757,10 @@ class _DashboardPageState extends State<DashboardPage> {
       );
       return;
     }
-    if (key == 'debiti') {
-      await _openFlagModal(
-        title: 'Debiti · ${summary.displayName}',
-        headerAction: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              tooltip: 'Nuovo debito',
-              onPressed: () => _addDebtFromDashboard(summary),
-              icon: const Icon(Icons.add_circle_outline, color: AppColors.green),
-            ),
-            IconButton(
-              tooltip: 'Elimina tutto',
-              onPressed: () => _deleteAllDebts(summary),
-              icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
-            ),
-          ],
-        ),
-        items: summary.debts.map((item) {
-          return _FlagItem(
-            title: '${item.description} · € ${item.residualAmount.toStringAsFixed(2)}',
-            subtitle: 'Inserito ${_formatDate(item.createdAt)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
-            onDelete: () async {
-              await _debtsRepository.deleteDebt(summary.patient.fiscalCode, item.id);
-              Navigator.of(context, rootNavigator: true).pop();
-              _refresh();
-            },
-          );
-        }).toList(),
-      );
+    if (key == 'debiti' || key == 'anticipi' || key == 'prenotazioni') {
+      await _openEditableFlagModal(summary: summary, key: key);
       return;
     }
-    if (key == 'anticipi') {
-      await _openFlagModal(
-        title: 'Anticipi · ${summary.displayName}',
-        headerAction: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              tooltip: 'Nuovo anticipo',
-              onPressed: () => _addAdvanceFromDashboard(summary),
-              icon: const Icon(Icons.add_circle_outline, color: AppColors.green),
-            ),
-            IconButton(
-              tooltip: 'Elimina tutto',
-              onPressed: () => _deleteAllAdvances(summary),
-              icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
-            ),
-          ],
-        ),
-        items: summary.advances.map((item) {
-          return _FlagItem(
-            title: item.drugName,
-            subtitle: '${item.doctorName.isEmpty ? '-' : item.doctorName} · ${_formatDate(item.createdAt)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
-            onDelete: () async {
-              await _advancesRepository.deleteAdvance(summary.patient.fiscalCode, item.id);
-              Navigator.of(context, rootNavigator: true).pop();
-              _refresh();
-            },
-          );
-        }).toList(),
-      );
-      return;
-    }
-    await _openFlagModal(
-      title: 'Prenotazioni · ${summary.displayName}',
-      headerAction: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            tooltip: 'Nuova prenotazione',
-            onPressed: () => _addBookingFromDashboard(summary),
-            icon: const Icon(Icons.add_circle_outline, color: AppColors.green),
-          ),
-          IconButton(
-            tooltip: 'Elimina tutto',
-            onPressed: () => _deleteAllBookings(summary),
-            icon: const Icon(Icons.delete_sweep_outlined, color: AppColors.red),
-          ),
-        ],
-      ),
-      items: summary.bookings.map((item) {
-        return _FlagItem(
-          title: '${item.drugName} x${item.quantity}',
-          subtitle: 'Registrata ${_formatDate(item.createdAt)} · Prevista ${_formatDate(item.expectedDate)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
-          onDelete: () async {
-            await _bookingsRepository.deleteBooking(summary.patient.fiscalCode, item.id);
-            Navigator.of(context, rootNavigator: true).pop();
-            _refresh();
-          },
-        );
-      }).toList(),
-    );
   }
 
   Future<void> _openAddPatientDialog() async {
@@ -711,7 +788,11 @@ class _DashboardPageState extends State<DashboardPage> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _dialogField(fiscalCodeController, 'Codice fiscale'),
+                      _dialogField(
+                        fiscalCodeController,
+                        'Codice fiscale',
+                        onChanged: (value) => fillFromExistingPatient(value, setLocalState),
+                      ),
                       const SizedBox(height: 12),
                       _dialogField(nameController, 'Nome'),
                       const SizedBox(height: 12),
@@ -1097,9 +1178,14 @@ class _DashboardPageState extends State<DashboardPage> {
                   )
                 else
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+                    child: LayoutBuilder(
+                      builder: (context, tableConstraints) {
+                        final double sideInset = math.min(220, math.max(24, tableConstraints.maxWidth * 0.12));
+                        return Padding(
+                          padding: EdgeInsets.symmetric(horizontal: sideInset),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
 
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
@@ -1131,9 +1217,9 @@ class _DashboardPageState extends State<DashboardPage> {
                                 return const Center(child: Text('Nessun assistito.', style: TextStyle(color: Colors.white70, fontSize: 18)));
                               }
                               return ListView.separated(
-                                  itemCount: orderedSummaries.length,
-                                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                                  itemBuilder: (context, index) {
+                                itemCount: orderedSummaries.length,
+                                separatorBuilder: (_, __) => const SizedBox(height: 10),
+                                itemBuilder: (context, index) {
                                     final item = orderedSummaries[index];
                                     return Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
@@ -1209,7 +1295,10 @@ class _DashboardPageState extends State<DashboardPage> {
                             },
                           ),
                         ),
-                      ],
+                            ],
+                          ),
+                        );
+                      },
                     ),
                   ),
               ],
