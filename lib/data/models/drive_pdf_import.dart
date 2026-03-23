@@ -128,10 +128,23 @@ class DrivePdfImport {
       ),
       patientFullName: _readString(map['patientFullName'] ?? map['patientName'] ?? map['fullName'] ?? map['name']),
       doctorFullName: _readString(
-        map['doctorFullName'] ?? map['doctorName'] ?? map['doctor'] ?? map['medico'] ?? map['doctor_full_name'],
+        map['doctorFullName'] ??
+            map['doctorName'] ??
+            map['doctor'] ??
+            map['medico'] ??
+            map['doctor_full_name'] ??
+            map['medicoCurante'] ??
+            map['medico_curante'],
       ),
-      exemptionCode: _readString(map['exemptionCode'] ?? map['exemption'] ?? map['esenzione']),
-      city: _readString(map['city'] ?? map['comune']),
+      exemptionCode: _readString(
+        map['exemptionCode'] ??
+            map['exemption'] ??
+            map['esenzione'] ??
+            map['codiceEsenzione'] ??
+            map['esenzioneCodice'] ??
+            map['exemption_code'],
+      ),
+      city: _readString(map['city'] ?? map['comune'] ?? map['citta']),
       therapy: _readStringList(map['therapy'] ?? map['therapies'] ?? map['items']),
       isDpc: _readBool(map['isDpc'] ?? map['dpc'] ?? map['dpcFlag']),
       prescriptionCount: _readInt(map['prescriptionCount'] ?? map['sourceCount'] ?? map['recipeCount'] ?? map['count']) ?? 1,
