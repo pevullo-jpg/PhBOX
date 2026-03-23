@@ -1827,8 +1827,8 @@ class _DashboardPageState extends State<DashboardPage> {
     final widgets = <Widget>[
       _QuickEditFlag(onTap: () => _handleFlagTap(item, 'quick-edit')),
     ];
-    if (item.importedRecipeCount > 0) {
-      widgets.add(_FlagChip(label: 'ricette ${item.importedRecipeCount}', color: AppColors.green, onTap: () => _handleFlagTap(item, 'ricette')));
+    if (item.recipeCount > 0 && item.imports.isNotEmpty) {
+      widgets.add(_FlagChip(label: 'ricette ${item.recipeCount}', color: AppColors.green, onTap: () => _handleFlagTap(item, 'ricette')));
     }
     if (item.dpcItems.isNotEmpty) {
       widgets.add(_FlagChip(label: 'DPC ${item.dpcItems.length}', color: AppColors.coral, onTap: () => _handleFlagTap(item, 'dpc')));
@@ -1938,8 +1938,6 @@ class _PatientDashboardSummary {
 
   double get totalDebt => debts.fold<double>(0, (sum, item) => sum + item.residualAmount);
 
-  int get importedRecipeCount => imports.fold<int>(0, (sum, item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
-
   String get doctorNameUpper => doctorName.trim().isEmpty ? '-' : doctorName.trim().toUpperCase();
 
   bool get hasActiveContent => recipeCount > 0 || hasDpc || debts.isNotEmpty || advances.isNotEmpty || bookings.isNotEmpty;
@@ -1972,11 +1970,22 @@ class _PatientDashboardSummary {
   }) {
     final normalizedFiscalCode = patient.fiscalCode.trim().toUpperCase();
     final normalizedFullName = patient.fullName.trim().toUpperCase();
+    final patientLastImportId = patient.lastImportId.trim();
     final matchingImports = imports.where((item) {
       final importFiscalCode = item.patientFiscalCode.trim().toUpperCase();
       final importFullName = item.patientFullName.trim().toUpperCase();
+      final importId = item.id.trim();
+      final importDocumentType = item.documentType.trim().toLowerCase();
+      final isPrescriptionLike = importDocumentType.isEmpty || importDocumentType == 'prescription';
+      final matchesByImportId = patientLastImportId.isNotEmpty && importId.isNotEmpty && importId == patientLastImportId;
+      if (!isPrescriptionLike && !matchesByImportId) {
+        return false;
+      }
       if (importFiscalCode.isNotEmpty) {
         return importFiscalCode == normalizedFiscalCode;
+      }
+      if (matchesByImportId) {
+        return true;
       }
       return normalizedFullName.isNotEmpty && importFullName == normalizedFullName;
     }).toList();
@@ -2004,7 +2013,12 @@ class _PatientDashboardSummary {
             if (fromPrescription.isNotEmpty) return fromPrescription;
             return matchingImports.map((e) => e.city.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '-');
           })();
-    final int importsRecipeCount = matchingImports.fold<int>(0, (sum, item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
+    final int importsRecipeCount = matchingImports.fold<int>(0, (sum, item) {
+      if (item.documentType.trim().isNotEmpty && item.documentType.trim().toLowerCase() != 'prescription') {
+        return sum;
+      }
+      return sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1);
+    });
     final int prescriptionsRecipeCount = prescriptions.fold<int>(0, (sum, item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
     final int patientRecipeCount = patient.archivedRecipeCount > 0 ? patient.archivedRecipeCount : 0;
     final recipeCount = importsRecipeCount > 0
