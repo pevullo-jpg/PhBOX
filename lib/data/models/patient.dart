@@ -91,11 +91,17 @@ class Patient {
 
   factory Patient.fromMap(Map<String, dynamic> map) {
     return Patient(
-      fiscalCode: (map['fiscalCode'] ?? '') as String,
-      fullName: (map['fullName'] ?? '') as String,
-      city: map['city'] as String?,
-      exemptionCode: map['exemptionCode'] as String?,
-      doctorName: map['doctorName'] as String?,
+      fiscalCode: _readString(
+        map['fiscalCode'] ?? map['patientFiscalCode'] ?? map['patientCf'] ?? map['cf'] ?? map['codiceFiscale'],
+      ),
+      fullName: _readString(
+        map['fullName'] ?? map['patientName'] ?? map['patientFullName'] ?? map['name'] ?? map['assistito'],
+      ),
+      city: _readNullableString(map['city'] ?? map['comune']),
+      exemptionCode: _readNullableString(map['exemptionCode'] ?? map['exemption'] ?? map['esenzione']),
+      doctorName: _readNullableString(
+        map['doctorName'] ?? map['doctorFullName'] ?? map['doctor'] ?? map['medico'] ?? map['doctorDisplayName'],
+      ),
       therapiesSummary: List<String>.from(map['therapiesSummary'] ?? const <String>[]),
       lastPrescriptionDate: _readDate(map['lastPrescriptionDate']),
       hasDebt: (map['hasDebt'] ?? false) as bool,
@@ -107,6 +113,17 @@ class Patient {
       createdAt: _readDate(map['createdAt']) ?? DateTime.now(),
       updatedAt: _readDate(map['updatedAt']) ?? DateTime.now(),
     );
+  }
+
+
+  static String _readString(dynamic value) {
+    if (value == null) return '';
+    return value.toString().trim();
+  }
+
+  static String? _readNullableString(dynamic value) {
+    final normalized = _readString(value);
+    return normalized.isEmpty ? null : normalized;
   }
 
   static DateTime? _readDate(dynamic value) {
