@@ -81,7 +81,12 @@ class _DashboardPageState extends State<DashboardPage> {
     final patients = await _patientsRepository.getAllPatients();
     final imports = await _drivePdfImportsRepository.getAllImports();
     final doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
-    final families = await _familyGroupsRepository.getAllFamilies();
+    List<FamilyGroup> families;
+    try {
+      families = await _familyGroupsRepository.getAllFamilies();
+    } catch (_) {
+      families = const <FamilyGroup>[];
+    }
     final settings = await _settingsRepository.getSettings();
 
     final summaries = await Future.wait(
@@ -126,8 +131,15 @@ class _DashboardPageState extends State<DashboardPage> {
   List<_PatientDashboardSummary> _applyFilters(List<_PatientDashboardSummary> input, List<FamilyGroup> families) {
     final query = _searchController.text.trim().toLowerCase();
 
+    final bool hasAnyActivePatient = input.any((item) => item.hasActiveContent);
+
     bool matchesCardFilters(_PatientDashboardSummary item) {
-      if (!item.hasActiveContent) return false;
+      if (_activeCardFilters.isEmpty) {
+        if (hasAnyActivePatient) {
+          return item.hasActiveContent;
+        }
+        return true;
+      }
       for (final filter in _activeCardFilters) {
         switch (filter) {
           case _DashboardCardFilter.ricette:
@@ -1960,14 +1972,22 @@ class _PatientDashboardSummary {
   }) {
     final normalizedFiscalCode = patient.fiscalCode.trim().toUpperCase();
     final normalizedFullName = patient.fullName.trim().toUpperCase();
-    final matchingImports = imports.where((item) {
+    final compactFullName = normalizedFullName.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final compactFullNameNoSpace = compactFullName.replaceAll(' ', '');
+    bool matchesImport(DrivePdfImport item) {
       final importFiscalCode = item.patientFiscalCode.trim().toUpperCase();
       final importFullName = item.patientFullName.trim().toUpperCase();
-      if (importFiscalCode.isNotEmpty) {
-        return importFiscalCode == normalizedFiscalCode;
+      final compactImportFullName = importFullName.replaceAll(RegExp(r'\s+'), ' ').trim();
+      final compactImportFullNameNoSpace = compactImportFullName.replaceAll(' ', '');
+      if (importFiscalCode.isNotEmpty && importFiscalCode == normalizedFiscalCode) {
+        return true;
       }
-      return normalizedFullName.isNotEmpty && importFullName == normalizedFullName;
-    }).toList();
+      if (compactFullName.isEmpty || compactImportFullName.isEmpty) {
+        return false;
+      }
+      return compactImportFullName == compactFullName || compactImportFullNameNoSpace == compactFullNameNoSpace;
+    }
+    final matchingImports = imports.where(matchesImport).toList();
     final matchingDoctor = doctorLinks.where((item) {
       return item.patientFiscalCode == patient.fiscalCode.trim().toUpperCase();
     }).toList();
