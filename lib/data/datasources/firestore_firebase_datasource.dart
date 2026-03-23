@@ -30,12 +30,28 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     String? orderBy,
     bool descending = false,
   }) async {
-    Query<Map<String, dynamic>> query = firestore.collection(collectionPath);
-    if (orderBy != null) {
-      query = query.orderBy(orderBy, descending: descending);
+    Future<List<Map<String, dynamic>>> runQuery({String? by}) async {
+      Query<Map<String, dynamic>> query = firestore.collection(collectionPath);
+      if (by != null) {
+        query = query.orderBy(by, descending: descending);
+      }
+      final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
+      return snapshot.docs.map((QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+        final data = <String, dynamic>{...doc.data()};
+        data.putIfAbsent('id', () => doc.id);
+        data.putIfAbsent('_documentId', () => doc.id);
+        return data;
+      }).toList();
     }
-    final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
-    return snapshot.docs.map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => doc.data()).toList();
+
+    if (orderBy == null) {
+      return runQuery();
+    }
+    try {
+      return await runQuery(by: orderBy);
+    } catch (_) {
+      return runQuery();
+    }
   }
 
 

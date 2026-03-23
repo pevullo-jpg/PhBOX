@@ -235,7 +235,12 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _openPdfList(_PatientDashboardSummary summary) async {
-    if (summary.imports.isEmpty) return;
+    if (summary.imports.isEmpty) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => PatientDetailPage(patient: summary.patient)),
+      );
+      return;
+    }
     if (summary.imports.length == 1) {
       await _openPdf(summary.imports.first);
       return;
@@ -1827,7 +1832,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final widgets = <Widget>[
       _QuickEditFlag(onTap: () => _handleFlagTap(item, 'quick-edit')),
     ];
-    if (item.recipeCount > 0 && item.imports.isNotEmpty) {
+    if (item.recipeCount > 0) {
       widgets.add(_FlagChip(label: 'ricette ${item.recipeCount}', color: AppColors.green, onTap: () => _handleFlagTap(item, 'ricette')));
     }
     if (item.dpcItems.isNotEmpty) {
@@ -1975,20 +1980,29 @@ class _PatientDashboardSummary {
       final importFiscalCode = item.patientFiscalCode.trim().toUpperCase();
       final importFullName = item.patientFullName.trim().toUpperCase();
       final importId = item.id.trim();
+      final importDriveFileId = item.driveFileId.trim();
       final importDocumentType = item.documentType.trim().toLowerCase();
       final isPrescriptionLike = importDocumentType.isEmpty || importDocumentType == 'prescription';
-      final matchesByImportId = patientLastImportId.isNotEmpty && importId.isNotEmpty && importId == patientLastImportId;
+      final matchesByImportId = patientLastImportId.isNotEmpty && (
+        (importId.isNotEmpty && importId == patientLastImportId) ||
+        (importDriveFileId.isNotEmpty && importDriveFileId == patientLastImportId)
+      );
       if (!isPrescriptionLike && !matchesByImportId) {
         return false;
       }
-      if (importFiscalCode.isNotEmpty) {
-        return importFiscalCode == normalizedFiscalCode;
+      if (importFiscalCode.isNotEmpty && importFiscalCode == normalizedFiscalCode) {
+        return true;
       }
       if (matchesByImportId) {
         return true;
       }
       return normalizedFullName.isNotEmpty && importFullName == normalizedFullName;
-    }).toList();
+    }).toList()
+      ..sort((a, b) {
+        final left = a.prescriptionDate ?? a.updatedAt;
+        final right = b.prescriptionDate ?? b.updatedAt;
+        return right.compareTo(left);
+      });
     final matchingDoctor = doctorLinks.where((item) {
       return item.patientFiscalCode == patient.fiscalCode.trim().toUpperCase();
     }).toList();

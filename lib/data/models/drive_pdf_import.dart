@@ -166,18 +166,21 @@ class DrivePdfImport {
   }
 
   static Map<String, dynamic> _flattenMap(Map<String, dynamic> source) {
-    final Map<String, dynamic> result = <String, dynamic>{...source};
-    for (final String key in const <String>['cc', 'classification', 'parsed', 'payload', 'data', 'extracted']) {
-      final dynamic nested = source[key];
-      if (nested is Map) {
-        nested.forEach((dynamic nestedKey, dynamic value) {
-          final String keyText = nestedKey.toString();
-          if (!result.containsKey(keyText) || _isEmptyValue(result[keyText])) {
-            result[keyText] = value;
-          }
-        });
-      }
+    final Map<String, dynamic> result = <String, dynamic>{};
+
+    void absorb(Map<dynamic, dynamic> map) {
+      map.forEach((dynamic rawKey, dynamic value) {
+        final String key = rawKey.toString();
+        if (!result.containsKey(key) || _isEmptyValue(result[key])) {
+          result[key] = value;
+        }
+        if (value is Map) {
+          absorb(value);
+        }
+      });
     }
+
+    absorb(source);
     return result;
   }
 
