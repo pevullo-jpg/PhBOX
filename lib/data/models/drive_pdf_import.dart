@@ -117,20 +117,64 @@ class DrivePdfImport {
       mimeType: (map['mimeType'] ?? 'application/pdf') as String,
       status: (map['status'] ?? 'pending') as String,
       errorMessage: (map['errorMessage'] ?? '') as String,
-      patientFiscalCode: (map['patientFiscalCode'] ?? '') as String,
-      patientFullName: (map['patientFullName'] ?? map['patientName'] ?? '') as String,
-      doctorFullName: (map['doctorFullName'] ?? map['doctorName'] ?? '') as String,
-      exemptionCode: (map['exemptionCode'] ?? map['exemption'] ?? '') as String,
-      city: (map['city'] ?? '') as String,
-      therapy: List<String>.from(map['therapy'] ?? const <String>[]),
-      isDpc: (map['isDpc'] ?? false) as bool,
-      prescriptionCount: _readInt(map['prescriptionCount'] ?? map['sourceCount']) ?? 1,
-      prescriptionDate: _readDate(map['prescriptionDate']),
-      webViewLink: (map['webViewLink'] ?? '') as String,
-      sourceType: (map['sourceType'] ?? map['source'] ?? 'script') as String,
+      patientFiscalCode: _readString(
+        map['patientFiscalCode'] ??
+            map['fiscalCode'] ??
+            map['patientCf'] ??
+            map['patientCF'] ??
+            map['cf'] ??
+            map['codiceFiscale'] ??
+            map['patient_fiscal_code'],
+      ),
+      patientFullName: _readString(map['patientFullName'] ?? map['patientName'] ?? map['fullName'] ?? map['name']),
+      doctorFullName: _readString(
+        map['doctorFullName'] ?? map['doctorName'] ?? map['doctor'] ?? map['medico'] ?? map['doctor_full_name'],
+      ),
+      exemptionCode: _readString(map['exemptionCode'] ?? map['exemption'] ?? map['esenzione']),
+      city: _readString(map['city'] ?? map['comune']),
+      therapy: _readStringList(map['therapy'] ?? map['therapies'] ?? map['items']),
+      isDpc: _readBool(map['isDpc'] ?? map['dpc'] ?? map['dpcFlag']),
+      prescriptionCount: _readInt(map['prescriptionCount'] ?? map['sourceCount'] ?? map['recipeCount'] ?? map['count']) ?? 1,
+      prescriptionDate: _readDate(map['prescriptionDate'] ?? map['date'] ?? map['recipeDate']),
+      webViewLink: _readString(
+        map['webViewLink'] ??
+            map['viewLink'] ??
+            map['driveViewLink'] ??
+            map['fileUrl'] ??
+            map['url'] ??
+            map['link'] ??
+            map['alternateLink'],
+      ),
+      sourceType: _readString(map['sourceType'] ?? map['source']).isEmpty ? 'script' : _readString(map['sourceType'] ?? map['source']),
       createdAt: _readDate(map['createdAt'] ?? map['importedAt']) ?? DateTime.now(),
       updatedAt: _readDate(map['updatedAt'] ?? map['manifestUpdatedAt']) ?? DateTime.now(),
     );
+  }
+
+
+  static String _readString(dynamic value) {
+    if (value == null) return '';
+    return value.toString().trim();
+  }
+
+  static List<String> _readStringList(dynamic value) {
+    if (value == null) return const <String>[];
+    if (value is List) {
+      return value.map((item) => item.toString().trim()).where((item) => item.isNotEmpty).toList();
+    }
+    final text = value.toString().trim();
+    if (text.isEmpty) return const <String>[];
+    return text
+        .split(RegExp(r'[,;|\n]'))
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
+
+  static bool _readBool(dynamic value) {
+    if (value is bool) return value;
+    final normalized = value?.toString().trim().toLowerCase() ?? '';
+    return normalized == 'true' || normalized == '1' || normalized == 'si' || normalized == 'sì' || normalized == 'yes';
   }
 
   static DateTime? _readDate(dynamic value) {
