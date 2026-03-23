@@ -74,9 +74,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     final imports = await _drivePdfImportsRepository.getImportsByPatient(widget.fiscalCode);
     final doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
     final settings = await _settingsRepository.getSettings();
+    final linkedDoctorName = _resolveLinkedDoctor(doctorLinks);
     final doctorName = _resolveDoctor(
       patient: patient,
-      doctorLinks: doctorLinks,
+      linkedDoctorName: linkedDoctorName,
       prescriptions: prescriptions,
       advances: advances,
     );
@@ -88,6 +89,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       prescriptions: prescriptions,
       imports: imports,
       settings: settings,
+      linkedDoctorName: linkedDoctorName,
       resolvedDoctorName: doctorName,
     );
   }
@@ -101,16 +103,23 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     });
   }
 
-  String _resolveDoctor({
-    required Patient? patient,
-    required List<DoctorPatientLink> doctorLinks,
-    required List<Prescription> prescriptions,
-    required List<Advance> advances,
-  }) {
+  String _resolveLinkedDoctor(List<DoctorPatientLink> doctorLinks) {
     for (final link in doctorLinks) {
       if (link.patientFiscalCode == widget.fiscalCode.trim().toUpperCase() && link.doctorName.trim().isNotEmpty) {
         return link.doctorName.trim();
       }
+    }
+    return '';
+  }
+
+  String _resolveDoctor({
+    required Patient? patient,
+    required String linkedDoctorName,
+    required List<Prescription> prescriptions,
+    required List<Advance> advances,
+  }) {
+    if (linkedDoctorName.trim().isNotEmpty) {
+      return linkedDoctorName.trim();
     }
     if (patient != null && (patient.doctorName ?? '').trim().isNotEmpty) {
       return patient.doctorName!.trim();
@@ -403,7 +412,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     if (patient == null) return;
     final drugController = TextEditingController();
     final noteController = TextEditingController();
-    String selectedDoctor = data.resolvedDoctorName != '-' ? data.resolvedDoctorName : _fallbackDoctorFromHistory(data);
+    String selectedDoctor = data.linkedDoctorName.trim();
     final doctorCandidates = <String>{
       ...data.settings.doctorsCatalog.map((item) => item.trim()).where((item) => item.isNotEmpty),
       if (selectedDoctor.trim().isNotEmpty && selectedDoctor.trim() != '-') selectedDoctor.trim(),
@@ -1019,6 +1028,7 @@ class _PatientDetailData {
   final List<Prescription> prescriptions;
   final List<DrivePdfImport> imports;
   final AppSettings settings;
+  final String linkedDoctorName;
   final String resolvedDoctorName;
 
   const _PatientDetailData({
@@ -1029,6 +1039,7 @@ class _PatientDetailData {
     required this.prescriptions,
     required this.imports,
     required this.settings,
+    required this.linkedDoctorName,
     required this.resolvedDoctorName,
   });
 

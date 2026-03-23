@@ -78,24 +78,45 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<_DashboardData> _load() async {
-    final persistedPatients = await _patientsRepository.getAllPatients();
+    final patients = await _patientsRepository.getAllPatients();
     final imports = await _drivePdfImportsRepository.getAllImports();
     final doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
     final families = await _familyGroupsRepository.getAllFamilies();
     final settings = await _settingsRepository.getSettings();
 
-    final patients = _mergePatientsWithImports(
-      persistedPatients: persistedPatients,
-      imports: imports,
-      doctorLinks: doctorLinks,
-    );
+    final Map<String, Patient> patientMap = {
+      for (final patient in patients) patient.fiscalCode.trim().toUpperCase(): patient,
+    };
+
+    for (final item in imports) {
+      final cf = item.patientFiscalCode.trim().toUpperCase();
+      final fullName = item.patientFullName.trim();
+      if (cf.isEmpty && fullName.isEmpty) continue;
+
+      final key = cf.isNotEmpty ? cf : 'NAME:${fullName.toUpperCase()}';
+      if (patientMap.containsKey(key)) continue;
+
+      final now = item.updatedAt.isAfter(item.createdAt) ? item.updatedAt : item.createdAt;
+      patientMap[key] = Patient(
+        fiscalCode: cf,
+        fullName: fullName.isEmpty ? cf : fullName,
+        city: item.city.trim().isEmpty ? null : item.city.trim(),
+        exemptionCode: item.exemptionCode.trim().isEmpty ? null : item.exemptionCode.trim(),
+        doctorName: item.doctorFullName.trim().isEmpty ? null : item.doctorFullName.trim(),
+        archivedRecipeCount: item.prescriptionCount > 0 ? item.prescriptionCount : 1,
+        hasDpc: item.isDpc,
+        createdAt: item.createdAt,
+        updatedAt: now,
+      );
+    }
 
     final summaries = await Future.wait(
-      patients.map((patient) async {
-        final prescriptions = await _prescriptionsRepository.getPatientPrescriptions(patient.fiscalCode);
-        final debts = await _debtsRepository.getPatientDebts(patient.fiscalCode);
-        final advances = await _advancesRepository.getPatientAdvances(patient.fiscalCode);
-        final bookings = await _bookingsRepository.getPatientBookings(patient.fiscalCode);
+      patientMap.values.map((patient) async {
+        final fiscalCode = patient.fiscalCode.trim();
+        final prescriptions = fiscalCode.isEmpty ? <Prescription>[] : await _prescriptionsRepository.getPatientPrescriptions(fiscalCode);
+        final debts = fiscalCode.isEmpty ? <Debt>[] : await _debtsRepository.getPatientDebts(fiscalCode);
+        final advances = fiscalCode.isEmpty ? <Advance>[] : await _advancesRepository.getPatientAdvances(fiscalCode);
+        final bookings = fiscalCode.isEmpty ? <Booking>[] : await _bookingsRepository.getPatientBookings(fiscalCode);
         return _PatientDashboardSummary.build(
           patient: patient,
           prescriptions: prescriptions,
@@ -127,84 +148,6 @@ class _DashboardPageState extends State<DashboardPage> {
     setState(() {
       _future = _load();
     });
-  }
-
-
-  List<Patient> _mergePatientsWithImports({
-    required List<Patient> persistedPatients,
-    required List<DrivePdfImport> imports,
-    required List<DoctorPatientLink> doctorLinks,
-  }) {
-    final Map<String, Patient> byKey = <String, Patient>{};
-
-    String keyForPatient(Patient patient) {
-      final cf = patient.fiscalCode.trim().toUpperCase();
-      if (cf.isNotEmpty) return 'CF:$cf';
-      final name = patient.fullName.trim().toUpperCase();
-      return 'NAME:$name';
-    }
-
-    String keyForImport(DrivePdfImport item) {
-      final cf = item.patientFiscalCode.trim().toUpperCase();
-      if (cf.isNotEmpty) return 'CF:$cf';
-      final name = item.patientFullName.trim().toUpperCase();
-      return 'NAME:$name';
-    }
-
-    Patient buildPatientFromImport(DrivePdfImport item) {
-      final DateTime timestamp = item.updatedAt.isAfter(item.createdAt) ? item.updatedAt : item.createdAt;
-      final String cf = item.patientFiscalCode.trim().toUpperCase();
-      final String name = item.patientFullName.trim();
-      final String importDoctor = item.doctorFullName.trim();
-      final String linkedDoctor = doctorLinks
-          .where((link) => link.patientFiscalCode.trim().toUpperCase() == cf)
-          .map((link) => link.doctorName.trim())
-          .firstWhere((value) => value.isNotEmpty, orElse: () => '');
-      return Patient(
-        fiscalCode: cf,
-        fullName: name.isEmpty ? cf : name,
-        city: item.city.trim().isEmpty ? null : item.city.trim(),
-        exemptionCode: item.exemptionCode.trim().isEmpty ? null : item.exemptionCode.trim(),
-        doctorName: linkedDoctor.isNotEmpty ? linkedDoctor : (importDoctor.isEmpty ? null : importDoctor),
-        therapiesSummary: item.therapy.where((value) => value.trim().isNotEmpty).map((value) => value.trim()).toList(),
-        lastPrescriptionDate: item.prescriptionDate ?? item.createdAt,
-        hasDpc: item.isDpc,
-        archivedRecipeCount: item.prescriptionCount > 0 ? item.prescriptionCount : 1,
-        createdAt: item.createdAt,
-        updatedAt: timestamp,
-      );
-    }
-
-    for (final patient in persistedPatients) {
-      final key = keyForPatient(patient);
-      if (key != 'NAME:') {
-        byKey[key] = patient;
-      }
-    }
-
-    for (final item in imports) {
-      final key = keyForImport(item);
-      if (key == 'NAME:') continue;
-      byKey.putIfAbsent(key, () => buildPatientFromImport(item));
-    }
-
-    return byKey.values.toList();
-  }
-
-  static String _chooseBestDoctorName(Iterable<String> candidates) {
-    final cleaned = candidates
-        .map((value) => value.trim())
-        .where((value) => value.isNotEmpty && value != '-')
-        .toList();
-    if (cleaned.isEmpty) return '';
-    cleaned.sort((a, b) {
-      final aHasSurname = a.contains(' ');
-      final bHasSurname = b.contains(' ');
-      if (aHasSurname != bHasSurname) return aHasSurname ? -1 : 1;
-      if (a.length != b.length) return b.length.compareTo(a.length);
-      return a.toLowerCase().compareTo(b.toLowerCase());
-    });
-    return cleaned.first;
   }
 
   List<_PatientDashboardSummary> _applyFilters(List<_PatientDashboardSummary> input, List<FamilyGroup> families) {
@@ -452,7 +395,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<bool> _addAdvanceFromDashboard(_PatientDashboardSummary summary) async {
     final drugController = TextEditingController();
     final noteController = TextEditingController();
-    String selectedDoctor = summary.associatedDoctorName.trim() == '-' ? '' : summary.associatedDoctorName.trim();
+    String selectedDoctor = summary.linkedDoctorName.trim();
     final data = await _future!;
     final candidateList = <String>{
       ...data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty),
@@ -672,7 +615,7 @@ class _DashboardPageState extends State<DashboardPage> {
           bool busy = false;
           bool showAddForm = false;
           String formError = '';
-          String selectedDoctor = summary.associatedDoctorName.trim() == '-' ? '' : summary.associatedDoctorName.trim();
+          String selectedDoctor = summary.linkedDoctorName.trim();
 
           Future<void> reload(StateSetter setLocalState) async {
             final refreshed = await _reloadSummary(summary.patient.fiscalCode);
@@ -703,7 +646,7 @@ class _DashboardPageState extends State<DashboardPage> {
             bookingQuantityController.text = '1';
             bookingNoteController.clear();
             formError = '';
-            selectedDoctor = currentSummary.associatedDoctorName.trim() == '-' ? '' : currentSummary.associatedDoctorName.trim();
+            selectedDoctor = currentSummary.doctorName.trim() == '-' ? '' : currentSummary.doctorName.trim();
           }
 
           Future<void> saveInlineForm(StateSetter setLocalState) async {
@@ -1243,7 +1186,7 @@ class _DashboardPageState extends State<DashboardPage> {
     void _applyPatientSuggestion(_PatientDashboardSummary summary, void Function(void Function()) setLocalState) {
       final normalizedCf = summary.patient.fiscalCode.trim().toUpperCase();
       final nameParts = _splitPatientName(summary.patient.fullName);
-      final doctorFromMemory = summary.associatedDoctorName.trim();
+      final doctorFromMemory = summary.doctorName.trim();
       setLocalState(() {
         fiscalCodeController.value = fiscalCodeController.value.copyWith(
           text: normalizedCf,
@@ -1768,6 +1711,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               SizedBox(width: 220, child: Text('CF', style: _headStyle)),
                               SizedBox(width: 240, child: Text('Medico', style: _headStyle)),
                               SizedBox(width: 120, child: Text('Esenzione', style: _headStyle)),
+                              SizedBox(width: 100, child: Text('Ricette', style: _headStyle)),
                               Expanded(child: Text('Flags', style: _headStyle)),
                               SizedBox(width: 52),
                             ],
@@ -1858,6 +1802,13 @@ class _DashboardPageState extends State<DashboardPage> {
                                           SizedBox(
                                             width: 120,
                                             child: Text(item.exemptionCode, style: const TextStyle(color: Colors.white70, fontSize: 18.2)),
+                                          ),
+                                          SizedBox(
+                                            width: 100,
+                                            child: Text(
+                                              item.recipeCount > 0 ? item.recipeCount.toString() : '-',
+                                              style: const TextStyle(color: Colors.white70, fontSize: 18.2, fontWeight: FontWeight.w700),
+                                            ),
                                           ),
                                           Expanded(
                                             child: Wrap(
@@ -1979,8 +1930,8 @@ class _DashboardData {
 
 class _PatientDashboardSummary {
   final Patient patient;
+  final String linkedDoctorName;
   final String doctorName;
-  final String associatedDoctorName;
   final String exemptionCode;
   final String city;
   final List<Prescription> prescriptions;
@@ -1995,8 +1946,8 @@ class _PatientDashboardSummary {
 
   const _PatientDashboardSummary({
     required this.patient,
+    required this.linkedDoctorName,
     required this.doctorName,
-    required this.associatedDoctorName,
     required this.exemptionCode,
     required this.city,
     required this.prescriptions,
@@ -2057,18 +2008,17 @@ class _PatientDashboardSummary {
     final matchingDoctor = doctorLinks.where((item) {
       return item.patientFiscalCode == patient.fiscalCode.trim().toUpperCase();
     }).toList();
-    final linkedDoctor = _DashboardPageState._chooseBestDoctorName(matchingDoctor.map((e) => e.doctorName));
-    final prescriptionDoctor = _DashboardPageState._chooseBestDoctorName(prescriptions.map((e) => e.doctorName?.trim() ?? ''));
-    final importDoctor = _DashboardPageState._chooseBestDoctorName(matchingImports.map((e) => e.doctorFullName.trim()));
-    final patientDoctor = _DashboardPageState._chooseBestDoctorName([(patient.doctorName ?? '').trim()]);
-    final doctorName = _DashboardPageState._chooseBestDoctorName([linkedDoctor, importDoctor, prescriptionDoctor, patientDoctor]);
-    final exemptionCode = (patient.exemptionCode ?? '').trim().isNotEmpty
-        ? patient.exemptionCode!.trim()
-        : (() {
-            final fromPrescription = prescriptions.map((e) => e.exemptionCode?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '');
-            if (fromPrescription.isNotEmpty) return fromPrescription;
-            return matchingImports.map((e) => e.exemptionCode.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '-');
-          })();
+    final linkedDoctorName = _chooseBestDoctorName(matchingDoctor.map((e) => e.doctorName));
+    final prescriptionDoctor = _chooseBestDoctorName(prescriptions.map((e) => e.doctorName?.trim() ?? ''));
+    final importDoctor = _chooseBestDoctorName(matchingImports.map((e) => e.doctorFullName.trim()));
+    final patientDoctor = _chooseBestDoctorName([(patient.doctorName ?? '').trim()]);
+    final doctorName = _chooseBestDoctorName([linkedDoctorName, patientDoctor, importDoctor, prescriptionDoctor]);
+    final patientExemption = (patient.exemptionCode ?? '').trim();
+    final prescriptionExemption = prescriptions.map((e) => e.exemptionCode?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '');
+    final importExemption = matchingImports.map((e) => e.exemptionCode.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '');
+    final exemptionCode = patientExemption.isNotEmpty
+        ? patientExemption
+        : (prescriptionExemption.isNotEmpty ? prescriptionExemption : (importExemption.isNotEmpty ? importExemption : '-'));
     final city = (patient.city ?? '').trim().isNotEmpty
         ? patient.city!.trim()
         : (() {
@@ -2097,8 +2047,8 @@ class _PatientDashboardSummary {
     })();
     return _PatientDashboardSummary(
       patient: patient,
+      linkedDoctorName: linkedDoctorName,
       doctorName: doctorName.isEmpty ? '-' : doctorName,
-      associatedDoctorName: linkedDoctor.isEmpty ? '-' : linkedDoctor,
       exemptionCode: exemptionCode.isEmpty ? '-' : exemptionCode,
       city: city.isEmpty ? '-' : city,
       prescriptions: prescriptions,
@@ -2135,6 +2085,23 @@ String _dashboardFormatDate(DateTime? date) {
   return '$day/$month/$year';
 }
 
+
+
+String _chooseBestDoctorName(Iterable<String> values) {
+  final cleaned = values
+      .map((value) => value.trim())
+      .where((value) => value.isNotEmpty && value != '-')
+      .toList();
+  if (cleaned.isEmpty) return '';
+
+  cleaned.sort((a, b) {
+    final aWords = a.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).length;
+    final bWords = b.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).length;
+    if (aWords != bWords) return bWords.compareTo(aWords);
+    return b.length.compareTo(a.length);
+  });
+  return cleaned.first;
+}
 
 
 class _DashboardFamilyState {
