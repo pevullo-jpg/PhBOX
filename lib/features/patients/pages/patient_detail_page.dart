@@ -74,7 +74,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     final imports = await _drivePdfImportsRepository.getImportsByPatient(widget.fiscalCode);
     final doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
     final settings = await _settingsRepository.getSettings();
-    final linkedDoctorName = _resolveLinkedDoctorName(doctorLinks);
     final doctorName = _resolveDoctor(
       patient: patient,
       doctorLinks: doctorLinks,
@@ -90,7 +89,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       imports: imports,
       settings: settings,
       resolvedDoctorName: doctorName,
-      linkedDoctorName: linkedDoctorName,
     );
   }
 
@@ -101,15 +99,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       }
       _future = _load();
     });
-  }
-
-  String _resolveLinkedDoctorName(List<DoctorPatientLink> doctorLinks) {
-    for (final link in doctorLinks) {
-      if (link.patientFiscalCode == widget.fiscalCode.trim().toUpperCase() && link.doctorName.trim().isNotEmpty) {
-        return link.doctorName.trim();
-      }
-    }
-    return '';
   }
 
   String _resolveDoctor({
@@ -409,31 +398,12 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     }
   }
 
-  String _resolveAdvanceDoctorSelection(_PatientDetailData data) {
-    final linkedDoctor = data.linkedDoctorName.trim();
-    if (linkedDoctor.isEmpty) return '';
-    final catalog = data.settings.doctorsCatalog.map((item) => item.trim()).where((item) => item.isNotEmpty).toList();
-    if (catalog.isEmpty) return linkedDoctor;
-    for (final item in catalog) {
-      if (item.toUpperCase() == linkedDoctor.toUpperCase()) return item;
-    }
-    final parts = linkedDoctor.toUpperCase().split(RegExp(r'\s+')).where((item) => item.isNotEmpty).toList();
-    if (parts.length == 1) {
-      final matches = catalog.where((item) {
-        final tokens = item.toUpperCase().split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
-        return tokens.contains(parts.first);
-      }).toList();
-      if (matches.length == 1) return matches.first;
-    }
-    return '';
-  }
-
   Future<void> _addAdvance(_PatientDetailData data) async {
     final patient = data.patient;
     if (patient == null) return;
     final drugController = TextEditingController();
     final noteController = TextEditingController();
-    String selectedDoctor = _resolveAdvanceDoctorSelection(data);
+    String selectedDoctor = data.resolvedDoctorName != '-' ? data.resolvedDoctorName : _fallbackDoctorFromHistory(data);
     final doctorCandidates = <String>{
       ...data.settings.doctorsCatalog.map((item) => item.trim()).where((item) => item.isNotEmpty),
       if (selectedDoctor.trim().isNotEmpty && selectedDoctor.trim() != '-') selectedDoctor.trim(),
@@ -1050,7 +1020,6 @@ class _PatientDetailData {
   final List<DrivePdfImport> imports;
   final AppSettings settings;
   final String resolvedDoctorName;
-  final String linkedDoctorName;
 
   const _PatientDetailData({
     required this.patient,

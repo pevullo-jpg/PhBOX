@@ -12,7 +12,6 @@ import '../../../data/models/booking.dart';
 import '../../../data/models/debt.dart';
 import '../../../data/models/doctor_patient_link.dart';
 import '../../../data/models/drive_pdf_import.dart';
-import '../../../data/models/family_group.dart';
 import '../../../data/models/patient.dart';
 import '../../../data/models/prescription.dart';
 import '../../../data/repositories/advances_repository.dart';
@@ -20,7 +19,6 @@ import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
 import '../../../data/repositories/doctor_patient_links_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
-import '../../../data/repositories/family_groups_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
@@ -44,7 +42,6 @@ class _DashboardPageState extends State<DashboardPage> {
   late final BookingsRepository _bookingsRepository;
   late final DrivePdfImportsRepository _drivePdfImportsRepository;
   late final DoctorPatientLinksRepository _doctorPatientLinksRepository;
-  late final FamilyGroupsRepository _familyGroupsRepository;
   late final SettingsRepository _settingsRepository;
 
   Future<_DashboardData>? _future;
@@ -65,7 +62,6 @@ class _DashboardPageState extends State<DashboardPage> {
     _bookingsRepository = BookingsRepository(datasource: datasource);
     _drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
     _doctorPatientLinksRepository = DoctorPatientLinksRepository(datasource: datasource);
-    _familyGroupsRepository = FamilyGroupsRepository(datasource: datasource);
     _settingsRepository = SettingsRepository(datasource: datasource);
     _future = _load();
     _searchController.addListener(() => setState(() {}));
@@ -81,7 +77,6 @@ class _DashboardPageState extends State<DashboardPage> {
     final patients = await _patientsRepository.getAllPatients();
     final imports = await _drivePdfImportsRepository.getAllImports();
     final doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
-    final families = await _familyGroupsRepository.getAllFamilies();
     final settings = await _settingsRepository.getSettings();
 
     final summaries = await Future.wait(
@@ -98,8 +93,6 @@ class _DashboardPageState extends State<DashboardPage> {
           advances: advances,
           bookings: bookings,
           doctorLinks: doctorLinks,
-          doctorsCatalog: settings.doctorsCatalog,
-          families: families,
         );
       }),
     );
@@ -111,11 +104,7 @@ class _DashboardPageState extends State<DashboardPage> {
       return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
     });
 
-    return _DashboardData(
-      summaries: summaries,
-      doctorsCatalog: settings.doctorsCatalog,
-      families: families,
-    );
+    return _DashboardData(summaries: summaries, doctorsCatalog: settings.doctorsCatalog);
   }
 
   void _refresh() {
@@ -124,10 +113,9 @@ class _DashboardPageState extends State<DashboardPage> {
     });
   }
 
-  List<_PatientDashboardSummary> _applyFilters(List<_PatientDashboardSummary> input, List<FamilyGroup> families) {
+  List<_PatientDashboardSummary> _applyFilters(List<_PatientDashboardSummary> input) {
     final query = _searchController.text.trim().toLowerCase();
-
-    bool matchesCardFilters(_PatientDashboardSummary item) {
+    return input.where((item) {
       if (!item.hasActiveContent) return false;
       for (final filter in _activeCardFilters) {
         switch (filter) {
@@ -153,46 +141,13 @@ class _DashboardPageState extends State<DashboardPage> {
             break;
         }
       }
-      return true;
-    }
-
-    bool matchesSearch(_PatientDashboardSummary item) {
       if (query.isEmpty) return true;
       return item.displayName.toLowerCase().contains(query) ||
           item.patient.fiscalCode.toLowerCase().contains(query) ||
           item.doctorName.toLowerCase().contains(query) ||
           item.exemptionCode.toLowerCase().contains(query) ||
           item.city.toLowerCase().contains(query);
-    }
-
-    final filtered = input.where(matchesCardFilters).toList();
-    if (query.isEmpty) return filtered;
-
-    final Map<String, _PatientDashboardSummary> byCf = {
-      for (final item in filtered) item.patient.fiscalCode.trim().toUpperCase(): item,
-    };
-
-    final Set<String> resultCfs = filtered.where(matchesSearch).map((item) => item.patient.fiscalCode.trim().toUpperCase()).toSet();
-
-    final Set<String> matchingFamilies = <String>{};
-    for (final family in families) {
-      final members = family.memberFiscalCodes.map((e) => e.trim().toUpperCase()).toSet();
-      final hasMemberMatch = members.any((cf) => resultCfs.contains(cf));
-      if (hasMemberMatch) {
-        matchingFamilies.add(family.id);
-        resultCfs.addAll(members.where(byCf.containsKey));
-      }
-    }
-
-    final result = filtered.where((item) => resultCfs.contains(item.patient.fiscalCode.trim().toUpperCase())).toList();
-    result.sort((a, b) {
-      final aInFamily = matchingFamilies.contains(a.familyId);
-      final bInFamily = matchingFamilies.contains(b.familyId);
-      if (aInFamily != bInFamily) return aInFamily ? -1 : 1;
-      if (a.hasExpiryAlert != b.hasExpiryAlert) return a.hasExpiryAlert ? -1 : 1;
-      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
-    });
-    return result;
+    }).toList();
   }
 
 
@@ -367,13 +322,10 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<bool> _addAdvanceFromDashboard(_PatientDashboardSummary summary) async {
-    final data = await _future!;
     final drugController = TextEditingController();
     final noteController = TextEditingController();
-    String selectedDoctor = _resolveLinkedDoctorForAdvance(
-      linkedDoctor: summary.linkedDoctorName,
-      doctorsCatalog: data.doctorsCatalog,
-    );
+    String selectedDoctor = summary.doctorName.trim() == '-' ? '' : summary.doctorName.trim();
+    final data = await _future!;
     final candidateList = <String>{
       ...data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty),
       if (selectedDoctor.isNotEmpty) selectedDoctor,
@@ -592,10 +544,7 @@ class _DashboardPageState extends State<DashboardPage> {
           bool busy = false;
           bool showAddForm = false;
           String formError = '';
-          String selectedDoctor = _resolveLinkedDoctorForAdvance(
-      linkedDoctor: summary.linkedDoctorName,
-      doctorsCatalog: data.doctorsCatalog,
-    );
+          String selectedDoctor = summary.doctorName.trim() == '-' ? '' : summary.doctorName.trim();
 
           Future<void> reload(StateSetter setLocalState) async {
             final refreshed = await _reloadSummary(summary.patient.fiscalCode);
@@ -626,10 +575,7 @@ class _DashboardPageState extends State<DashboardPage> {
             bookingQuantityController.text = '1';
             bookingNoteController.clear();
             formError = '';
-            selectedDoctor = _resolveLinkedDoctorForAdvance(
-              linkedDoctor: currentSummary.linkedDoctorName,
-              doctorsCatalog: data.doctorsCatalog,
-            );
+            selectedDoctor = currentSummary.doctorName.trim() == '-' ? '' : currentSummary.doctorName.trim();
           }
 
           Future<void> saveInlineForm(StateSetter setLocalState) async {
@@ -1070,47 +1016,6 @@ class _DashboardPageState extends State<DashboardPage> {
       );
       return;
     }
-    if (key == 'quick-edit') {
-      final selectedKey = await showDialog<String>(
-        context: context,
-        builder: (context) {
-          Widget option({required IconData icon, required String label, required String value}) {
-            return ListTile(
-              leading: CircleAvatar(
-                radius: 18,
-                backgroundColor: Colors.white12,
-                child: Icon(icon, color: Colors.white, size: 18),
-              ),
-              title: Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-              onTap: () => Navigator.of(context).pop(value),
-            );
-          }
-
-          return AlertDialog(
-            backgroundColor: AppColors.panel,
-            title: Text('Apri gestione · ${summary.displayName}', style: const TextStyle(color: Colors.white)),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                option(icon: Icons.account_balance_wallet_outlined, label: 'Debiti', value: 'debiti'),
-                option(icon: Icons.payments_outlined, label: 'Anticipi', value: 'anticipi'),
-                option(icon: Icons.event_note_outlined, label: 'Prenotazioni', value: 'prenotazioni'),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Chiudi', style: TextStyle(color: Colors.white70)),
-              ),
-            ],
-          );
-        },
-      );
-      if (selectedKey != null && mounted) {
-        await _openEditableFlagModal(summary: summary, key: selectedKey);
-      }
-      return;
-    }
     if (key == 'debiti' || key == 'anticipi' || key == 'prenotazioni') {
       await _openEditableFlagModal(summary: summary, key: key);
       return;
@@ -1169,10 +1074,7 @@ class _DashboardPageState extends State<DashboardPage> {
     void _applyPatientSuggestion(_PatientDashboardSummary summary, void Function(void Function()) setLocalState) {
       final normalizedCf = summary.patient.fiscalCode.trim().toUpperCase();
       final nameParts = _splitPatientName(summary.patient.fullName);
-      final doctorFromMemory = _resolveLinkedDoctorForAdvance(
-        linkedDoctor: summary.linkedDoctorName,
-        doctorsCatalog: doctorCandidates,
-      );
+      final doctorFromMemory = summary.doctorName.trim();
       setLocalState(() {
         fiscalCodeController.value = fiscalCodeController.value.copyWith(
           text: normalizedCf,
@@ -1185,7 +1087,7 @@ class _DashboardPageState extends State<DashboardPage> {
         if (nameParts.last.isNotEmpty) {
           surnameController.text = nameParts.last;
         }
-        if (doctorFromMemory.isNotEmpty) {
+        if (doctorFromMemory.isNotEmpty && doctorFromMemory != '-' && doctorCandidates.contains(doctorFromMemory)) {
           selectedDoctor = doctorFromMemory;
         }
       });
@@ -1553,11 +1455,8 @@ class _DashboardPageState extends State<DashboardPage> {
       future: _future,
       builder: (context, snapshot) {
         final data = snapshot.data;
-        final summaries = data == null ? const <_PatientDashboardSummary>[] : _applyFilters(data.summaries, data.families);
+        final summaries = data == null ? const <_PatientDashboardSummary>[] : _applyFilters(data.summaries);
         final expiring = summaries.where((item) => item.hasExpiryAlert).toList();
-        final familyState = data == null
-            ? _DashboardFamilyState.empty()
-            : _DashboardFamilyState.fromFamilies(data.summaries, data.families);
         return Scaffold(
           backgroundColor: AppColors.background,
           body: Padding(
@@ -1735,29 +1634,10 @@ class _DashboardPageState extends State<DashboardPage> {
                                             child: TextButton(
                                               style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
                                               onPressed: () => _openPatient(item),
-                                              child: Row(
-                                                children: [
-                                                  if (item.familyId.isNotEmpty && familyState.hasMultipleActive(item.familyId)) ...[
-                                                    Container(
-                                                      width: 14,
-                                                      height: 14,
-                                                      decoration: BoxDecoration(
-                                                        color: familyState.colorFor(item.familyId),
-                                                        borderRadius: BorderRadius.circular(4),
-                                                      ),
-                                                    ),
-                                                    const SizedBox(width: 8),
-                                                  ],
-                                                  Expanded(
-                                                    child: Text(
-                                                      item.displayName,
-                                                      textAlign: TextAlign.left,
-                                                      maxLines: 1,
-                                                      overflow: TextOverflow.ellipsis,
-                                                      style: const TextStyle(color: Colors.white, fontSize: 18.2, fontWeight: FontWeight.w800),
-                                                    ),
-                                                  ),
-                                                ],
+                                              child: Text(
+                                                item.displayName,
+                                                textAlign: TextAlign.left,
+                                                style: const TextStyle(color: Colors.white, fontSize: 18.2, fontWeight: FontWeight.w800),
                                               ),
                                             ),
                                           ),
@@ -1827,10 +1707,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
 
   List<Widget> _buildFlagChips(_PatientDashboardSummary item) {
-    final widgets = <Widget>[
-      _QuickEditFlag(onTap: () => _handleFlagTap(item, 'quick-edit')),
-    ];
-    if (item.recipeCount > 0) {
+    final widgets = <Widget>[];
+    if (item.recipeCount > 0 && item.imports.isNotEmpty) {
       widgets.add(_FlagChip(label: 'ricette ${item.recipeCount}', color: AppColors.green, onTap: () => _handleFlagTap(item, 'ricette')));
     }
     if (item.dpcItems.isNotEmpty) {
@@ -1897,19 +1775,13 @@ class _DashboardPageState extends State<DashboardPage> {
 class _DashboardData {
   final List<_PatientDashboardSummary> summaries;
   final List<String> doctorsCatalog;
-  final List<FamilyGroup> families;
 
-  const _DashboardData({
-    required this.summaries,
-    required this.doctorsCatalog,
-    required this.families,
-  });
+  const _DashboardData({required this.summaries, required this.doctorsCatalog});
 }
 
 class _PatientDashboardSummary {
   final Patient patient;
   final String doctorName;
-  final String linkedDoctorName;
   final String exemptionCode;
   final String city;
   final List<Prescription> prescriptions;
@@ -1920,12 +1792,10 @@ class _PatientDashboardSummary {
   final bool hasDpc;
   final int recipeCount;
   final bool hasExpiryAlert;
-  final String familyId;
 
   const _PatientDashboardSummary({
     required this.patient,
     required this.doctorName,
-    required this.linkedDoctorName,
     required this.exemptionCode,
     required this.city,
     required this.prescriptions,
@@ -1936,7 +1806,6 @@ class _PatientDashboardSummary {
     required this.hasDpc,
     required this.recipeCount,
     required this.hasExpiryAlert,
-    required this.familyId,
   });
 
   String get displayName => patient.fullName.trim().isEmpty ? patient.fiscalCode : patient.fullName.trim();
@@ -1971,8 +1840,6 @@ class _PatientDashboardSummary {
     required List<Advance> advances,
     required List<Booking> bookings,
     required List<DoctorPatientLink> doctorLinks,
-    required List<String> doctorsCatalog,
-    required List<FamilyGroup> families,
   }) {
     final normalizedFiscalCode = patient.fiscalCode.trim().toUpperCase();
     final normalizedFullName = patient.fullName.trim().toUpperCase();
@@ -1989,14 +1856,11 @@ class _PatientDashboardSummary {
     }).toList();
     final prescriptionDoctor = prescriptions.map((e) => e.doctorName?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '');
     final importDoctor = matchingImports.map((e) => e.doctorFullName.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '');
-    final patientDoctor = (patient.doctorName ?? '').trim();
-    final doctorName = _resolveDoctorName(
-      linkedDoctor: matchingDoctor.isNotEmpty ? matchingDoctor.first.doctorName.trim() : '',
-      patientDoctor: patientDoctor,
-      prescriptionDoctor: prescriptionDoctor,
-      importDoctor: importDoctor,
-      doctorsCatalog: doctorsCatalog,
-    );
+    final doctorName = matchingDoctor.isNotEmpty
+        ? matchingDoctor.first.doctorName.trim()
+        : ((patient.doctorName ?? '').trim().isNotEmpty
+            ? patient.doctorName!.trim()
+            : (prescriptionDoctor.isNotEmpty ? prescriptionDoctor : importDoctor));
     final exemptionCode = (patient.exemptionCode ?? '').trim().isNotEmpty
         ? patient.exemptionCode!.trim()
         : (() {
@@ -2022,18 +1886,9 @@ class _PatientDashboardSummary {
       final info = PrescriptionExpiryUtils.evaluate(item.expiryDate);
       return info.status == PrescriptionValidityStatus.expiringSoon || info.status == PrescriptionValidityStatus.expired;
     });
-    final familyId = (() {
-      for (final family in families) {
-        if (family.memberFiscalCodes.map((e) => e.trim().toUpperCase()).contains(normalizedFiscalCode)) {
-          return family.id;
-        }
-      }
-      return '';
-    })();
     return _PatientDashboardSummary(
       patient: patient,
       doctorName: doctorName.isEmpty ? '-' : doctorName,
-      linkedDoctorName: matchingDoctor.isNotEmpty ? matchingDoctor.first.doctorName.trim() : '',
       exemptionCode: exemptionCode.isEmpty ? '-' : exemptionCode,
       city: city.isEmpty ? '-' : city,
       prescriptions: prescriptions,
@@ -2044,100 +1899,8 @@ class _PatientDashboardSummary {
       hasDpc: hasDpc,
       recipeCount: recipeCount,
       hasExpiryAlert: hasExpiryAlert,
-      familyId: familyId,
     );
   }
-}
-
-
-String _resolveDoctorName({
-  required String linkedDoctor,
-  required String patientDoctor,
-  required String prescriptionDoctor,
-  required String importDoctor,
-  required List<String> doctorsCatalog,
-}) {
-  String clean(String value) => value.trim();
-
-  final List<String> catalog = doctorsCatalog.map(clean).where((item) => item.isNotEmpty).toList();
-
-  String expandFromCatalog(String raw) {
-    final candidate = clean(raw);
-    if (candidate.isEmpty) return '';
-    final exact = catalog.where((item) => item.toUpperCase() == candidate.toUpperCase()).toList();
-    if (exact.isNotEmpty) return exact.first;
-    final parts = candidate.split(RegExp(r'\s+')).where((item) => item.isNotEmpty).toList();
-    if (parts.length == 1) {
-      final token = parts.first.toUpperCase();
-      final matches = catalog.where((item) {
-        final catalogParts = item.toUpperCase().split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
-        return catalogParts.contains(token);
-      }).toList();
-      if (matches.length == 1) return matches.first;
-    }
-    return candidate;
-  }
-
-  bool looksValidDoctor(String value) {
-    final candidate = clean(value);
-    if (candidate.isEmpty) return false;
-    if (catalog.isEmpty) return true;
-    final expanded = expandFromCatalog(candidate);
-    return catalog.any((item) => item.toUpperCase() == expanded.toUpperCase());
-  }
-
-  int score(String value) {
-    final candidate = clean(value);
-    if (candidate.isEmpty) return -1;
-    final expanded = expandFromCatalog(candidate);
-    final wordCount = expanded.split(RegExp(r'\s+')).where((item) => item.isNotEmpty).length;
-    var score = expanded.length + (wordCount >= 2 ? 100 : 0);
-    if (catalog.any((item) => item.toUpperCase() == expanded.toUpperCase())) {
-      score += 1000;
-    }
-    return score;
-  }
-
-  final expandedLinkedDoctor = expandFromCatalog(linkedDoctor);
-  if (looksValidDoctor(expandedLinkedDoctor)) {
-    return expandedLinkedDoctor;
-  }
-
-  final fallbackCandidates = <String>[
-    patientDoctor,
-    prescriptionDoctor,
-    importDoctor,
-  ].map(expandFromCatalog).where((item) => looksValidDoctor(item)).toList();
-
-  if (fallbackCandidates.isNotEmpty) {
-    fallbackCandidates.sort((a, b) => score(b).compareTo(score(a)));
-    return fallbackCandidates.first;
-  }
-
-  final rawFallbacks = <String>[patientDoctor, prescriptionDoctor, importDoctor]
-      .map(clean)
-      .where((item) => item.isNotEmpty)
-      .toList();
-  if (rawFallbacks.isEmpty) return '';
-  rawFallbacks.sort((a, b) => score(b).compareTo(score(a)));
-  return rawFallbacks.first;
-}
-
-String _resolveLinkedDoctorForAdvance({
-  required String linkedDoctor,
-  required List<String> doctorsCatalog,
-}) {
-  final resolved = _resolveDoctorName(
-    linkedDoctor: linkedDoctor,
-    patientDoctor: '',
-    prescriptionDoctor: '',
-    importDoctor: '',
-    doctorsCatalog: doctorsCatalog,
-  ).trim();
-  if (resolved.isEmpty) return '';
-  final catalog = doctorsCatalog.map((item) => item.trim()).where((item) => item.isNotEmpty).toList();
-  if (catalog.isEmpty) return resolved;
-  return catalog.any((item) => item.toUpperCase() == resolved.toUpperCase()) ? resolved : '';
 }
 
 class _FlagItem {
@@ -2161,41 +1924,6 @@ String _dashboardFormatDate(DateTime? date) {
   return '$day/$month/$year';
 }
 
-
-
-class _DashboardFamilyState {
-  final Map<String, int> activeCounts;
-  final Map<String, Color> colors;
-
-  const _DashboardFamilyState({required this.activeCounts, required this.colors});
-
-  factory _DashboardFamilyState.empty() => const _DashboardFamilyState(activeCounts: <String, int>{}, colors: <String, Color>{});
-
-  factory _DashboardFamilyState.fromFamilies(List<_PatientDashboardSummary> summaries, List<FamilyGroup> families) {
-    const palette = <Color>[
-      Color(0xFF2563EB),
-      Color(0xFF059669),
-      Color(0xFFD97706),
-      Color(0xFFDC2626),
-      Color(0xFF7C3AED),
-      Color(0xFF0891B2),
-      Color(0xFF65A30D),
-      Color(0xFFEA580C),
-    ];
-    final counts = <String, int>{};
-    final colors = <String, Color>{};
-    for (final family in families) {
-      final activeCount = summaries.where((item) => item.familyId == family.id && item.hasActiveContent).length;
-      counts[family.id] = activeCount;
-      colors[family.id] = palette[family.colorIndex % palette.length];
-    }
-    return _DashboardFamilyState(activeCounts: counts, colors: colors);
-  }
-
-  bool hasMultipleActive(String familyId) => (activeCounts[familyId] ?? 0) > 1;
-
-  Color colorFor(String familyId) => colors[familyId] ?? AppColors.yellow;
-}
 
 class _SummaryCard extends StatelessWidget {
   final String title;
@@ -2316,32 +2044,6 @@ class _FlagChip extends StatelessWidget {
         child: Text(
           label,
           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5),
-        ),
-      ),
-    );
-  }
-}
-
-class _QuickEditFlag extends StatelessWidget {
-  final VoidCallback onTap;
-
-  const _QuickEditFlag({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: 'Apri gestione',
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: Container(
-          width: 36,
-          height: 36,
-          decoration: const BoxDecoration(
-            color: Color(0xFF7A7A7A),
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(Icons.add, color: Colors.white, size: 20),
         ),
       ),
     );
