@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'features/dashboard/pages/dashboard_page.dart';
+import 'features/families/pages/families_page.dart';
 import 'features/settings/pages/settings_page.dart';
 import 'shared/navigation/app_navigation.dart';
 import 'shared/widgets/floating_page_menu.dart';
@@ -24,6 +25,7 @@ class _FarmaciaAppState extends State<FarmaciaApp> {
   Widget build(BuildContext context) {
     final pages = <Widget>[
       const DashboardPage(),
+      const FamiliesPage(),
       const SettingsPage(),
     ];
 
