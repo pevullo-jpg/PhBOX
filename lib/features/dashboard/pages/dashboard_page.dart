@@ -2057,11 +2057,11 @@ class _PatientDashboardSummary {
     final matchingDoctor = doctorLinks.where((item) {
       return item.patientFiscalCode == patient.fiscalCode.trim().toUpperCase();
     }).toList();
-    final linkedDoctor = _chooseBestDoctorName(matchingDoctor.map((e) => e.doctorName));
-    final prescriptionDoctor = _chooseBestDoctorName(prescriptions.map((e) => e.doctorName?.trim() ?? ''));
-    final importDoctor = _chooseBestDoctorName(matchingImports.map((e) => e.doctorFullName.trim()));
-    final patientDoctor = _chooseBestDoctorName([(patient.doctorName ?? '').trim()]);
-    final doctorName = _chooseBestDoctorName([linkedDoctor, importDoctor, prescriptionDoctor, patientDoctor]);
+    final linkedDoctor = _DashboardPageState._chooseBestDoctorName(matchingDoctor.map((e) => e.doctorName));
+    final prescriptionDoctor = _DashboardPageState._chooseBestDoctorName(prescriptions.map((e) => e.doctorName?.trim() ?? ''));
+    final importDoctor = _DashboardPageState._chooseBestDoctorName(matchingImports.map((e) => e.doctorFullName.trim()));
+    final patientDoctor = _DashboardPageState._chooseBestDoctorName([(patient.doctorName ?? '').trim()]);
+    final doctorName = _DashboardPageState._chooseBestDoctorName([linkedDoctor, importDoctor, prescriptionDoctor, patientDoctor]);
     final exemptionCode = (patient.exemptionCode ?? '').trim().isNotEmpty
         ? patient.exemptionCode!.trim()
         : (() {
