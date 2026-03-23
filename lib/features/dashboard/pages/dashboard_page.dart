@@ -1827,8 +1827,8 @@ class _DashboardPageState extends State<DashboardPage> {
     final widgets = <Widget>[
       _QuickEditFlag(onTap: () => _handleFlagTap(item, 'quick-edit')),
     ];
-    if (item.recipeCount > 0 && item.imports.isNotEmpty) {
-      widgets.add(_FlagChip(label: 'ricette ${item.recipeCount}', color: AppColors.green, onTap: () => _handleFlagTap(item, 'ricette')));
+    if (item.importedRecipeCount > 0) {
+      widgets.add(_FlagChip(label: 'ricette ${item.importedRecipeCount}', color: AppColors.green, onTap: () => _handleFlagTap(item, 'ricette')));
     }
     if (item.dpcItems.isNotEmpty) {
       widgets.add(_FlagChip(label: 'DPC ${item.dpcItems.length}', color: AppColors.coral, onTap: () => _handleFlagTap(item, 'dpc')));
@@ -1937,6 +1937,8 @@ class _PatientDashboardSummary {
   String get displayName => patient.fullName.trim().isEmpty ? patient.fiscalCode : patient.fullName.trim();
 
   double get totalDebt => debts.fold<double>(0, (sum, item) => sum + item.residualAmount);
+
+  int get importedRecipeCount => imports.fold<int>(0, (sum, item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
 
   String get doctorNameUpper => doctorName.trim().isEmpty ? '-' : doctorName.trim().toUpperCase();
 
