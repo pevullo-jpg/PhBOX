@@ -11,6 +11,7 @@ import '../../../data/models/advance.dart';
 import '../../../data/models/booking.dart';
 import '../../../data/models/debt.dart';
 import '../../../data/models/doctor_patient_link.dart';
+import '../../../data/models/family_group.dart';
 import '../../../data/models/drive_pdf_import.dart';
 import '../../../data/models/patient.dart';
 import '../../../data/models/prescription.dart';
@@ -18,6 +19,7 @@ import '../../../data/repositories/advances_repository.dart';
 import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
 import '../../../data/repositories/doctor_patient_links_repository.dart';
+import '../../../data/repositories/families_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
@@ -43,10 +45,12 @@ class _DashboardPageState extends State<DashboardPage> {
   late final DrivePdfImportsRepository _drivePdfImportsRepository;
   late final DoctorPatientLinksRepository _doctorPatientLinksRepository;
   late final SettingsRepository _settingsRepository;
+  late final FamiliesRepository _familiesRepository;
 
   Future<_DashboardData>? _future;
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
+  _DashboardData? _latestLoadedData;
 
   @override
   void initState() {
@@ -63,6 +67,7 @@ class _DashboardPageState extends State<DashboardPage> {
     _drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
     _doctorPatientLinksRepository = DoctorPatientLinksRepository(datasource: datasource);
     _settingsRepository = SettingsRepository(datasource: datasource);
+    _familiesRepository = FamiliesRepository(datasource: datasource);
     _future = _load();
     _searchController.addListener(() => setState(() {}));
   }
@@ -78,6 +83,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final imports = await _drivePdfImportsRepository.getAllImports();
     final doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
     final settings = await _settingsRepository.getSettings();
+    final families = await _familiesRepository.getAllFamilies();
 
     final summaries = await Future.wait(
       patients.map((patient) async {
@@ -104,7 +110,11 @@ class _DashboardPageState extends State<DashboardPage> {
       return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
     });
 
-    return _DashboardData(summaries: summaries, doctorsCatalog: settings.doctorsCatalog);
+    return _DashboardData(
+      summaries: summaries,
+      doctorsCatalog: settings.doctorsCatalog,
+      familyMembersByCf: _buildFamilyMembersMap(families),
+    );
   }
 
   void _refresh() {
@@ -115,40 +125,99 @@ class _DashboardPageState extends State<DashboardPage> {
 
   List<_PatientDashboardSummary> _applyFilters(List<_PatientDashboardSummary> input) {
     final query = _searchController.text.trim().toLowerCase();
-    return input.where((item) {
-      if (!item.hasActiveContent) return false;
-      for (final filter in _activeCardFilters) {
-        switch (filter) {
-          case _DashboardCardFilter.ricette:
-            if (item.recipeCount == 0) return false;
-            break;
-          case _DashboardCardFilter.dpc:
-            if (!item.hasDpc) return false;
-            break;
-          case _DashboardCardFilter.debiti:
-            if (item.debts.isEmpty) return false;
-            break;
-          case _DashboardCardFilter.anticipi:
-            if (item.advances.isEmpty) return false;
-            break;
-          case _DashboardCardFilter.prenotazioni:
-            if (item.bookings.isEmpty) return false;
-            break;
-          case _DashboardCardFilter.scadenze:
-            if (!item.hasExpiryAlert) return false;
-            break;
-          case _DashboardCardFilter.assistiti:
-            break;
-        }
-      }
+    final data = _latestLoadedData;
+    final Map<String, _PatientDashboardSummary> summaryByCf = {
+      for (final item in input) item.patient.fiscalCode.trim().toUpperCase(): item,
+    };
+
+    bool matchesSearch(_PatientDashboardSummary item) {
       if (query.isEmpty) return true;
       return item.displayName.toLowerCase().contains(query) ||
           item.patient.fiscalCode.toLowerCase().contains(query) ||
           item.doctorName.toLowerCase().contains(query) ||
           item.exemptionCode.toLowerCase().contains(query) ||
           item.city.toLowerCase().contains(query);
+    }
+
+    final base = input.where((item) {
+      if (!item.hasActiveContent) return false;
+      if (!_matchesActiveCardFilters(item)) return false;
+      return matchesSearch(item);
     }).toList();
+
+    if (data == null || data.familyMembersByCf.isEmpty || base.isEmpty) {
+      return base;
+    }
+
+    final seen = <String>{
+      for (final item in base) item.patient.fiscalCode.trim().toUpperCase(),
+    };
+    final expanded = List<_PatientDashboardSummary>.from(base);
+
+    for (final item in base) {
+      final cf = item.patient.fiscalCode.trim().toUpperCase();
+      final related = data.familyMembersByCf[cf] ?? const <String>{};
+      for (final relatedCf in related) {
+        if (seen.contains(relatedCf)) continue;
+        final relatedSummary = summaryByCf[relatedCf];
+        if (relatedSummary == null) continue;
+        if (!relatedSummary.hasActiveContent) continue;
+        if (!_matchesActiveCardFilters(relatedSummary)) continue;
+        seen.add(relatedCf);
+        expanded.add(relatedSummary);
+      }
+    }
+
+    expanded.sort((a, b) {
+      if (a.hasExpiryAlert != b.hasExpiryAlert) {
+        return a.hasExpiryAlert ? -1 : 1;
+      }
+      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+    });
+    return expanded;
   }
+
+  bool _matchesActiveCardFilters(_PatientDashboardSummary item) {
+    for (final filter in _activeCardFilters) {
+      switch (filter) {
+        case _DashboardCardFilter.ricette:
+          if (item.recipeCount == 0) return false;
+          break;
+        case _DashboardCardFilter.dpc:
+          if (!item.hasDpc) return false;
+          break;
+        case _DashboardCardFilter.debiti:
+          if (item.debts.isEmpty) return false;
+          break;
+        case _DashboardCardFilter.anticipi:
+          if (item.advances.isEmpty) return false;
+          break;
+        case _DashboardCardFilter.prenotazioni:
+          if (item.bookings.isEmpty) return false;
+          break;
+        case _DashboardCardFilter.scadenze:
+          if (!item.hasExpiryAlert) return false;
+          break;
+        case _DashboardCardFilter.assistiti:
+          break;
+      }
+    }
+    return true;
+  }
+
+  Map<String, Set<String>> _buildFamilyMembersMap(List<FamilyGroup> families) {
+    final result = <String, Set<String>>{};
+    for (final family in families) {
+      final members = family.members.map((item) => item.trim().toUpperCase()).where((item) => item.isNotEmpty).toSet();
+      if (members.length < 2) continue;
+      for (final member in members) {
+        final others = Set<String>.from(members)..remove(member);
+        result.putIfAbsent(member, () => <String>{}).addAll(others);
+      }
+    }
+    return result;
+  }
+
 
 
   void _toggleCardFilter(_DashboardCardFilter filter) {
@@ -1016,6 +1085,47 @@ class _DashboardPageState extends State<DashboardPage> {
       );
       return;
     }
+    if (key == 'quick-edit') {
+      final selectedKey = await showDialog<String>(
+        context: context,
+        builder: (context) {
+          Widget option({required IconData icon, required String label, required String value}) {
+            return ListTile(
+              leading: CircleAvatar(
+                radius: 18,
+                backgroundColor: Colors.white12,
+                child: Icon(icon, color: Colors.white, size: 18),
+              ),
+              title: Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+              onTap: () => Navigator.of(context).pop(value),
+            );
+          }
+
+          return AlertDialog(
+            backgroundColor: AppColors.panel,
+            title: Text('Apri gestione · ${summary.displayName}', style: const TextStyle(color: Colors.white)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                option(icon: Icons.account_balance_wallet_outlined, label: 'Debiti', value: 'debiti'),
+                option(icon: Icons.payments_outlined, label: 'Anticipi', value: 'anticipi'),
+                option(icon: Icons.event_note_outlined, label: 'Prenotazioni', value: 'prenotazioni'),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Chiudi', style: TextStyle(color: Colors.white70)),
+              ),
+            ],
+          );
+        },
+      );
+      if (selectedKey != null && mounted) {
+        await _openEditableFlagModal(summary: summary, key: selectedKey);
+      }
+      return;
+    }
     if (key == 'debiti' || key == 'anticipi' || key == 'prenotazioni') {
       await _openEditableFlagModal(summary: summary, key: key);
       return;
@@ -1455,6 +1565,7 @@ class _DashboardPageState extends State<DashboardPage> {
       future: _future,
       builder: (context, snapshot) {
         final data = snapshot.data;
+        _latestLoadedData = data;
         final summaries = data == null ? const <_PatientDashboardSummary>[] : _applyFilters(data.summaries);
         final expiring = summaries.where((item) => item.hasExpiryAlert).toList();
         return Scaffold(
@@ -1707,7 +1818,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
 
   List<Widget> _buildFlagChips(_PatientDashboardSummary item) {
-    final widgets = <Widget>[];
+    final widgets = <Widget>[
+      _QuickEditFlag(onTap: () => _handleFlagTap(item, 'quick-edit')),
+    ];
     if (item.recipeCount > 0 && item.imports.isNotEmpty) {
       widgets.add(_FlagChip(label: 'ricette ${item.recipeCount}', color: AppColors.green, onTap: () => _handleFlagTap(item, 'ricette')));
     }
@@ -1775,8 +1888,13 @@ class _DashboardPageState extends State<DashboardPage> {
 class _DashboardData {
   final List<_PatientDashboardSummary> summaries;
   final List<String> doctorsCatalog;
+  final Map<String, Set<String>> familyMembersByCf;
 
-  const _DashboardData({required this.summaries, required this.doctorsCatalog});
+  const _DashboardData({
+    required this.summaries,
+    required this.doctorsCatalog,
+    required this.familyMembersByCf,
+  });
 }
 
 class _PatientDashboardSummary {
@@ -2044,6 +2162,32 @@ class _FlagChip extends StatelessWidget {
         child: Text(
           label,
           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5),
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickEditFlag extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _QuickEditFlag({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Apri gestione',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: const BoxDecoration(
+            color: Color(0xFF7A7A7A),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.add, color: Colors.white, size: 20),
         ),
       ),
     );

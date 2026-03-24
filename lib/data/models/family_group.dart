@@ -1,14 +1,14 @@
 class FamilyGroup {
   final String id;
   final String name;
-  final List<String> fiscalCodes;
+  final List<String> members;
   final DateTime createdAt;
   final DateTime updatedAt;
 
   const FamilyGroup({
     required this.id,
     required this.name,
-    required this.fiscalCodes,
+    required this.members,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -16,14 +16,14 @@ class FamilyGroup {
   FamilyGroup copyWith({
     String? id,
     String? name,
-    List<String>? fiscalCodes,
+    List<String>? members,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
     return FamilyGroup(
       id: id ?? this.id,
       name: name ?? this.name,
-      fiscalCodes: fiscalCodes ?? this.fiscalCodes,
+      members: members ?? this.members,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -33,20 +33,34 @@ class FamilyGroup {
     return <String, dynamic>{
       'id': id,
       'name': name,
-      'fiscalCodes': fiscalCodes,
+      'members': members,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
   }
 
   factory FamilyGroup.fromMap(Map<String, dynamic> map) {
+    final members = (map['members'] as List<dynamic>? ?? const <dynamic>[])
+        .map((item) => item.toString().trim().toUpperCase())
+        .where((item) => item.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+
     return FamilyGroup(
-      id: (map['id'] ?? '').toString(),
-      name: (map['name'] ?? '').toString(),
-      fiscalCodes: List<String>.from(map['fiscalCodes'] ?? const <String>[]).map((e) => e.trim().toUpperCase()).where((e) => e.isNotEmpty).toSet().toList(),
+      id: _readString(map['id']).isNotEmpty
+          ? _readString(map['id'])
+          : (_readString(map['familyId']).isNotEmpty ? _readString(map['familyId']) : _readString(map['name'])),
+      name: _readString(map['name']).isNotEmpty ? _readString(map['name']) : 'Famiglia',
+      members: members,
       createdAt: _readDate(map['createdAt']) ?? DateTime.now(),
       updatedAt: _readDate(map['updatedAt']) ?? DateTime.now(),
     );
+  }
+
+  static String _readString(dynamic value) {
+    if (value == null) return '';
+    return value.toString().trim();
   }
 
   static DateTime? _readDate(dynamic value) {

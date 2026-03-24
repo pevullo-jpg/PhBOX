@@ -7,6 +7,14 @@ class FamiliesRepository {
 
   const FamiliesRepository({required this.datasource});
 
+  Future<List<FamilyGroup>> getAllFamilies() async {
+    final maps = await datasource.getCollection(
+      collectionPath: AppCollections.families,
+      orderBy: 'name',
+    );
+    return maps.map(FamilyGroup.fromMap).where((item) => item.id.trim().isNotEmpty).toList();
+  }
+
   Future<void> saveFamily(FamilyGroup family) {
     return datasource.setDocument(
       collectionPath: AppCollections.families,
@@ -15,18 +23,10 @@ class FamiliesRepository {
     );
   }
 
-  Future<List<FamilyGroup>> getAllFamilies() async {
-    final maps = await datasource.getCollection(
-      collectionPath: AppCollections.families,
-      orderBy: 'name',
-    );
-    return maps.map(FamilyGroup.fromMap).toList();
-  }
-
-  Future<void> deleteFamily(String id) {
+  Future<void> deleteFamily(String familyId) {
     return datasource.deleteDocument(
       collectionPath: AppCollections.families,
-      documentId: id,
+      documentId: familyId,
     );
   }
 }
