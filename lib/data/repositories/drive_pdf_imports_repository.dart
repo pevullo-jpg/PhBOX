@@ -58,6 +58,7 @@ class DrivePdfImportsRepository {
     next['status'] = 'deleted';
     next['deletedAt'] = DateTime.now().toIso8601String();
     next['deleteMode'] = 'pdf_only_requested';
+    next['deletePdfRequested'] = true;
     next['webViewLink'] = '';
     next['openUrl'] = '';
     await datasource.setDocument(

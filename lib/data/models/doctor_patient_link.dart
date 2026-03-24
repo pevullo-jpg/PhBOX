@@ -2,16 +2,34 @@ class DoctorPatientLink {
   final String id;
   final String patientFiscalCode;
   final String doctorName;
+  final String doctorFullName;
+  final String doctorSurname;
   final DateTime? updatedAt;
 
   const DoctorPatientLink({
     required this.id,
     required this.patientFiscalCode,
     required this.doctorName,
+    required this.doctorFullName,
+    required this.doctorSurname,
     this.updatedAt,
   });
 
   factory DoctorPatientLink.fromMap(Map<String, dynamic> map) {
+    final String fullName = _readString(
+      map['doctorFullName'] ??
+          map['doctorDisplayName'] ??
+          map['doctor'] ??
+          map['medico'] ??
+          map['doctorName'],
+    );
+    final String rawDoctorName = _readString(map['doctorName']);
+    final String doctorSurname = _readString(map['doctorSurname']).isNotEmpty
+        ? _readString(map['doctorSurname'])
+        : _extractSurname(fullName.isNotEmpty ? fullName : rawDoctorName);
+    final String doctorName = rawDoctorName.isNotEmpty
+        ? rawDoctorName
+        : (fullName.isNotEmpty ? fullName : doctorSurname);
     return DoctorPatientLink(
       id: (map['id'] ?? map['linkId'] ?? '') as String,
       patientFiscalCode: _readString(
@@ -22,13 +40,9 @@ class DoctorPatientLink {
             map['assistitoFiscalCode'] ??
             map['assistitoCf'],
       ).toUpperCase(),
-      doctorName: _readString(
-        map['doctorName'] ??
-            map['doctorFullName'] ??
-            map['doctor'] ??
-            map['medico'] ??
-            map['doctorDisplayName'],
-      ),
+      doctorName: doctorName,
+      doctorFullName: fullName.isNotEmpty ? fullName : doctorName,
+      doctorSurname: doctorSurname,
       updatedAt: _readDate(
         map['updatedAt'] ?? map['createdAt'] ?? map['linkedAt'],
       ),

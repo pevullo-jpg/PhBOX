@@ -127,7 +127,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final query = _searchController.text.trim().toLowerCase();
 
     bool matchesCardFilters(_PatientDashboardSummary item) {
-      final activeFilters = _activeCardFilters.where((filter) => filter != _DashboardCardFilter.assistiti).toList();
+      final activeFilters = _activeCardFilters.toList();
       if (activeFilters.isEmpty) return true;
       for (final filter in activeFilters) {
         switch (filter) {
@@ -148,8 +148,6 @@ class _DashboardPageState extends State<DashboardPage> {
             break;
           case _DashboardCardFilter.scadenze:
             if (!item.hasExpiryAlert) return false;
-            break;
-          case _DashboardCardFilter.assistiti:
             break;
         }
       }
@@ -203,14 +201,6 @@ class _DashboardPageState extends State<DashboardPage> {
         return;
       }
 
-      if (filter == _DashboardCardFilter.assistiti) {
-        _activeCardFilters
-          ..clear()
-          ..add(filter);
-        return;
-      }
-
-      _activeCardFilters.remove(_DashboardCardFilter.assistiti);
       _activeCardFilters.add(filter);
     });
   }
@@ -1557,7 +1547,10 @@ class _DashboardPageState extends State<DashboardPage> {
         await _bookingsRepository.deleteBooking(summary.patient.fiscalCode, booking.id);
       }
       await _prescriptionsRepository.deleteAllPatientPrescriptions(summary.patient.fiscalCode);
-      await _drivePdfImportsRepository.deleteImportsByPatient(summary.patient.fiscalCode);
+      final recipeImports = summary.imports;
+      for (final importItem in recipeImports) {
+        await _drivePdfImportsRepository.softDeleteImport(importItem.id);
+      }
       final updated = summary.patient.copyWith(
         hasDebt: false,
         debtTotal: 0,
@@ -1617,8 +1610,8 @@ class _DashboardPageState extends State<DashboardPage> {
                   builder: (context, constraints) {
                     const double cardWidth = 220;
                     const double cardSpacing = 12;
-                    final double cardsBlockWidth = constraints.maxWidth >= ((cardWidth * 7) + (cardSpacing * 6))
-                        ? ((cardWidth * 7) + (cardSpacing * 6))
+                    final double cardsBlockWidth = constraints.maxWidth >= ((cardWidth * 6) + (cardSpacing * 5))
+                        ? ((cardWidth * 6) + (cardSpacing * 5))
                         : constraints.maxWidth;
                     return Column(
                       children: [
@@ -1631,14 +1624,6 @@ class _DashboardPageState extends State<DashboardPage> {
                               spacing: cardSpacing,
                               runSpacing: cardSpacing,
                               children: [
-                                _SummaryCard(
-                                  title: 'Tutti gli assistiti',
-                                  value: data == null ? '0' : data.summaries.length.toString(),
-                                  icon: Icons.people_alt_outlined,
-                                  accent: AppColors.yellow,
-                                  isSelected: _activeCardFilters.contains(_DashboardCardFilter.assistiti),
-                                  onTap: () => _toggleCardFilter(_DashboardCardFilter.assistiti),
-                                ),
                                 _SummaryCard(
                                   title: 'Ricette',
                                   value: summaries.fold<int>(0, (sum, item) => sum + item.recipeCount).toString(),
@@ -1838,7 +1823,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                           SizedBox(
                                             width: 240,
                                             child: Text(
-                                              item.doctorNameUpper,
+                                              item.doctorSurnameUpper,
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
                                               style: const TextStyle(color: Colors.white, fontSize: 18.2, fontWeight: FontWeight.w700),
@@ -2068,6 +2053,12 @@ class _PatientDashboardSummary {
   double get totalDebt => debts.fold<double>(0, (sum, item) => sum + item.residualAmount);
 
   String get doctorNameUpper => doctorName.trim().isEmpty ? '-' : doctorName.trim().toUpperCase();
+  String get doctorSurnameUpper {
+    final String cleaned = doctorName.trim();
+    if (cleaned.isEmpty || cleaned == '-') return '-';
+    final parts = cleaned.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
+    return (parts.isEmpty ? cleaned : parts.first).toUpperCase();
+  }
 
   bool get hasActiveContent => recipeCount > 0 || hasDpc || debts.isNotEmpty || advances.isNotEmpty || bookings.isNotEmpty;
 
@@ -2112,10 +2103,12 @@ class _PatientDashboardSummary {
     }).toList();
     final prescriptionDoctor = prescriptions.map((e) => e.doctorName?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '');
     final importDoctor = matchingImports.map((e) => e.doctorFullName.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '');
-    final doctorName = matchingDoctor.isNotEmpty
-        ? matchingDoctor.first.doctorName.trim()
-        : ((patient.doctorName ?? '').trim().isNotEmpty
-            ? patient.doctorName!.trim()
+    final linkDoctorFull = matchingDoctor.map((e) => e.doctorFullName.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '');
+    final patientDoctor = (patient.doctorName ?? '').trim();
+    final doctorName = linkDoctorFull.isNotEmpty
+        ? linkDoctorFull
+        : (patientDoctor.isNotEmpty
+            ? patientDoctor
             : (importDoctor.isNotEmpty ? importDoctor : prescriptionDoctor));
     final exemptionCode = (patient.exemptionCode ?? '').trim().isNotEmpty
         ? patient.exemptionCode!.trim()
@@ -2300,7 +2293,7 @@ class _SummaryCard extends StatelessWidget {
   }
 }
 
-enum _DashboardCardFilter { assistiti, ricette, dpc, debiti, anticipi, prenotazioni, scadenze }
+enum _DashboardCardFilter { ricette, dpc, debiti, anticipi, prenotazioni, scadenze }
 
 class _FilterToggle extends StatelessWidget {
   final String label;

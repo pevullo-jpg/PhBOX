@@ -26,6 +26,9 @@ class DoctorPatientLinksRepository {
   }) {
     final String normalizedCf = patientFiscalCode.trim().toUpperCase();
     final String normalizedDoctor = doctorFullName.trim();
+    final List<String> parts = normalizedDoctor.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
+    final String doctorSurname = parts.isEmpty ? normalizedDoctor : parts.first;
+    final String doctorGivenName = parts.length > 1 ? parts.sublist(1).join(' ') : doctorSurname;
     final DateTime now = DateTime.now();
     final String documentId = '${normalizedCf}__manual';
     return datasource.setDocument(
@@ -36,7 +39,8 @@ class DoctorPatientLinksRepository {
         'patientFiscalCode': normalizedCf,
         'patientFullName': patientFullName.trim(),
         'doctorFullName': normalizedDoctor,
-        'doctorName': normalizedDoctor,
+        'doctorSurname': doctorSurname,
+        'doctorName': doctorGivenName,
         'city': city?.trim(),
         'updatedAt': now.toIso8601String(),
       },
@@ -48,7 +52,7 @@ class DoctorPatientLinksRepository {
     final List<DoctorPatientLink> links = await getAllLinks();
     for (final DoctorPatientLink link in links) {
       if (link.patientFiscalCode == normalized) {
-        return link.doctorName;
+        return link.doctorFullName;
       }
     }
     return null;
