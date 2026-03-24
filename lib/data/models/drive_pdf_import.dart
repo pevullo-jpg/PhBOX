@@ -16,7 +16,6 @@ class DrivePdfImport {
   final DateTime? prescriptionDate;
   final String webViewLink;
   final String sourceType;
-  final String documentType;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -38,7 +37,6 @@ class DrivePdfImport {
     this.prescriptionDate,
     this.webViewLink = '',
     this.sourceType = 'script',
-    this.documentType = 'prescription',
     required this.createdAt,
     required this.updatedAt,
   });
@@ -61,7 +59,6 @@ class DrivePdfImport {
     DateTime? prescriptionDate,
     String? webViewLink,
     String? sourceType,
-    String? documentType,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -83,7 +80,6 @@ class DrivePdfImport {
       prescriptionDate: prescriptionDate ?? this.prescriptionDate,
       webViewLink: webViewLink ?? this.webViewLink,
       sourceType: sourceType ?? this.sourceType,
-      documentType: documentType ?? this.documentType,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -108,88 +104,53 @@ class DrivePdfImport {
       'prescriptionDate': prescriptionDate?.toIso8601String(),
       'webViewLink': webViewLink,
       'sourceType': sourceType,
-      'documentType': documentType,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
   }
 
   factory DrivePdfImport.fromMap(Map<String, dynamic> map) {
-    final Map<String, dynamic> flat = _flattenMap(map);
-    final String documentType = _readString(flat['documentType'] ?? flat['type'] ?? flat['docType']);
-    final int fallbackCount = documentType.isEmpty || documentType.toLowerCase() == 'prescription' ? 1 : 0;
     return DrivePdfImport(
-      id: _readString(flat['id'] ?? flat['duplicateHash'] ?? flat['hash']),
-      driveFileId: _readString(flat['driveFileId'] ?? flat['fileId'] ?? flat['googleDriveFileId']),
-      fileName: _readString(flat['fileName'] ?? flat['name']),
-      mimeType: _readString(flat['mimeType']).isEmpty ? 'application/pdf' : _readString(flat['mimeType']),
-      status: _readString(flat['status']).isEmpty ? 'pending' : _readString(flat['status']),
-      errorMessage: _readString(flat['errorMessage'] ?? flat['error']),
+      id: (map['id'] ?? map['duplicateHash'] ?? '') as String,
+      driveFileId: (map['driveFileId'] ?? map['fileId'] ?? '') as String,
+      fileName: (map['fileName'] ?? '') as String,
+      mimeType: (map['mimeType'] ?? 'application/pdf') as String,
+      status: (map['status'] ?? 'pending') as String,
+      errorMessage: (map['errorMessage'] ?? '') as String,
       patientFiscalCode: _readString(
-        flat['patientFiscalCode'] ??
-            flat['fiscalCode'] ??
-            flat['patientCf'] ??
-            flat['patientCF'] ??
-            flat['cf'] ??
-            flat['codiceFiscale'] ??
-            flat['patient_fiscal_code'] ??
-            flat['assistitoFiscalCode'] ??
-            flat['assistitoCf'],
+        map['patientFiscalCode'] ??
+            map['fiscalCode'] ??
+            map['patientCf'] ??
+            map['patientCF'] ??
+            map['cf'] ??
+            map['codiceFiscale'] ??
+            map['patient_fiscal_code'],
       ),
-      patientFullName: _readString(
-        flat['patientFullName'] ?? flat['patientName'] ?? flat['fullName'] ?? flat['name'] ?? flat['assistitoNomeCompleto'],
-      ),
+      patientFullName: _readString(map['patientFullName'] ?? map['patientName'] ?? map['fullName'] ?? map['name']),
       doctorFullName: _readString(
-        flat['doctorFullName'] ?? flat['doctorName'] ?? flat['doctor'] ?? flat['medico'] ?? flat['doctor_full_name'],
+        map['doctorFullName'] ?? map['doctorName'] ?? map['doctor'] ?? map['medico'] ?? map['doctor_full_name'],
       ),
-      exemptionCode: _readString(flat['exemptionCode'] ?? flat['exemption'] ?? flat['esenzione']),
-      city: _readString(flat['city'] ?? flat['comune']),
-      therapy: _readStringList(flat['therapy'] ?? flat['therapies'] ?? flat['items'] ?? flat['therapySummary']),
-      isDpc: _readBool(flat['isDpc'] ?? flat['dpc'] ?? flat['dpcFlag']),
-      prescriptionCount: _readInt(flat['prescriptionCount'] ?? flat['sourceCount'] ?? flat['recipeCount'] ?? flat['count']) ?? fallbackCount,
-      prescriptionDate: _readDate(flat['prescriptionDate'] ?? flat['date'] ?? flat['recipeDate'] ?? flat['lastPrescriptionDate']),
+      exemptionCode: _readString(map['exemptionCode'] ?? map['exemption'] ?? map['esenzione']),
+      city: _readString(map['city'] ?? map['comune']),
+      therapy: _readStringList(map['therapy'] ?? map['therapies'] ?? map['items']),
+      isDpc: _readBool(map['isDpc'] ?? map['dpc'] ?? map['dpcFlag']),
+      prescriptionCount: _readInt(map['prescriptionCount'] ?? map['sourceCount'] ?? map['recipeCount'] ?? map['count']) ?? 1,
+      prescriptionDate: _readDate(map['prescriptionDate'] ?? map['date'] ?? map['recipeDate']),
       webViewLink: _readString(
-        flat['webViewLink'] ??
-            flat['viewLink'] ??
-            flat['driveViewLink'] ??
-            flat['fileUrl'] ??
-            flat['downloadUrl'] ??
-            flat['url'] ??
-            flat['link'] ??
-            flat['alternateLink'],
+        map['webViewLink'] ??
+            map['viewLink'] ??
+            map['driveViewLink'] ??
+            map['fileUrl'] ??
+            map['url'] ??
+            map['link'] ??
+            map['alternateLink'],
       ),
-      sourceType: _readString(flat['sourceType'] ?? flat['source']).isEmpty ? 'script' : _readString(flat['sourceType'] ?? flat['source']),
-      documentType: documentType.isEmpty ? 'prescription' : documentType,
-      createdAt: _readDate(flat['createdAt'] ?? flat['importedAt']) ?? DateTime.now(),
-      updatedAt: _readDate(flat['updatedAt'] ?? flat['manifestUpdatedAt']) ?? DateTime.now(),
+      sourceType: _readString(map['sourceType'] ?? map['source']).isEmpty ? 'script' : _readString(map['sourceType'] ?? map['source']),
+      createdAt: _readDate(map['createdAt'] ?? map['importedAt']) ?? DateTime.now(),
+      updatedAt: _readDate(map['updatedAt'] ?? map['manifestUpdatedAt']) ?? DateTime.now(),
     );
   }
 
-  static Map<String, dynamic> _flattenMap(Map<String, dynamic> source) {
-    final Map<String, dynamic> result = <String, dynamic>{};
-
-    void absorb(Map<dynamic, dynamic> map) {
-      map.forEach((dynamic rawKey, dynamic value) {
-        final String key = rawKey.toString();
-        if (!result.containsKey(key) || _isEmptyValue(result[key])) {
-          result[key] = value;
-        }
-        if (value is Map) {
-          absorb(value);
-        }
-      });
-    }
-
-    absorb(source);
-    return result;
-  }
-
-  static bool _isEmptyValue(dynamic value) {
-    if (value == null) return true;
-    if (value is String) return value.trim().isEmpty;
-    if (value is List) return value.isEmpty;
-    return false;
-  }
 
   static String _readString(dynamic value) {
     if (value == null) return '';

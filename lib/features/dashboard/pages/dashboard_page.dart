@@ -20,7 +20,7 @@ import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
 import '../../../data/repositories/doctor_patient_links_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
-import '../../../data/repositories/family_groups_repository.dart';
+import '../../../data/repositories/families_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
@@ -44,7 +44,7 @@ class _DashboardPageState extends State<DashboardPage> {
   late final BookingsRepository _bookingsRepository;
   late final DrivePdfImportsRepository _drivePdfImportsRepository;
   late final DoctorPatientLinksRepository _doctorPatientLinksRepository;
-  late final FamilyGroupsRepository _familyGroupsRepository;
+  late final FamiliesRepository _familiesRepository;
   late final SettingsRepository _settingsRepository;
 
   Future<_DashboardData>? _future;
@@ -65,7 +65,7 @@ class _DashboardPageState extends State<DashboardPage> {
     _bookingsRepository = BookingsRepository(datasource: datasource);
     _drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
     _doctorPatientLinksRepository = DoctorPatientLinksRepository(datasource: datasource);
-    _familyGroupsRepository = FamilyGroupsRepository(datasource: datasource);
+    _familiesRepository = FamiliesRepository(datasource: datasource);
     _settingsRepository = SettingsRepository(datasource: datasource);
     _future = _load();
     _searchController.addListener(() => setState(() {}));
@@ -81,7 +81,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final patients = await _patientsRepository.getAllPatients();
     final imports = await _drivePdfImportsRepository.getAllImports();
     final doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
-    final families = await _familyGroupsRepository.getAllFamilies();
+    final families = await _familiesRepository.getAllFamilies();
     final settings = await _settingsRepository.getSettings();
 
     final summaries = await Future.wait(
@@ -98,7 +98,6 @@ class _DashboardPageState extends State<DashboardPage> {
           advances: advances,
           bookings: bookings,
           doctorLinks: doctorLinks,
-          families: families,
         );
       }),
     );
@@ -110,11 +109,7 @@ class _DashboardPageState extends State<DashboardPage> {
       return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
     });
 
-    return _DashboardData(
-      summaries: summaries,
-      doctorsCatalog: settings.doctorsCatalog,
-      families: families,
-    );
+    return _DashboardData(summaries: summaries, doctorsCatalog: settings.doctorsCatalog, families: families);
   }
 
   void _refresh() {
@@ -125,11 +120,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
   List<_PatientDashboardSummary> _applyFilters(List<_PatientDashboardSummary> input, List<FamilyGroup> families) {
     final query = _searchController.text.trim().toLowerCase();
-
-    bool matchesCardFilters(_PatientDashboardSummary item) {
-      final activeFilters = _activeCardFilters.where((filter) => filter != _DashboardCardFilter.assistiti).toList();
-      if (activeFilters.isEmpty) return true;
-      for (final filter in activeFilters) {
+    final filtered = input.where((item) {
+      if (!item.hasActiveContent) return false;
+      for (final filter in _activeCardFilters) {
         switch (filter) {
           case _DashboardCardFilter.ricette:
             if (item.recipeCount == 0) return false;
@@ -153,46 +146,43 @@ class _DashboardPageState extends State<DashboardPage> {
             break;
         }
       }
-      return true;
-    }
-
-    bool matchesSearch(_PatientDashboardSummary item) {
       if (query.isEmpty) return true;
       return item.displayName.toLowerCase().contains(query) ||
           item.patient.fiscalCode.toLowerCase().contains(query) ||
           item.doctorName.toLowerCase().contains(query) ||
           item.exemptionCode.toLowerCase().contains(query) ||
           item.city.toLowerCase().contains(query);
-    }
+    }).toList();
 
-    final filtered = input.where(matchesCardFilters).toList();
-    if (query.isEmpty) return filtered;
+    if (query.isEmpty || families.isEmpty || filtered.isEmpty) return filtered;
 
     final Map<String, _PatientDashboardSummary> byCf = {
-      for (final item in filtered) item.patient.fiscalCode.trim().toUpperCase(): item,
+      for (final item in input) item.patient.fiscalCode.trim().toUpperCase(): item,
     };
-
-    final Set<String> resultCfs = filtered.where(matchesSearch).map((item) => item.patient.fiscalCode.trim().toUpperCase()).toSet();
-
-    final Set<String> matchingFamilies = <String>{};
+    final Set<String> selectedCfs = filtered.map((e) => e.patient.fiscalCode.trim().toUpperCase()).toSet();
+    final Set<String> expandedCfs = {...selectedCfs};
     for (final family in families) {
-      final members = family.memberFiscalCodes.map((e) => e.trim().toUpperCase()).toSet();
-      final hasMemberMatch = members.any((cf) => resultCfs.contains(cf));
-      if (hasMemberMatch) {
-        matchingFamilies.add(family.id);
-        resultCfs.addAll(members.where(byCf.containsKey));
+      final normalizedMembers = family.fiscalCodes.map((e) => e.trim().toUpperCase()).where((e) => e.isNotEmpty).toSet();
+      if (normalizedMembers.any(selectedCfs.contains)) {
+        for (final cf in normalizedMembers) {
+          final summary = byCf[cf];
+          if (summary != null && summary.hasActiveContent) {
+            expandedCfs.add(cf);
+          }
+        }
       }
     }
-
-    final result = filtered.where((item) => resultCfs.contains(item.patient.fiscalCode.trim().toUpperCase())).toList();
-    result.sort((a, b) {
-      final aInFamily = matchingFamilies.contains(a.familyId);
-      final bInFamily = matchingFamilies.contains(b.familyId);
-      if (aInFamily != bInFamily) return aInFamily ? -1 : 1;
-      if (a.hasExpiryAlert != b.hasExpiryAlert) return a.hasExpiryAlert ? -1 : 1;
+    final expanded = input.where((item) => expandedCfs.contains(item.patient.fiscalCode.trim().toUpperCase()) && item.hasActiveContent).toList();
+    expanded.sort((a, b) {
+      if (a.hasExpiryAlert != b.hasExpiryAlert) {
+        return a.hasExpiryAlert ? -1 : 1;
+      }
+      final aSelected = selectedCfs.contains(a.patient.fiscalCode.trim().toUpperCase());
+      final bSelected = selectedCfs.contains(b.patient.fiscalCode.trim().toUpperCase());
+      if (aSelected != bSelected) return aSelected ? -1 : 1;
       return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
     });
-    return result;
+    return expanded;
   }
 
 
@@ -200,18 +190,9 @@ class _DashboardPageState extends State<DashboardPage> {
     setState(() {
       if (_activeCardFilters.contains(filter)) {
         _activeCardFilters.remove(filter);
-        return;
+      } else {
+        _activeCardFilters.add(filter);
       }
-
-      if (filter == _DashboardCardFilter.assistiti) {
-        _activeCardFilters
-          ..clear()
-          ..add(filter);
-        return;
-      }
-
-      _activeCardFilters.remove(_DashboardCardFilter.assistiti);
-      _activeCardFilters.add(filter);
     });
   }
 
@@ -235,12 +216,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _openPdfList(_PatientDashboardSummary summary) async {
-    if (summary.imports.isEmpty) {
-      await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => PatientDetailPage(patient: summary.patient)),
-      );
-      return;
-    }
+    if (summary.imports.isEmpty) return;
     if (summary.imports.length == 1) {
       await _openPdf(summary.imports.first);
       return;
@@ -1557,9 +1533,6 @@ class _DashboardPageState extends State<DashboardPage> {
         final data = snapshot.data;
         final summaries = data == null ? const <_PatientDashboardSummary>[] : _applyFilters(data.summaries, data.families);
         final expiring = summaries.where((item) => item.hasExpiryAlert).toList();
-        final familyState = data == null
-            ? _DashboardFamilyState.empty()
-            : _DashboardFamilyState.fromFamilies(data.summaries, data.families);
         return Scaffold(
           backgroundColor: AppColors.background,
           body: Padding(
@@ -1590,8 +1563,8 @@ class _DashboardPageState extends State<DashboardPage> {
                               runSpacing: cardSpacing,
                               children: [
                                 _SummaryCard(
-                                  title: 'Tutti gli assistiti',
-                                  value: data == null ? '0' : data.summaries.length.toString(),
+                                  title: 'Assistiti attivi',
+                                  value: summaries.length.toString(),
                                   icon: Icons.people_alt_outlined,
                                   accent: AppColors.yellow,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.assistiti),
@@ -1737,29 +1710,10 @@ class _DashboardPageState extends State<DashboardPage> {
                                             child: TextButton(
                                               style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
                                               onPressed: () => _openPatient(item),
-                                              child: Row(
-                                                children: [
-                                                  if (item.familyId.isNotEmpty && familyState.hasMultipleActive(item.familyId)) ...[
-                                                    Container(
-                                                      width: 14,
-                                                      height: 14,
-                                                      decoration: BoxDecoration(
-                                                        color: familyState.colorFor(item.familyId),
-                                                        borderRadius: BorderRadius.circular(4),
-                                                      ),
-                                                    ),
-                                                    const SizedBox(width: 8),
-                                                  ],
-                                                  Expanded(
-                                                    child: Text(
-                                                      item.displayName,
-                                                      textAlign: TextAlign.left,
-                                                      maxLines: 1,
-                                                      overflow: TextOverflow.ellipsis,
-                                                      style: const TextStyle(color: Colors.white, fontSize: 18.2, fontWeight: FontWeight.w800),
-                                                    ),
-                                                  ),
-                                                ],
+                                              child: Text(
+                                                item.displayName,
+                                                textAlign: TextAlign.left,
+                                                style: const TextStyle(color: Colors.white, fontSize: 18.2, fontWeight: FontWeight.w800),
                                               ),
                                             ),
                                           ),
@@ -1832,7 +1786,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final widgets = <Widget>[
       _QuickEditFlag(onTap: () => _handleFlagTap(item, 'quick-edit')),
     ];
-    if (item.recipeCount > 0) {
+    if (item.recipeCount > 0 && item.imports.isNotEmpty) {
       widgets.add(_FlagChip(label: 'ricette ${item.recipeCount}', color: AppColors.green, onTap: () => _handleFlagTap(item, 'ricette')));
     }
     if (item.dpcItems.isNotEmpty) {
@@ -1901,11 +1855,7 @@ class _DashboardData {
   final List<String> doctorsCatalog;
   final List<FamilyGroup> families;
 
-  const _DashboardData({
-    required this.summaries,
-    required this.doctorsCatalog,
-    required this.families,
-  });
+  const _DashboardData({required this.summaries, required this.doctorsCatalog, required this.families});
 }
 
 class _PatientDashboardSummary {
@@ -1921,7 +1871,6 @@ class _PatientDashboardSummary {
   final bool hasDpc;
   final int recipeCount;
   final bool hasExpiryAlert;
-  final String familyId;
 
   const _PatientDashboardSummary({
     required this.patient,
@@ -1936,7 +1885,6 @@ class _PatientDashboardSummary {
     required this.hasDpc,
     required this.recipeCount,
     required this.hasExpiryAlert,
-    required this.familyId,
   });
 
   String get displayName => patient.fullName.trim().isEmpty ? patient.fiscalCode : patient.fullName.trim();
@@ -1971,38 +1919,17 @@ class _PatientDashboardSummary {
     required List<Advance> advances,
     required List<Booking> bookings,
     required List<DoctorPatientLink> doctorLinks,
-    required List<FamilyGroup> families,
   }) {
     final normalizedFiscalCode = patient.fiscalCode.trim().toUpperCase();
     final normalizedFullName = patient.fullName.trim().toUpperCase();
-    final patientLastImportId = patient.lastImportId.trim();
     final matchingImports = imports.where((item) {
       final importFiscalCode = item.patientFiscalCode.trim().toUpperCase();
       final importFullName = item.patientFullName.trim().toUpperCase();
-      final importId = item.id.trim();
-      final importDriveFileId = item.driveFileId.trim();
-      final importDocumentType = item.documentType.trim().toLowerCase();
-      final isPrescriptionLike = importDocumentType.isEmpty || importDocumentType == 'prescription';
-      final matchesByImportId = patientLastImportId.isNotEmpty && (
-        (importId.isNotEmpty && importId == patientLastImportId) ||
-        (importDriveFileId.isNotEmpty && importDriveFileId == patientLastImportId)
-      );
-      if (!isPrescriptionLike && !matchesByImportId) {
-        return false;
-      }
-      if (importFiscalCode.isNotEmpty && importFiscalCode == normalizedFiscalCode) {
-        return true;
-      }
-      if (matchesByImportId) {
-        return true;
+      if (importFiscalCode.isNotEmpty) {
+        return importFiscalCode == normalizedFiscalCode;
       }
       return normalizedFullName.isNotEmpty && importFullName == normalizedFullName;
-    }).toList()
-      ..sort((a, b) {
-        final left = a.prescriptionDate ?? a.updatedAt;
-        final right = b.prescriptionDate ?? b.updatedAt;
-        return right.compareTo(left);
-      });
+    }).toList();
     final matchingDoctor = doctorLinks.where((item) {
       return item.patientFiscalCode == patient.fiscalCode.trim().toUpperCase();
     }).toList();
@@ -2027,12 +1954,7 @@ class _PatientDashboardSummary {
             if (fromPrescription.isNotEmpty) return fromPrescription;
             return matchingImports.map((e) => e.city.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '-');
           })();
-    final int importsRecipeCount = matchingImports.fold<int>(0, (sum, item) {
-      if (item.documentType.trim().isNotEmpty && item.documentType.trim().toLowerCase() != 'prescription') {
-        return sum;
-      }
-      return sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1);
-    });
+    final int importsRecipeCount = matchingImports.fold<int>(0, (sum, item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
     final int prescriptionsRecipeCount = prescriptions.fold<int>(0, (sum, item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
     final int patientRecipeCount = patient.archivedRecipeCount > 0 ? patient.archivedRecipeCount : 0;
     final recipeCount = importsRecipeCount > 0
@@ -2043,14 +1965,6 @@ class _PatientDashboardSummary {
       final info = PrescriptionExpiryUtils.evaluate(item.expiryDate);
       return info.status == PrescriptionValidityStatus.expiringSoon || info.status == PrescriptionValidityStatus.expired;
     });
-    final familyId = (() {
-      for (final family in families) {
-        if (family.memberFiscalCodes.map((e) => e.trim().toUpperCase()).contains(normalizedFiscalCode)) {
-          return family.id;
-        }
-      }
-      return '';
-    })();
     return _PatientDashboardSummary(
       patient: patient,
       doctorName: doctorName.isEmpty ? '-' : doctorName,
@@ -2064,7 +1978,6 @@ class _PatientDashboardSummary {
       hasDpc: hasDpc,
       recipeCount: recipeCount,
       hasExpiryAlert: hasExpiryAlert,
-      familyId: familyId,
     );
   }
 }
@@ -2090,41 +2003,6 @@ String _dashboardFormatDate(DateTime? date) {
   return '$day/$month/$year';
 }
 
-
-
-class _DashboardFamilyState {
-  final Map<String, int> activeCounts;
-  final Map<String, Color> colors;
-
-  const _DashboardFamilyState({required this.activeCounts, required this.colors});
-
-  factory _DashboardFamilyState.empty() => const _DashboardFamilyState(activeCounts: <String, int>{}, colors: <String, Color>{});
-
-  factory _DashboardFamilyState.fromFamilies(List<_PatientDashboardSummary> summaries, List<FamilyGroup> families) {
-    const palette = <Color>[
-      Color(0xFF2563EB),
-      Color(0xFF059669),
-      Color(0xFFD97706),
-      Color(0xFFDC2626),
-      Color(0xFF7C3AED),
-      Color(0xFF0891B2),
-      Color(0xFF65A30D),
-      Color(0xFFEA580C),
-    ];
-    final counts = <String, int>{};
-    final colors = <String, Color>{};
-    for (final family in families) {
-      final activeCount = summaries.where((item) => item.familyId == family.id && item.hasActiveContent).length;
-      counts[family.id] = activeCount;
-      colors[family.id] = palette[family.colorIndex % palette.length];
-    }
-    return _DashboardFamilyState(activeCounts: counts, colors: colors);
-  }
-
-  bool hasMultipleActive(String familyId) => (activeCounts[familyId] ?? 0) > 1;
-
-  Color colorFor(String familyId) => colors[familyId] ?? AppColors.yellow;
-}
 
 class _SummaryCard extends StatelessWidget {
   final String title;

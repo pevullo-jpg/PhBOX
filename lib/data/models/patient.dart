@@ -12,7 +12,6 @@ class Patient {
   final bool hasAdvance;
   final bool hasDpc;
   final int archivedRecipeCount;
-  final String lastImportId;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -30,7 +29,6 @@ class Patient {
     this.hasAdvance = false,
     this.hasDpc = false,
     this.archivedRecipeCount = 0,
-    this.lastImportId = '',
     required this.createdAt,
     required this.updatedAt,
   });
@@ -49,7 +47,6 @@ class Patient {
     bool? hasAdvance,
     bool? hasDpc,
     int? archivedRecipeCount,
-    String? lastImportId,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -67,7 +64,6 @@ class Patient {
       hasAdvance: hasAdvance ?? this.hasAdvance,
       hasDpc: hasDpc ?? this.hasDpc,
       archivedRecipeCount: archivedRecipeCount ?? this.archivedRecipeCount,
-      lastImportId: lastImportId ?? this.lastImportId,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -88,7 +84,6 @@ class Patient {
       'hasAdvance': hasAdvance,
       'hasDpc': hasDpc,
       'archivedRecipeCount': archivedRecipeCount,
-      'lastImportId': lastImportId,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
@@ -109,7 +104,6 @@ class Patient {
       hasAdvance: (map['hasAdvance'] ?? false) as bool,
       hasDpc: (map['hasDpc'] ?? false) as bool,
       archivedRecipeCount: (map['archivedRecipeCount'] ?? 0) as int,
-      lastImportId: (map['lastImportId'] ?? '') as String,
       createdAt: _readDate(map['createdAt']) ?? DateTime.now(),
       updatedAt: _readDate(map['updatedAt']) ?? DateTime.now(),
     );
