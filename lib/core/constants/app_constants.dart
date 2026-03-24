@@ -9,5 +9,4 @@ class AppCollections {
   static const String doctorPatientLinks = 'doctor_patient_links';
   static const String prescriptionIntakes = 'prescription_intakes';
   static const String parserReferenceValues = 'parser_reference_values';
-  static const String families = 'families';
 }
