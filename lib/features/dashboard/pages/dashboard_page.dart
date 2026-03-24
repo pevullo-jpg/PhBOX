@@ -1949,7 +1949,7 @@ class _DashboardPageState extends State<DashboardPage> {
             if (!confirmed) return;
             setLocalState(() => busy = true);
             await _drivePdfImportsRepository.softDeleteImport(item.id);
-            await _refresh();
+            _refresh();
             setLocalState(() => busy = false);
             if (!mounted) return;
             Navigator.of(dialogContext).pop();

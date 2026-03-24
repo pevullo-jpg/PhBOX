@@ -66,14 +66,39 @@ class _FamiliesPageState extends State<FamiliesPage> {
 
   Future<void> _openFamilyDialog({FamilyGroup? initial, required List<Patient> patients}) async {
     final nameController = TextEditingController(text: initial?.name ?? '');
-    final cfController = TextEditingController();
+    final cfSearchController = TextEditingController();
+    final bulkController = TextEditingController();
     final selected = <String>{...?(initial?.memberFiscalCodes)};
+    String? errorText;
+
+    Set<String> parseFiscalCodes(String raw) {
+      return raw
+          .split(RegExp(r'[\s,;|]+'))
+          .map((item) => item.trim().toUpperCase())
+          .map((item) => item.replaceAll(RegExp(r'[^A-Z0-9]'), ''))
+          .where((item) => item.isNotEmpty)
+          .toSet();
+    }
+
     await showDialog<void>(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setLocalState) {
-            final query = cfController.text.trim().toUpperCase();
+            void addBulkCodes() {
+              final parsed = parseFiscalCodes(bulkController.text);
+              if (parsed.isEmpty) {
+                setLocalState(() => errorText = 'Inserisci almeno un CF valido.');
+                return;
+              }
+              setLocalState(() {
+                selected.addAll(parsed);
+                bulkController.clear();
+                errorText = null;
+              });
+            }
+
+            final query = cfSearchController.text.trim().toUpperCase();
             final suggestions = patients.where((patient) {
               if (query.isEmpty) return false;
               final cf = patient.fiscalCode.trim().toUpperCase();
@@ -84,7 +109,7 @@ class _FamiliesPageState extends State<FamiliesPage> {
               backgroundColor: AppColors.panel,
               title: Text(initial == null ? 'Nuova famiglia' : 'Modifica famiglia', style: const TextStyle(color: Colors.white)),
               content: SizedBox(
-                width: 640,
+                width: 720,
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -97,9 +122,39 @@ class _FamiliesPageState extends State<FamiliesPage> {
                       ),
                       const SizedBox(height: 16),
                       TextField(
-                        controller: cfController,
+                        controller: bulkController,
+                        maxLines: 4,
+                        minLines: 3,
                         style: const TextStyle(color: Colors.white),
-                        decoration: const InputDecoration(labelText: 'Aggiungi CF', labelStyle: TextStyle(color: Colors.white70)),
+                        decoration: const InputDecoration(
+                          labelText: 'Incolla uno o più CF',
+                          hintText: 'Un CF per riga oppure separati da virgole, spazi o punto e virgola',
+                          labelStyle: TextStyle(color: Colors.white70),
+                          hintStyle: TextStyle(color: Colors.white38),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          FilledButton.icon(
+                            onPressed: addBulkCodes,
+                            icon: const Icon(Icons.playlist_add),
+                            label: const Text('Aggiungi CF'),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Puoi incollare tutti i CF in un solo inserimento.',
+                              style: const TextStyle(color: Colors.white60, fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 18),
+                      TextField(
+                        controller: cfSearchController,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(labelText: 'Cerca paziente per CF o nome', labelStyle: TextStyle(color: Colors.white70)),
                         onChanged: (_) => setLocalState(() {}),
                       ),
                       if (suggestions.isNotEmpty) ...[
@@ -116,10 +171,12 @@ class _FamiliesPageState extends State<FamiliesPage> {
                                 dense: true,
                                 title: Text(patient.fiscalCode, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
                                 subtitle: Text(patient.fullName.trim().toUpperCase(), style: const TextStyle(color: Colors.white70)),
+                                trailing: const Icon(Icons.add_circle_outline, color: Colors.white70),
                                 onTap: () {
                                   setLocalState(() {
                                     selected.add(patient.fiscalCode.trim().toUpperCase());
-                                    cfController.clear();
+                                    cfSearchController.clear();
+                                    errorText = null;
                                   });
                                 },
                               );
@@ -127,23 +184,37 @@ class _FamiliesPageState extends State<FamiliesPage> {
                           ),
                         ),
                       ],
+                      if (errorText != null) ...[
+                        const SizedBox(height: 12),
+                        Text(errorText!, style: const TextStyle(color: AppColors.red, fontWeight: FontWeight.w700)),
+                      ],
                       const SizedBox(height: 16),
-                      const Text('Componenti', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: selected.map((cf) {
-                          final patient = _findPatient(patients, cf);
-                          final label = patient == null ? cf : '$cf · ${patient.fullName.trim().toUpperCase()}';
-                          return Chip(
-                            backgroundColor: AppColors.panelSoft,
-                            label: Text(label, style: const TextStyle(color: Colors.white)),
-                            deleteIconColor: Colors.white70,
-                            onDeleted: () => setLocalState(() => selected.remove(cf)),
-                          );
-                        }).toList(),
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text('Componenti', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+                          ),
+                          Text('${selected.length} CF', style: const TextStyle(color: Colors.white60, fontWeight: FontWeight.w700)),
+                        ],
                       ),
+                      const SizedBox(height: 10),
+                      if (selected.isEmpty)
+                        const Text('Nessun CF inserito.', style: TextStyle(color: Colors.white54))
+                      else
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: selected.map((cf) {
+                            final patient = _findPatient(patients, cf);
+                            final label = patient == null ? cf : '$cf · ${patient.fullName.trim().toUpperCase()}';
+                            return Chip(
+                              backgroundColor: AppColors.panelSoft,
+                              label: Text(label, style: const TextStyle(color: Colors.white)),
+                              deleteIconColor: Colors.white70,
+                              onDeleted: () => setLocalState(() => selected.remove(cf)),
+                            );
+                          }).toList(),
+                        ),
                     ],
                   ),
                 ),
@@ -152,8 +223,19 @@ class _FamiliesPageState extends State<FamiliesPage> {
                 TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Chiudi')),
                 FilledButton(
                   onPressed: () async {
+                    final pending = parseFiscalCodes(bulkController.text);
+                    if (pending.isNotEmpty) {
+                      selected.addAll(pending);
+                    }
                     final name = nameController.text.trim();
-                    if (name.isEmpty || selected.isEmpty) return;
+                    if (name.isEmpty) {
+                      setLocalState(() => errorText = 'Inserisci il nome del nucleo.');
+                      return;
+                    }
+                    if (selected.isEmpty) {
+                      setLocalState(() => errorText = 'Inserisci almeno un CF nel nucleo.');
+                      return;
+                    }
                     final family = FamilyGroup(
                       id: initial?.id ?? 'family_${DateTime.now().millisecondsSinceEpoch}',
                       name: name,
