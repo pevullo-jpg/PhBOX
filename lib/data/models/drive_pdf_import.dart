@@ -133,17 +133,26 @@ class DrivePdfImport {
       exemptionCode: _readString(map['exemptionCode'] ?? map['exemption'] ?? map['esenzione']),
       city: _readString(map['city'] ?? map['comune']),
       therapy: _readStringList(map['therapy'] ?? map['therapies'] ?? map['items']),
-      isDpc: _readBool(map['isDpc'] ?? map['dpc'] ?? map['dpcFlag']),
-      prescriptionCount: _readInt(map['prescriptionCount'] ?? map['sourceCount'] ?? map['recipeCount'] ?? map['count']) ?? 1,
+      isDpc: _readBool(map['isDpc'] ?? map['dpc'] ?? map['dpcFlag'] ?? map['mergeHasDpc']),
+      prescriptionCount: _readInt(
+            map['prescriptionCount'] ??
+            map['sourceCount'] ??
+            map['recipeCount'] ??
+            map['count'],
+          ) ??
+          1,
       prescriptionDate: _readDate(map['prescriptionDate'] ?? map['date'] ?? map['recipeDate']),
       webViewLink: _readString(
         map['webViewLink'] ??
+            map['openUrl'] ??
             map['viewLink'] ??
             map['driveViewLink'] ??
             map['fileUrl'] ??
             map['url'] ??
             map['link'] ??
-            map['alternateLink'],
+            map['alternateLink'] ??
+            map['mergedWebViewLink'] ??
+            map['downloadUrl'],
       ),
       sourceType: _readString(map['sourceType'] ?? map['source']).isEmpty ? 'script' : _readString(map['sourceType'] ?? map['source']),
       createdAt: _readDate(map['createdAt'] ?? map['importedAt']) ?? DateTime.now(),

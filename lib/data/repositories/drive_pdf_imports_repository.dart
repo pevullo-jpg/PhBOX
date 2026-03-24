@@ -18,10 +18,16 @@ class DrivePdfImportsRepository {
   Future<List<DrivePdfImport>> getAllImports() async {
     final List<Map<String, dynamic>> maps = await datasource.getCollection(
       collectionPath: AppCollections.drivePdfImports,
-      orderBy: 'updatedAt',
-      descending: true,
     );
-    return maps.map(DrivePdfImport.fromMap).toList();
+    final List<DrivePdfImport> items = maps.map(DrivePdfImport.fromMap).where((DrivePdfImport item) {
+      return item.patientFiscalCode.trim().isNotEmpty || item.patientFullName.trim().isNotEmpty;
+    }).toList();
+    items.sort((DrivePdfImport a, DrivePdfImport b) {
+      final DateTime aKey = a.prescriptionDate ?? a.updatedAt ?? a.createdAt;
+      final DateTime bKey = b.prescriptionDate ?? b.updatedAt ?? b.createdAt;
+      return bKey.compareTo(aKey);
+    });
+    return items;
   }
 
   Future<List<DrivePdfImport>> getImportsByPatient(String fiscalCode) async {

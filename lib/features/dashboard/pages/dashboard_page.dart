@@ -11,16 +11,16 @@ import '../../../data/models/advance.dart';
 import '../../../data/models/booking.dart';
 import '../../../data/models/debt.dart';
 import '../../../data/models/doctor_patient_link.dart';
-import '../../../data/models/family_group.dart';
 import '../../../data/models/drive_pdf_import.dart';
+import '../../../data/models/family_group.dart';
 import '../../../data/models/patient.dart';
 import '../../../data/models/prescription.dart';
 import '../../../data/repositories/advances_repository.dart';
 import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
 import '../../../data/repositories/doctor_patient_links_repository.dart';
-import '../../../data/repositories/families_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
+import '../../../data/repositories/family_groups_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
@@ -44,13 +44,12 @@ class _DashboardPageState extends State<DashboardPage> {
   late final BookingsRepository _bookingsRepository;
   late final DrivePdfImportsRepository _drivePdfImportsRepository;
   late final DoctorPatientLinksRepository _doctorPatientLinksRepository;
+  late final FamilyGroupsRepository _familyGroupsRepository;
   late final SettingsRepository _settingsRepository;
-  late final FamiliesRepository _familiesRepository;
 
   Future<_DashboardData>? _future;
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
-  _DashboardData? _latestLoadedData;
 
   @override
   void initState() {
@@ -66,8 +65,8 @@ class _DashboardPageState extends State<DashboardPage> {
     _bookingsRepository = BookingsRepository(datasource: datasource);
     _drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
     _doctorPatientLinksRepository = DoctorPatientLinksRepository(datasource: datasource);
+    _familyGroupsRepository = FamilyGroupsRepository(datasource: datasource);
     _settingsRepository = SettingsRepository(datasource: datasource);
-    _familiesRepository = FamiliesRepository(datasource: datasource);
     _future = _load();
     _searchController.addListener(() => setState(() {}));
   }
@@ -82,8 +81,8 @@ class _DashboardPageState extends State<DashboardPage> {
     final patients = await _patientsRepository.getAllPatients();
     final imports = await _drivePdfImportsRepository.getAllImports();
     final doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
+    final families = await _familyGroupsRepository.getAllFamilies();
     final settings = await _settingsRepository.getSettings();
-    final families = await _familiesRepository.getAllFamilies();
 
     final summaries = await Future.wait(
       patients.map((patient) async {
@@ -99,6 +98,7 @@ class _DashboardPageState extends State<DashboardPage> {
           advances: advances,
           bookings: bookings,
           doctorLinks: doctorLinks,
+          families: families,
         );
       }),
     );
@@ -113,7 +113,7 @@ class _DashboardPageState extends State<DashboardPage> {
     return _DashboardData(
       summaries: summaries,
       doctorsCatalog: settings.doctorsCatalog,
-      familyMembersByCf: _buildFamilyMembersMap(families),
+      families: families,
     );
   }
 
@@ -123,12 +123,38 @@ class _DashboardPageState extends State<DashboardPage> {
     });
   }
 
-  List<_PatientDashboardSummary> _applyFilters(List<_PatientDashboardSummary> input) {
+  List<_PatientDashboardSummary> _applyFilters(List<_PatientDashboardSummary> input, List<FamilyGroup> families) {
     final query = _searchController.text.trim().toLowerCase();
-    final data = _latestLoadedData;
-    final Map<String, _PatientDashboardSummary> summaryByCf = {
-      for (final item in input) item.patient.fiscalCode.trim().toUpperCase(): item,
-    };
+
+    bool matchesCardFilters(_PatientDashboardSummary item) {
+      final activeFilters = _activeCardFilters.where((filter) => filter != _DashboardCardFilter.assistiti).toList();
+      if (activeFilters.isEmpty) return true;
+      for (final filter in activeFilters) {
+        switch (filter) {
+          case _DashboardCardFilter.ricette:
+            if (item.recipeCount == 0) return false;
+            break;
+          case _DashboardCardFilter.dpc:
+            if (!item.hasDpc) return false;
+            break;
+          case _DashboardCardFilter.debiti:
+            if (item.debts.isEmpty) return false;
+            break;
+          case _DashboardCardFilter.anticipi:
+            if (item.advances.isEmpty) return false;
+            break;
+          case _DashboardCardFilter.prenotazioni:
+            if (item.bookings.isEmpty) return false;
+            break;
+          case _DashboardCardFilter.scadenze:
+            if (!item.hasExpiryAlert) return false;
+            break;
+          case _DashboardCardFilter.assistiti:
+            break;
+        }
+      }
+      return true;
+    }
 
     bool matchesSearch(_PatientDashboardSummary item) {
       if (query.isEmpty) return true;
@@ -139,94 +165,53 @@ class _DashboardPageState extends State<DashboardPage> {
           item.city.toLowerCase().contains(query);
     }
 
-    final base = input.where((item) {
-      if (!item.hasActiveContent) return false;
-      if (!_matchesActiveCardFilters(item)) return false;
-      return matchesSearch(item);
-    }).toList();
+    final filtered = input.where(matchesCardFilters).toList();
+    if (query.isEmpty) return filtered;
 
-    if (data == null || data.familyMembersByCf.isEmpty || base.isEmpty) {
-      return base;
-    }
-
-    final seen = <String>{
-      for (final item in base) item.patient.fiscalCode.trim().toUpperCase(),
+    final Map<String, _PatientDashboardSummary> byCf = {
+      for (final item in filtered) item.patient.fiscalCode.trim().toUpperCase(): item,
     };
-    final expanded = List<_PatientDashboardSummary>.from(base);
 
-    for (final item in base) {
-      final cf = item.patient.fiscalCode.trim().toUpperCase();
-      final related = data.familyMembersByCf[cf] ?? const <String>{};
-      for (final relatedCf in related) {
-        if (seen.contains(relatedCf)) continue;
-        final relatedSummary = summaryByCf[relatedCf];
-        if (relatedSummary == null) continue;
-        if (!relatedSummary.hasActiveContent) continue;
-        if (!_matchesActiveCardFilters(relatedSummary)) continue;
-        seen.add(relatedCf);
-        expanded.add(relatedSummary);
+    final Set<String> resultCfs = filtered.where(matchesSearch).map((item) => item.patient.fiscalCode.trim().toUpperCase()).toSet();
+
+    final Set<String> matchingFamilies = <String>{};
+    for (final family in families) {
+      final members = family.memberFiscalCodes.map((e) => e.trim().toUpperCase()).toSet();
+      final hasMemberMatch = members.any((cf) => resultCfs.contains(cf));
+      if (hasMemberMatch) {
+        matchingFamilies.add(family.id);
+        resultCfs.addAll(members.where(byCf.containsKey));
       }
     }
 
-    expanded.sort((a, b) {
-      if (a.hasExpiryAlert != b.hasExpiryAlert) {
-        return a.hasExpiryAlert ? -1 : 1;
-      }
+    final result = filtered.where((item) => resultCfs.contains(item.patient.fiscalCode.trim().toUpperCase())).toList();
+    result.sort((a, b) {
+      final aInFamily = matchingFamilies.contains(a.familyId);
+      final bInFamily = matchingFamilies.contains(b.familyId);
+      if (aInFamily != bInFamily) return aInFamily ? -1 : 1;
+      if (a.hasExpiryAlert != b.hasExpiryAlert) return a.hasExpiryAlert ? -1 : 1;
       return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
     });
-    return expanded;
-  }
-
-  bool _matchesActiveCardFilters(_PatientDashboardSummary item) {
-    for (final filter in _activeCardFilters) {
-      switch (filter) {
-        case _DashboardCardFilter.ricette:
-          if (item.recipeCount == 0) return false;
-          break;
-        case _DashboardCardFilter.dpc:
-          if (!item.hasDpc) return false;
-          break;
-        case _DashboardCardFilter.debiti:
-          if (item.debts.isEmpty) return false;
-          break;
-        case _DashboardCardFilter.anticipi:
-          if (item.advances.isEmpty) return false;
-          break;
-        case _DashboardCardFilter.prenotazioni:
-          if (item.bookings.isEmpty) return false;
-          break;
-        case _DashboardCardFilter.scadenze:
-          if (!item.hasExpiryAlert) return false;
-          break;
-        case _DashboardCardFilter.assistiti:
-          break;
-      }
-    }
-    return true;
-  }
-
-  Map<String, Set<String>> _buildFamilyMembersMap(List<FamilyGroup> families) {
-    final result = <String, Set<String>>{};
-    for (final family in families) {
-      final members = family.members.map((item) => item.trim().toUpperCase()).where((item) => item.isNotEmpty).toSet();
-      if (members.length < 2) continue;
-      for (final member in members) {
-        final others = Set<String>.from(members)..remove(member);
-        result.putIfAbsent(member, () => <String>{}).addAll(others);
-      }
-    }
     return result;
   }
-
 
 
   void _toggleCardFilter(_DashboardCardFilter filter) {
     setState(() {
       if (_activeCardFilters.contains(filter)) {
         _activeCardFilters.remove(filter);
-      } else {
-        _activeCardFilters.add(filter);
+        return;
       }
+
+      if (filter == _DashboardCardFilter.assistiti) {
+        _activeCardFilters
+          ..clear()
+          ..add(filter);
+        return;
+      }
+
+      _activeCardFilters.remove(_DashboardCardFilter.assistiti);
+      _activeCardFilters.add(filter);
     });
   }
 
@@ -1565,9 +1550,11 @@ class _DashboardPageState extends State<DashboardPage> {
       future: _future,
       builder: (context, snapshot) {
         final data = snapshot.data;
-        _latestLoadedData = data;
-        final summaries = data == null ? const <_PatientDashboardSummary>[] : _applyFilters(data.summaries);
+        final summaries = data == null ? const <_PatientDashboardSummary>[] : _applyFilters(data.summaries, data.families);
         final expiring = summaries.where((item) => item.hasExpiryAlert).toList();
+        final familyState = data == null
+            ? _DashboardFamilyState.empty()
+            : _DashboardFamilyState.fromFamilies(data.summaries, data.families);
         return Scaffold(
           backgroundColor: AppColors.background,
           body: Padding(
@@ -1598,8 +1585,8 @@ class _DashboardPageState extends State<DashboardPage> {
                               runSpacing: cardSpacing,
                               children: [
                                 _SummaryCard(
-                                  title: 'Assistiti attivi',
-                                  value: summaries.length.toString(),
+                                  title: 'Tutti gli assistiti',
+                                  value: data == null ? '0' : data.summaries.length.toString(),
                                   icon: Icons.people_alt_outlined,
                                   accent: AppColors.yellow,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.assistiti),
@@ -1745,10 +1732,29 @@ class _DashboardPageState extends State<DashboardPage> {
                                             child: TextButton(
                                               style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
                                               onPressed: () => _openPatient(item),
-                                              child: Text(
-                                                item.displayName,
-                                                textAlign: TextAlign.left,
-                                                style: const TextStyle(color: Colors.white, fontSize: 18.2, fontWeight: FontWeight.w800),
+                                              child: Row(
+                                                children: [
+                                                  if (item.familyId.isNotEmpty && familyState.hasMultipleActive(item.familyId)) ...[
+                                                    Container(
+                                                      width: 14,
+                                                      height: 14,
+                                                      decoration: BoxDecoration(
+                                                        color: familyState.colorFor(item.familyId),
+                                                        borderRadius: BorderRadius.circular(4),
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                  ],
+                                                  Expanded(
+                                                    child: Text(
+                                                      item.displayName,
+                                                      textAlign: TextAlign.left,
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                      style: const TextStyle(color: Colors.white, fontSize: 18.2, fontWeight: FontWeight.w800),
+                                                    ),
+                                                  ),
+                                                ],
                                               ),
                                             ),
                                           ),
@@ -1888,12 +1894,12 @@ class _DashboardPageState extends State<DashboardPage> {
 class _DashboardData {
   final List<_PatientDashboardSummary> summaries;
   final List<String> doctorsCatalog;
-  final Map<String, Set<String>> familyMembersByCf;
+  final List<FamilyGroup> families;
 
   const _DashboardData({
     required this.summaries,
     required this.doctorsCatalog,
-    required this.familyMembersByCf,
+    required this.families,
   });
 }
 
@@ -1910,6 +1916,7 @@ class _PatientDashboardSummary {
   final bool hasDpc;
   final int recipeCount;
   final bool hasExpiryAlert;
+  final String familyId;
 
   const _PatientDashboardSummary({
     required this.patient,
@@ -1924,6 +1931,7 @@ class _PatientDashboardSummary {
     required this.hasDpc,
     required this.recipeCount,
     required this.hasExpiryAlert,
+    required this.familyId,
   });
 
   String get displayName => patient.fullName.trim().isEmpty ? patient.fiscalCode : patient.fullName.trim();
@@ -1958,6 +1966,7 @@ class _PatientDashboardSummary {
     required List<Advance> advances,
     required List<Booking> bookings,
     required List<DoctorPatientLink> doctorLinks,
+    required List<FamilyGroup> families,
   }) {
     final normalizedFiscalCode = patient.fiscalCode.trim().toUpperCase();
     final normalizedFullName = patient.fullName.trim().toUpperCase();
@@ -2004,6 +2013,14 @@ class _PatientDashboardSummary {
       final info = PrescriptionExpiryUtils.evaluate(item.expiryDate);
       return info.status == PrescriptionValidityStatus.expiringSoon || info.status == PrescriptionValidityStatus.expired;
     });
+    final familyId = (() {
+      for (final family in families) {
+        if (family.memberFiscalCodes.map((e) => e.trim().toUpperCase()).contains(normalizedFiscalCode)) {
+          return family.id;
+        }
+      }
+      return '';
+    })();
     return _PatientDashboardSummary(
       patient: patient,
       doctorName: doctorName.isEmpty ? '-' : doctorName,
@@ -2017,6 +2034,7 @@ class _PatientDashboardSummary {
       hasDpc: hasDpc,
       recipeCount: recipeCount,
       hasExpiryAlert: hasExpiryAlert,
+      familyId: familyId,
     );
   }
 }
@@ -2042,6 +2060,41 @@ String _dashboardFormatDate(DateTime? date) {
   return '$day/$month/$year';
 }
 
+
+
+class _DashboardFamilyState {
+  final Map<String, int> activeCounts;
+  final Map<String, Color> colors;
+
+  const _DashboardFamilyState({required this.activeCounts, required this.colors});
+
+  factory _DashboardFamilyState.empty() => const _DashboardFamilyState(activeCounts: <String, int>{}, colors: <String, Color>{});
+
+  factory _DashboardFamilyState.fromFamilies(List<_PatientDashboardSummary> summaries, List<FamilyGroup> families) {
+    const palette = <Color>[
+      Color(0xFF2563EB),
+      Color(0xFF059669),
+      Color(0xFFD97706),
+      Color(0xFFDC2626),
+      Color(0xFF7C3AED),
+      Color(0xFF0891B2),
+      Color(0xFF65A30D),
+      Color(0xFFEA580C),
+    ];
+    final counts = <String, int>{};
+    final colors = <String, Color>{};
+    for (final family in families) {
+      final activeCount = summaries.where((item) => item.familyId == family.id && item.hasActiveContent).length;
+      counts[family.id] = activeCount;
+      colors[family.id] = palette[family.colorIndex % palette.length];
+    }
+    return _DashboardFamilyState(activeCounts: counts, colors: colors);
+  }
+
+  bool hasMultipleActive(String familyId) => (activeCounts[familyId] ?? 0) > 1;
+
+  Color colorFor(String familyId) => colors[familyId] ?? AppColors.yellow;
+}
 
 class _SummaryCard extends StatelessWidget {
   final String title;

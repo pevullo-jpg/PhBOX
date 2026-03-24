@@ -55,7 +55,7 @@ class FloatingPageMenu extends StatelessWidget {
                     onTap: () => onSelected(0),
                   ),
                   _MenuIconButton(
-                    icon: Icons.groups_rounded,
+                    icon: Icons.family_restroom_rounded,
                     tooltip: 'Famiglie',
                     selected: currentIndex == 1,
                     onTap: () => onSelected(1),
