@@ -10,12 +10,37 @@ class DoctorPatientLinksRepository {
   Future<List<DoctorPatientLink>> getAllLinks() async {
     final List<Map<String, dynamic>> maps = await datasource.getCollection(
       collectionPath: AppCollections.doctorPatientLinks,
-      orderBy: 'updatedAt',
-      descending: true,
     );
     return maps.map(DoctorPatientLink.fromMap).where((DoctorPatientLink item) {
       return item.patientFiscalCode.isNotEmpty && item.doctorName.isNotEmpty;
     }).toList();
+  }
+
+
+
+  Future<void> saveLink({
+    required String patientFiscalCode,
+    required String patientFullName,
+    required String doctorFullName,
+    String? city,
+  }) {
+    final String normalizedCf = patientFiscalCode.trim().toUpperCase();
+    final String normalizedDoctor = doctorFullName.trim();
+    final DateTime now = DateTime.now();
+    final String documentId = '${normalizedCf}__manual';
+    return datasource.setDocument(
+      collectionPath: AppCollections.doctorPatientLinks,
+      documentId: documentId,
+      data: <String, dynamic>{
+        'id': documentId,
+        'patientFiscalCode': normalizedCf,
+        'patientFullName': patientFullName.trim(),
+        'doctorFullName': normalizedDoctor,
+        'doctorName': normalizedDoctor,
+        'city': city?.trim(),
+        'updatedAt': now.toIso8601String(),
+      },
+    );
   }
 
   Future<String?> getDoctorForPatient(String fiscalCode) async {

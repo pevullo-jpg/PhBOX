@@ -266,12 +266,30 @@ class _DashboardPageState extends State<DashboardPage> {
                           leading: const Icon(Icons.picture_as_pdf, color: AppColors.coral),
                           title: Text(item.fileName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
                           subtitle: Text(
-                            _formatDate(item.prescriptionDate ?? item.createdAt),
+                            '${_formatDate(item.prescriptionDate ?? item.createdAt)} · ${item.doctorFullName.trim().isEmpty ? '-' : item.doctorFullName.trim()}',
                             style: const TextStyle(color: Colors.white70),
                           ),
-                          trailing: TextButton(
-                            onPressed: () => _openPdf(item),
-                            child: const Text('Apri'),
+                          trailing: Wrap(
+                            spacing: 4,
+                            children: [
+                              IconButton(
+                                tooltip: 'Elimina ricetta',
+                                onPressed: () async {
+                                  final bool confirmed = await _confirmDeleteRecipe(item);
+                                  if (!confirmed) return;
+                                  await _drivePdfImportsRepository.softDeleteImport(item.id);
+                                  if (mounted) {
+                                    Navigator.of(context).pop();
+                                    _refresh();
+                                  }
+                                },
+                                icon: const Icon(Icons.delete_outline, color: AppColors.red),
+                              ),
+                              TextButton(
+                                onPressed: () => _openPdf(item),
+                                child: const Text('Apri'),
+                              ),
+                            ],
                           ),
                         );
                       }).toList(),
@@ -284,6 +302,26 @@ class _DashboardPageState extends State<DashboardPage> {
         );
       },
     );
+  }
+
+
+  Future<bool> _confirmDeleteRecipe(DrivePdfImport item) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.panel,
+        title: const Text('Elimina ricetta', style: TextStyle(color: Colors.white)),
+        content: Text(
+          'La ricetta ${item.fileName} verrà rimossa dalla dashboard mantenendo i dati estratti nel database. Continuare?',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Annulla', style: TextStyle(color: Colors.white70))),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Elimina')),
+        ],
+      ),
+    );
+    return confirmed == true;
   }
 
 
@@ -444,18 +482,27 @@ class _DashboardPageState extends State<DashboardPage> {
         throw Exception('Farmaco e medico sono obbligatori.');
       }
       final now = DateTime.now();
+      final String normalizedDoctor = selectedDoctor.trim();
       await _advancesRepository.saveAdvance(
         Advance(
           id: 'adv_${now.microsecondsSinceEpoch}',
           patientFiscalCode: summary.patient.fiscalCode,
           patientName: summary.patient.fullName,
           drugName: drugController.text.trim(),
-          doctorName: selectedDoctor.trim(),
+          doctorName: normalizedDoctor,
           note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
           createdAt: now,
           updatedAt: now,
         ),
       );
+      await _doctorPatientLinksRepository.saveLink(
+        patientFiscalCode: summary.patient.fiscalCode,
+        patientFullName: summary.patient.fullName,
+        doctorFullName: normalizedDoctor,
+        city: summary.city == '-' ? null : summary.city,
+      );
+      final Patient refreshedPatient = summary.patient.copyWith(doctorName: normalizedDoctor, updatedAt: now);
+      await _patientsRepository.savePatient(refreshedPatient);
       _refresh();
       return true;
     } catch (e) {
@@ -1570,8 +1617,8 @@ class _DashboardPageState extends State<DashboardPage> {
                   builder: (context, constraints) {
                     const double cardWidth = 220;
                     const double cardSpacing = 12;
-                    final double cardsBlockWidth = constraints.maxWidth >= ((cardWidth * 5) + (cardSpacing * 4))
-                        ? ((cardWidth * 5) + (cardSpacing * 4))
+                    final double cardsBlockWidth = constraints.maxWidth >= ((cardWidth * 7) + (cardSpacing * 6))
+                        ? ((cardWidth * 7) + (cardSpacing * 6))
                         : constraints.maxWidth;
                     return Column(
                       children: [
@@ -1617,10 +1664,26 @@ class _DashboardPageState extends State<DashboardPage> {
                                   onTap: () => _toggleCardFilter(_DashboardCardFilter.debiti),
                                 ),
                                 _SummaryCard(
+                                  title: 'Anticipi',
+                                  value: summaries.fold<int>(0, (sum, item) => sum + item.advances.length).toString(),
+                                  icon: Icons.payments_outlined,
+                                  accent: AppColors.amber,
+                                  isSelected: _activeCardFilters.contains(_DashboardCardFilter.anticipi),
+                                  onTap: () => _toggleCardFilter(_DashboardCardFilter.anticipi),
+                                ),
+                                _SummaryCard(
+                                  title: 'Prenotazioni',
+                                  value: summaries.fold<int>(0, (sum, item) => sum + item.bookings.length).toString(),
+                                  icon: Icons.event_note_outlined,
+                                  accent: AppColors.yellow,
+                                  isSelected: _activeCardFilters.contains(_DashboardCardFilter.prenotazioni),
+                                  onTap: () => _toggleCardFilter(_DashboardCardFilter.prenotazioni),
+                                ),
+                                _SummaryCard(
                                   title: 'In scadenza',
                                   value: expiring.length.toString(),
                                   icon: Icons.warning_amber_rounded,
-                                  accent: AppColors.amber,
+                                  accent: AppColors.coral,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.scadenze),
                                   onTap: () => _toggleCardFilter(_DashboardCardFilter.scadenze),
                                 ),
@@ -1828,7 +1891,28 @@ class _DashboardPageState extends State<DashboardPage> {
       _QuickEditFlag(onTap: () => _handleFlagTap(item, 'quick-edit')),
     ];
     if (item.recipeCount > 0 && item.imports.isNotEmpty) {
-      widgets.add(_FlagChip(label: 'ricette ${item.recipeCount}', color: AppColors.green, onTap: () => _handleFlagTap(item, 'ricette')));
+      widgets.add(
+        Container(
+          padding: const EdgeInsets.only(right: 4),
+          decoration: BoxDecoration(
+            color: AppColors.green,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _FlagChip(label: 'ricette ${item.recipeCount}', color: AppColors.green, onTap: () => _handleFlagTap(item, 'ricette')),
+              IconButton(
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Elimina ricetta',
+                onPressed: () => _deleteRecipesFromRow(item),
+                icon: const Icon(Icons.delete_outline, color: Colors.white, size: 18),
+              ),
+            ],
+          ),
+        ),
+      );
     }
     if (item.dpcItems.isNotEmpty) {
       widgets.add(_FlagChip(label: 'DPC ${item.dpcItems.length}', color: AppColors.coral, onTap: () => _handleFlagTap(item, 'dpc')));
@@ -1844,6 +1928,51 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     return widgets;
   }
+
+  Future<void> _deleteRecipesFromRow(_PatientDashboardSummary summary) async {
+    if (summary.imports.isEmpty) return;
+    if (summary.imports.length == 1) {
+      final item = summary.imports.first;
+      final confirmed = await _confirmDeleteRecipe(item);
+      if (!confirmed) return;
+      await _drivePdfImportsRepository.softDeleteImport(item.id);
+      _refresh();
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setLocalState) {
+          bool busy = false;
+          Future<void> handleDelete(DrivePdfImport item) async {
+            final confirmed = await _confirmDeleteRecipe(item);
+            if (!confirmed) return;
+            setLocalState(() => busy = true);
+            await _drivePdfImportsRepository.softDeleteImport(item.id);
+            await _refresh();
+            setLocalState(() => busy = false);
+            if (!mounted) return;
+            Navigator.of(dialogContext).pop();
+          }
+          return Stack(
+            children: [
+              _buildFlagDialog(
+                title: 'Elimina ricette · ${summary.displayName}',
+                items: summary.imports.map((item) => _FlagItem(
+                  title: item.fileName,
+                  subtitle: '${_formatDate(item.prescriptionDate ?? item.createdAt)} · ${item.doctorFullName.trim().isEmpty ? '-' : item.doctorFullName.trim()}',
+                  onDelete: () => handleDelete(item),
+                )).toList(),
+                dialogContext: dialogContext,
+              ),
+              if (busy) const Positioned.fill(child: ColoredBox(color: Color(0x66000000), child: Center(child: CircularProgressIndicator()))),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
 
   Widget _dialogField(
     TextEditingController controller,
@@ -1987,7 +2116,7 @@ class _PatientDashboardSummary {
         ? matchingDoctor.first.doctorName.trim()
         : ((patient.doctorName ?? '').trim().isNotEmpty
             ? patient.doctorName!.trim()
-            : (prescriptionDoctor.isNotEmpty ? prescriptionDoctor : importDoctor));
+            : (importDoctor.isNotEmpty ? importDoctor : prescriptionDoctor));
     final exemptionCode = (patient.exemptionCode ?? '').trim().isNotEmpty
         ? patient.exemptionCode!.trim()
         : (() {

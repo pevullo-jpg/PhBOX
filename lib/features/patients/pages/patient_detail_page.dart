@@ -472,6 +472,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       if (drugController.text.trim().isEmpty || doctor.isEmpty || doctor == '-') {
         throw Exception('Farmaco e medico sono obbligatori.');
       }
+      final now = DateTime.now();
       await _advancesRepository.saveAdvance(
         Advance(
           id: _localId('advance'),
@@ -480,10 +481,17 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
           drugName: drugController.text.trim(),
           doctorName: doctor,
           note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
+          createdAt: now,
+          updatedAt: now,
         ),
       );
+      await _doctorPatientLinksRepository.saveLink(
+        patientFiscalCode: patient.fiscalCode,
+        patientFullName: patient.fullName,
+        doctorFullName: doctor,
+        city: patient.city,
+      );
+      await _patientsRepository.savePatient(patient.copyWith(doctorName: doctor, updatedAt: now));
       _refresh('Anticipo aggiunto.');
     } catch (e) {
       setState(() => _message = 'Errore salvataggio anticipo: $e');

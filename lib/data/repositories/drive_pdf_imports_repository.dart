@@ -20,7 +20,7 @@ class DrivePdfImportsRepository {
       collectionPath: AppCollections.drivePdfImports,
     );
     final List<DrivePdfImport> items = maps.map(DrivePdfImport.fromMap).where((DrivePdfImport item) {
-      return item.patientFiscalCode.trim().isNotEmpty || item.patientFullName.trim().isNotEmpty;
+      return (item.patientFiscalCode.trim().isNotEmpty || item.patientFullName.trim().isNotEmpty) && item.status.trim().toLowerCase() != 'deleted';
     }).toList();
     items.sort((DrivePdfImport a, DrivePdfImport b) {
       final DateTime aKey = a.prescriptionDate ?? a.updatedAt ?? a.createdAt;
@@ -45,6 +45,25 @@ class DrivePdfImportsRepository {
     return datasource.deleteDocument(
       collectionPath: AppCollections.drivePdfImports,
       documentId: id,
+    );
+  }
+
+  Future<void> softDeleteImport(String id) async {
+    final Map<String, dynamic>? current = await datasource.getDocument(
+      collectionPath: AppCollections.drivePdfImports,
+      documentId: id,
+    );
+    if (current == null) return;
+    final Map<String, dynamic> next = <String, dynamic>{...current};
+    next['status'] = 'deleted';
+    next['deletedAt'] = DateTime.now().toIso8601String();
+    next['deleteMode'] = 'pdf_only_requested';
+    next['webViewLink'] = '';
+    next['openUrl'] = '';
+    await datasource.setDocument(
+      collectionPath: AppCollections.drivePdfImports,
+      documentId: id,
+      data: next,
     );
   }
 
