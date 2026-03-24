@@ -54,6 +54,16 @@ class DoctorPatientLink {
     return value.toString().trim();
   }
 
+
+
+  static String _extractSurname(String fullName) {
+    final String normalized = fullName.trim();
+    if (normalized.isEmpty) return '';
+    final parts = normalized.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
+    if (parts.isEmpty) return '';
+    return parts.first.trim();
+  }
+
   static DateTime? _readDate(dynamic value) {
     if (value == null) return null;
     if (value is DateTime) return value;
