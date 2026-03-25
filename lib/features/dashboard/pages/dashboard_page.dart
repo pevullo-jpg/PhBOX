@@ -2093,6 +2093,8 @@ class _PatientDashboardSummary {
     final matchingImports = imports.where((item) {
       final importFiscalCode = item.patientFiscalCode.trim().toUpperCase();
       final importFullName = item.patientFullName.trim().toUpperCase();
+      final notDeleted = item.pdfDeleted != true && item.status.trim().toLowerCase() != 'deleted_pdf';
+      if (!notDeleted) return false;
       if (importFiscalCode.isNotEmpty) {
         return importFiscalCode == normalizedFiscalCode;
       }

@@ -20,7 +20,8 @@ class DrivePdfImportsRepository {
       collectionPath: AppCollections.drivePdfImports,
     );
     final List<DrivePdfImport> items = maps.map(DrivePdfImport.fromMap).where((DrivePdfImport item) {
-      return (item.patientFiscalCode.trim().isNotEmpty || item.patientFullName.trim().isNotEmpty) && item.status.trim().toLowerCase() != 'deleted';
+      final status = item.status.trim().toLowerCase();
+      return (item.patientFiscalCode.trim().isNotEmpty || item.patientFullName.trim().isNotEmpty) && status != 'deleted' && status != 'deleted_pdf' && item.pdfDeleted != true;
     }).toList();
     items.sort((DrivePdfImport a, DrivePdfImport b) {
       final DateTime aKey = a.prescriptionDate ?? a.updatedAt ?? a.createdAt;

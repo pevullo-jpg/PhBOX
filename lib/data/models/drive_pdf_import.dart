@@ -15,6 +15,7 @@ class DrivePdfImport {
   final int prescriptionCount;
   final DateTime? prescriptionDate;
   final String webViewLink;
+  final bool pdfDeleted;
   final String sourceType;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -36,6 +37,7 @@ class DrivePdfImport {
     this.prescriptionCount = 1,
     this.prescriptionDate,
     this.webViewLink = '',
+    this.pdfDeleted = false,
     this.sourceType = 'script',
     required this.createdAt,
     required this.updatedAt,
@@ -58,6 +60,7 @@ class DrivePdfImport {
     int? prescriptionCount,
     DateTime? prescriptionDate,
     String? webViewLink,
+    bool? pdfDeleted,
     String? sourceType,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -79,6 +82,7 @@ class DrivePdfImport {
       prescriptionCount: prescriptionCount ?? this.prescriptionCount,
       prescriptionDate: prescriptionDate ?? this.prescriptionDate,
       webViewLink: webViewLink ?? this.webViewLink,
+      pdfDeleted: pdfDeleted ?? this.pdfDeleted,
       sourceType: sourceType ?? this.sourceType,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -103,6 +107,7 @@ class DrivePdfImport {
       'prescriptionCount': prescriptionCount,
       'prescriptionDate': prescriptionDate?.toIso8601String(),
       'webViewLink': webViewLink,
+      'pdfDeleted': pdfDeleted,
       'sourceType': sourceType,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
@@ -154,6 +159,7 @@ class DrivePdfImport {
             map['mergedWebViewLink'] ??
             map['downloadUrl'],
       ),
+      pdfDeleted: _readBool(map['pdfDeleted']) || _readString(map['status']).toLowerCase() == 'deleted_pdf',
       sourceType: _readString(map['sourceType'] ?? map['source']).isEmpty ? 'script' : _readString(map['sourceType'] ?? map['source']),
       createdAt: _readDate(map['createdAt'] ?? map['importedAt']) ?? DateTime.now(),
       updatedAt: _readDate(map['updatedAt'] ?? map['manifestUpdatedAt']) ?? DateTime.now(),
