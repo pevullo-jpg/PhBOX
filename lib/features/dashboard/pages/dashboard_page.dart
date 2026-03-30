@@ -5,6 +5,7 @@ import 'dart:math' as math;
 
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/utils/doctor_display_utils.dart';
 import '../../../core/utils/prescription_expiry_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
@@ -121,6 +122,21 @@ class _DashboardPageState extends State<DashboardPage> {
     setState(() {
       _future = _load();
     });
+  }
+
+  String _buildTemporaryPatientFiscalCode({
+    required DateTime now,
+    required String name,
+    required String surname,
+  }) {
+    final String seed = '$name $surname'
+        .trim()
+        .toUpperCase()
+        .replaceAll(RegExp(r'[^A-Z0-9]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_|_$'), '');
+    final String suffix = seed.isEmpty ? 'NO_NAME' : seed;
+    return 'TMP_PATIENT_${now.microsecondsSinceEpoch}_$suffix';
   }
 
   List<_PatientDashboardSummary> _applyFilters(List<_PatientDashboardSummary> input, List<FamilyGroup> families) {
@@ -267,7 +283,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 onPressed: () async {
                                   final bool confirmed = await _confirmDeleteRecipe(item);
                                   if (!confirmed) return;
-                                  await _drivePdfImportsRepository.softDeleteImport(item.id);
+                                  await _prescriptionsRepository.requestPdfDeletion(summary.patient.fiscalCode, item.id);
                                   if (mounted) {
                                     Navigator.of(context).pop();
                                     _refresh();
@@ -768,7 +784,7 @@ class _DashboardPageState extends State<DashboardPage> {
               return currentSummary.advances
                   .map((item) => _FlagItem(
                         title: item.drugName,
-                        subtitle: '${item.doctorName.isEmpty ? '-' : item.doctorName} · ${_formatDate(item.createdAt)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
+                        subtitle: '${DoctorDisplayUtils.bestDisplay(preferred: item.doctorName, fallbacks: [currentSummary.doctorName])} · ${_formatDate(item.createdAt)}${item.note == null || item.note!.trim().isEmpty ? '' : ' · ${item.note!.trim()}'}',
                         onDelete: () async {
                           await runBusyAction(setLocalState, () async {
                             await _advancesRepository.deleteAdvance(currentSummary.patient.fiscalCode, item.id);
@@ -1415,12 +1431,16 @@ class _DashboardPageState extends State<DashboardPage> {
       final fiscalCode = fiscalCodeController.text.trim().toUpperCase();
       final name = nameController.text.trim();
       final surname = surnameController.text.trim();
-      if (fiscalCode.isEmpty || name.isEmpty || surname.isEmpty) {
-        throw Exception('Codice fiscale, nome e cognome sono obbligatori.');
+      final fullName = '$name $surname'.trim();
+      if (fiscalCode.isEmpty && fullName.isEmpty) {
+        throw Exception('Inserisci almeno il codice fiscale oppure nome e cognome.');
       }
 
       final now = DateTime.now();
-      final fullName = '$name $surname'.trim();
+      final patientFiscalCode = fiscalCode.isEmpty
+          ? _buildTemporaryPatientFiscalCode(now: now, name: name, surname: surname)
+          : fiscalCode;
+      final patientDisplayName = fullName.isEmpty ? patientFiscalCode : fullName;
       final advanceText = advanceController.text.trim();
       final bookingText = bookingController.text.trim();
       final debtValue = double.tryParse(debtController.text.trim().replaceAll(',', '.')) ?? 0;
@@ -1435,8 +1455,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
       await _patientsRepository.savePatient(
         Patient(
-          fiscalCode: fiscalCode,
+          fiscalCode: patientFiscalCode,
           fullName: fullName,
+          doctorName: selectedDoctor.trim().isEmpty ? null : selectedDoctor.trim(),
           hasDebt: debtValue > 0,
           debtTotal: debtValue > 0 ? debtValue : 0,
           hasAdvance: advanceText.isNotEmpty,
@@ -1450,13 +1471,18 @@ class _DashboardPageState extends State<DashboardPage> {
         await _advancesRepository.saveAdvance(
           Advance(
             id: 'adv_${now.microsecondsSinceEpoch}',
-            patientFiscalCode: fiscalCode,
-            patientName: fullName,
+            patientFiscalCode: patientFiscalCode,
+            patientName: patientDisplayName,
             drugName: advanceText,
             doctorName: selectedDoctor.trim(),
             createdAt: now,
             updatedAt: now,
           ),
+        );
+        await _doctorPatientLinksRepository.saveLink(
+          patientFiscalCode: patientFiscalCode,
+          patientFullName: patientDisplayName,
+          doctorFullName: selectedDoctor.trim(),
         );
       }
 
@@ -1464,8 +1490,8 @@ class _DashboardPageState extends State<DashboardPage> {
         await _bookingsRepository.saveBooking(
           Booking(
             id: 'book_${now.microsecondsSinceEpoch}',
-            patientFiscalCode: fiscalCode,
-            patientName: fullName,
+            patientFiscalCode: patientFiscalCode,
+            patientName: patientDisplayName,
             drugName: bookingText,
             createdAt: now,
             expectedDate: now,
@@ -1477,8 +1503,8 @@ class _DashboardPageState extends State<DashboardPage> {
         await _debtsRepository.saveDebt(
           Debt(
             id: 'debt_${now.microsecondsSinceEpoch}',
-            patientFiscalCode: fiscalCode,
-            patientName: fullName,
+            patientFiscalCode: patientFiscalCode,
+            patientName: patientDisplayName,
             description: debtDescription,
             amount: debtValue,
             paidAmount: 0,
@@ -1812,7 +1838,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                               style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
                                               onPressed: () => _openPatient(item),
                                               child: Text(
-                                                item.patient.fiscalCode,
+                                                item.patient.displayFiscalCode,
                                                 textAlign: TextAlign.left,
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
@@ -1823,7 +1849,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                           SizedBox(
                                             width: 240,
                                             child: Text(
-                                              item.doctorSurnameUpper,
+                                              item.doctorNameUpper,
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
                                               style: const TextStyle(color: Colors.white, fontSize: 18.2, fontWeight: FontWeight.w700),
@@ -1831,7 +1857,12 @@ class _DashboardPageState extends State<DashboardPage> {
                                           ),
                                           SizedBox(
                                             width: 120,
-                                            child: Text(item.exemptionCode, style: const TextStyle(color: Colors.white70, fontSize: 18.2)),
+                                            child: Text(
+                                              item.exemptionCode,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(color: Colors.white70, fontSize: 18.2),
+                                            ),
                                           ),
                                           Expanded(
                                             child: Wrap(
@@ -1920,7 +1951,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final item = summary.imports.first;
       final confirmed = await _confirmDeleteRecipe(item);
       if (!confirmed) return;
-      await _drivePdfImportsRepository.softDeleteImport(item.id);
+      await _prescriptionsRepository.requestPdfDeletion(summary.patient.fiscalCode, item.id);
       _refresh();
       return;
     }
@@ -1933,7 +1964,7 @@ class _DashboardPageState extends State<DashboardPage> {
             final confirmed = await _confirmDeleteRecipe(item);
             if (!confirmed) return;
             setLocalState(() => busy = true);
-            await _drivePdfImportsRepository.softDeleteImport(item.id);
+            await _prescriptionsRepository.requestPdfDeletion(summary.patient.fiscalCode, item.id);
             _refresh();
             setLocalState(() => busy = false);
             if (!mounted) return;
@@ -2048,17 +2079,11 @@ class _PatientDashboardSummary {
     required this.familyId,
   });
 
-  String get displayName => patient.fullName.trim().isEmpty ? patient.fiscalCode : patient.fullName.trim();
+  String get displayName => patient.fullName.trim().isEmpty ? patient.displayFiscalCode : patient.fullName.trim();
 
   double get totalDebt => debts.fold<double>(0, (sum, item) => sum + item.residualAmount);
 
   String get doctorNameUpper => doctorName.trim().isEmpty ? '-' : doctorName.trim().toUpperCase();
-  String get doctorSurnameUpper {
-    final String cleaned = doctorName.trim();
-    if (cleaned.isEmpty || cleaned == '-') return '-';
-    final parts = cleaned.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
-    return (parts.isEmpty ? cleaned : parts.first).toUpperCase();
-  }
 
   bool get hasActiveContent => recipeCount > 0 || hasDpc || debts.isNotEmpty || advances.isNotEmpty || bookings.isNotEmpty;
 
@@ -2066,7 +2091,7 @@ class _PatientDashboardSummary {
     final fromPrescriptions = prescriptions.where((item) => item.dpcFlag).map((item) {
       return _FlagItem(
         title: _dashboardPrescriptionTitle(item),
-        subtitle: '${_dashboardFormatDate(item.prescriptionDate)} · ${(item.doctorName ?? '-').trim().isEmpty ? '-' : item.doctorName!.trim()}',
+        subtitle: '${_dashboardFormatDate(item.prescriptionDate)} · ${DoctorDisplayUtils.bestDisplay(preferred: item.doctorName, fallbacks: [doctorName])}',
       );
     });
     final fromImports = imports.where((item) => item.isDpc).map((item) {
@@ -2107,18 +2132,17 @@ class _PatientDashboardSummary {
     final importDoctor = matchingImports.map((e) => e.doctorFullName.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '');
     final linkDoctorFull = matchingDoctor.map((e) => e.doctorFullName.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '');
     final patientDoctor = (patient.doctorName ?? '').trim();
-    final doctorName = linkDoctorFull.isNotEmpty
-        ? linkDoctorFull
-        : (patientDoctor.isNotEmpty
-            ? patientDoctor
-            : (importDoctor.isNotEmpty ? importDoctor : prescriptionDoctor));
-    final exemptionCode = (patient.exemptionCode ?? '').trim().isNotEmpty
-        ? patient.exemptionCode!.trim()
-        : (() {
-            final fromPrescription = prescriptions.map((e) => e.exemptionCode?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '');
-            if (fromPrescription.isNotEmpty) return fromPrescription;
-            return matchingImports.map((e) => e.exemptionCode.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '-');
-          })();
+    final doctorName = DoctorDisplayUtils.bestDisplay(
+      preferred: linkDoctorFull,
+      fallbacks: [patientDoctor, importDoctor, prescriptionDoctor],
+    );
+    final List<String> allExemptions = Patient.normalizeExemptionCodes(<dynamic>[
+      patient.exemptionCode,
+      patient.exemptionCodes,
+      ...prescriptions.map((e) => e.exemptionCode),
+      ...matchingImports.map((e) => e.exemptionCode),
+    ]);
+    final exemptionCode = allExemptions.isEmpty ? '-' : allExemptions.join(', ');
     final city = (patient.city ?? '').trim().isNotEmpty
         ? patient.city!.trim()
         : (() {
@@ -2128,10 +2152,7 @@ class _PatientDashboardSummary {
           })();
     final int importsRecipeCount = matchingImports.fold<int>(0, (sum, item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
     final int prescriptionsRecipeCount = prescriptions.fold<int>(0, (sum, item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
-    final int patientRecipeCount = patient.archivedRecipeCount > 0 ? patient.archivedRecipeCount : 0;
-    final recipeCount = importsRecipeCount > 0
-        ? importsRecipeCount
-        : (prescriptionsRecipeCount > 0 ? prescriptionsRecipeCount : (matchingImports.isNotEmpty ? matchingImports.length : patientRecipeCount));
+    final recipeCount = importsRecipeCount > 0 ? importsRecipeCount : prescriptionsRecipeCount;
     final hasDpc = prescriptions.any((item) => item.dpcFlag) || matchingImports.any((item) => item.isDpc);
     final hasExpiryAlert = prescriptions.any((item) {
       final info = PrescriptionExpiryUtils.evaluate(item.expiryDate);

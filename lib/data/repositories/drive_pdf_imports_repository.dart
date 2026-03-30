@@ -56,7 +56,7 @@ class DrivePdfImportsRepository {
     );
     if (current == null) return;
     final Map<String, dynamic> next = <String, dynamic>{...current};
-    next['status'] = 'deleted';
+    next['status'] = 'deleted_pdf';
     next['deletedAt'] = DateTime.now().toIso8601String();
     next['deleteMode'] = 'pdf_only_requested';
     next['deletePdfRequested'] = true;

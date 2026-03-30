@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/utils/doctor_display_utils.dart';
 import '../../../core/utils/prescription_expiry_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
@@ -108,18 +109,25 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     required List<Advance> advances,
   }) {
     for (final link in doctorLinks) {
-      if (link.patientFiscalCode == widget.fiscalCode.trim().toUpperCase() && link.doctorName.trim().isNotEmpty) {
-        return link.doctorName.trim();
+      final String candidate = DoctorDisplayUtils.bestDisplay(
+        preferred: link.doctorFullName,
+        fallbacks: [link.doctorName],
+      );
+      if (link.patientFiscalCode == widget.fiscalCode.trim().toUpperCase() && candidate != '-') {
+        return candidate;
       }
     }
-    if (patient != null && (patient.doctorName ?? '').trim().isNotEmpty) {
-      return patient.doctorName!.trim();
+    final String patientDoctor = DoctorDisplayUtils.bestDisplay(preferred: patient?.doctorName);
+    if (patientDoctor != '-') {
+      return patientDoctor;
     }
     for (final advance in advances) {
-      if (advance.doctorName.trim().isNotEmpty) return advance.doctorName.trim();
+      final String candidate = DoctorDisplayUtils.bestDisplay(preferred: advance.doctorName);
+      if (candidate != '-') return candidate;
     }
     for (final prescription in prescriptions) {
-      if ((prescription.doctorName ?? '').trim().isNotEmpty) return prescription.doctorName!.trim();
+      final String candidate = DoctorDisplayUtils.bestDisplay(preferred: prescription.doctorName);
+      if (candidate != '-') return candidate;
     }
     return '-';
   }
@@ -219,7 +227,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         final expiryInfo = PrescriptionExpiryUtils.evaluate(prescription.expiryDate);
         return _managerCard(
           title: _prescriptionLabel(prescription),
-          subtitle: '${_formatDate(prescription.prescriptionDate)} · ${prescription.doctorName ?? '-'} · ${expiryInfo.label}',
+          subtitle: '${_formatDate(prescription.prescriptionDate)} · ${DoctorDisplayUtils.bestDisplay(preferred: prescription.doctorName, fallbacks: [data.resolvedDoctorName])} · ${expiryInfo.label}',
           actions: [
             if (matchingImport != null)
               TextButton.icon(
@@ -287,7 +295,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       children: data.advances.map((advance) {
         return _managerCard(
           title: advance.drugName,
-          subtitle: '${advance.doctorName.isEmpty ? '-' : advance.doctorName} · ${_formatDate(advance.createdAt)}',
+          subtitle: '${DoctorDisplayUtils.bestDisplay(preferred: advance.doctorName, fallbacks: [data.resolvedDoctorName])} · ${_formatDate(advance.createdAt)}',
           actions: [
             IconButton(
               onPressed: () => _deleteAdvance(patient, advance),
@@ -506,10 +514,12 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       return data.resolvedDoctorName.trim();
     }
     for (final advance in data.advances) {
-      if (advance.doctorName.trim().isNotEmpty) return advance.doctorName.trim();
+      final String candidate = DoctorDisplayUtils.bestDisplay(preferred: advance.doctorName);
+      if (candidate != '-') return candidate;
     }
     for (final prescription in data.prescriptions) {
-      if ((prescription.doctorName ?? '').trim().isNotEmpty) return prescription.doctorName!.trim();
+      final String candidate = DoctorDisplayUtils.bestDisplay(preferred: prescription.doctorName);
+      if (candidate != '-') return candidate;
     }
     return '-';
   }
@@ -596,10 +606,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
 
   Future<void> _deleteSinglePrescription(Patient patient, Prescription prescription) async {
     if (!await _confirmDelete('Eliminare questa ricetta?')) return;
-    await _prescriptionsRepository.deletePrescription(patient.fiscalCode, prescription.id);
-    try {
-      await _drivePdfImportsRepository.deleteImport(prescription.id);
-    } catch (_) {}
+    await _prescriptionsRepository.deletePrescriptionAndLinkedImport(patient.fiscalCode, prescription.id);
     _refresh('Ricetta eliminata.');
   }
 
@@ -766,7 +773,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                                     const SizedBox(height: 10),
                                                     _detailLine('Data', _formatDate(prescription.prescriptionDate)),
                                                     _detailLine('Scadenza', _formatDate(prescription.expiryDate)),
-                                                    _detailLine('Medico', (prescription.doctorName ?? '-').trim().isEmpty ? '-' : prescription.doctorName!.trim()),
+                                                    _detailLine('Medico', DoctorDisplayUtils.bestDisplay(preferred: prescription.doctorName, fallbacks: [data.resolvedDoctorName])),
                                                     _detailLine('Esenzione', (prescription.exemptionCode ?? '-').trim().isEmpty ? '-' : prescription.exemptionCode!.trim()),
                                                   ],
                                                 ),
@@ -808,15 +815,15 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(patient.fullName.trim().isEmpty ? patient.fiscalCode : patient.fullName.trim(), style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900)),
+          Text(patient.fullName.trim().isEmpty ? patient.displayFiscalCode : patient.fullName.trim(), style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900)),
           const SizedBox(height: 10),
           Wrap(
             spacing: 10,
             runSpacing: 10,
             children: [
-              _metaBadge('CF', patient.fiscalCode),
+              _metaBadge('CF', patient.displayFiscalCode),
               _metaBadge('Medico', data.resolvedDoctorName),
-              _metaBadge('Esenzione', (patient.exemptionCode ?? '').trim().isEmpty ? '-' : patient.exemptionCode!.trim()),
+              _metaBadge('Esenzione', patient.exemptionsDisplay),
               _metaBadge('Città', (patient.city ?? '').trim().isEmpty ? '-' : patient.city!.trim()),
               _metaBadge('Ultima ricetta', _formatDate(patient.lastPrescriptionDate)),
             ],

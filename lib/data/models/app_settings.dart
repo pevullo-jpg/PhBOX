@@ -19,6 +19,8 @@ class AppSettings {
   final String emailScanQuery;
   final int emailMaxResults;
   final List<String> doctorsCatalog;
+  final List<String> ignoredSenderEmails;
+  final List<String> acceptedCities;
   final DateTime updatedAt;
 
   const AppSettings({
@@ -42,6 +44,8 @@ class AppSettings {
     this.emailScanQuery = 'in:inbox has:attachment',
     this.emailMaxResults = 25,
     this.doctorsCatalog = const <String>[],
+    this.ignoredSenderEmails = const <String>[],
+    this.acceptedCities = const <String>[],
     required this.updatedAt,
   });
 
@@ -66,6 +70,8 @@ class AppSettings {
     String? emailScanQuery,
     int? emailMaxResults,
     List<String>? doctorsCatalog,
+    List<String>? ignoredSenderEmails,
+    List<String>? acceptedCities,
     DateTime? updatedAt,
   }) {
     return AppSettings(
@@ -95,6 +101,8 @@ class AppSettings {
       emailScanQuery: emailScanQuery ?? this.emailScanQuery,
       emailMaxResults: emailMaxResults ?? this.emailMaxResults,
       doctorsCatalog: doctorsCatalog ?? this.doctorsCatalog,
+      ignoredSenderEmails: ignoredSenderEmails ?? this.ignoredSenderEmails,
+      acceptedCities: acceptedCities ?? this.acceptedCities,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -121,6 +129,8 @@ class AppSettings {
       'emailScanQuery': emailScanQuery,
       'emailMaxResults': emailMaxResults,
       'doctorsCatalog': doctorsCatalog,
+      'ignoredSenderEmails': ignoredSenderEmails,
+      'acceptedCities': acceptedCities,
       'updatedAt': updatedAt.toIso8601String(),
     };
   }
@@ -141,8 +151,9 @@ class AppSettings {
       autoScanEnabled: (map['autoScanEnabled'] ?? false) as bool,
       autoMergeByPatient: (map['autoMergeByPatient'] ?? true) as bool,
       autoDetectDpc: (map['autoDetectDpc'] ?? true) as bool,
-      acceptedExtensions: List<String>.from(
-        map['acceptedExtensions'] ?? const <String>['pdf', 'jpg', 'png'],
+      acceptedExtensions: _readStringList(
+        map['acceptedExtensions'],
+        fallback: const <String>['pdf', 'jpg', 'png'],
       ),
       expiryWarningDays: (map['expiryWarningDays'] ?? 7) as int,
       scanIntervalMinutes: (map['scanIntervalMinutes'] ?? 30) as int,
@@ -156,13 +167,49 @@ class AppSettings {
       emailScanQuery:
           (map['emailScanQuery'] ?? 'in:inbox has:attachment') as String,
       emailMaxResults: (map['emailMaxResults'] ?? 25) as int,
-      doctorsCatalog: List<String>.from(map['doctorsCatalog'] ?? const <String>[]),
+      doctorsCatalog: _readStringList(map['doctorsCatalog']),
+      ignoredSenderEmails: _readStringList(
+        map['ignoredSenderEmails'] ??
+            map['excludedSenderEmails'] ??
+            map['emailIgnoredSenders'],
+      ),
+      acceptedCities: _readStringList(
+        map['acceptedCities'] ??
+            map['acceptedPrescriptionCities'] ??
+            map['allowedCities'],
+      ),
       updatedAt: _readDate(map['updatedAt']) ?? DateTime.now(),
     );
   }
 
   factory AppSettings.empty() {
     return AppSettings(updatedAt: DateTime.now());
+  }
+
+  static List<String> _readStringList(
+    dynamic value, {
+    List<String> fallback = const <String>[],
+  }) {
+    if (value == null) {
+      return List<String>.from(fallback);
+    }
+
+    if (value is List) {
+      return value
+          .map((dynamic item) => item.toString().trim())
+          .where((String item) => item.isNotEmpty)
+          .toList();
+    }
+
+    if (value is String) {
+      return value
+          .split(RegExp(r'[\n,;]+'))
+          .map((String item) => item.trim())
+          .where((String item) => item.isNotEmpty)
+          .toList();
+    }
+
+    return List<String>.from(fallback);
   }
 
   static DateTime? _readDate(dynamic value) {

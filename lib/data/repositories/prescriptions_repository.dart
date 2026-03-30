@@ -54,7 +54,10 @@ class PrescriptionsRepository {
 
     final List<Prescription> prescriptions = await getPatientPrescriptions(fiscalCode);
 
-    final int archivedRecipeCount = prescriptions.fold<int>(0, (int sum, Prescription prescription) => sum + prescription.prescriptionCount);
+    final int archivedRecipeCount = prescriptions.fold<int>(
+      0,
+      (int sum, Prescription prescription) => sum + prescription.prescriptionCount,
+    );
 
     DateTime? lastPrescriptionDate;
     bool hasDpc = false;
@@ -78,7 +81,15 @@ class PrescriptionsRepository {
       }
     }
 
+    final List<String> exemptionCodes = Patient.normalizeExemptionCodes(<dynamic>[
+      patient.exemptionCode,
+      patient.exemptionCodes,
+      ...prescriptions.map((Prescription item) => item.exemptionCode),
+    ]);
+
     final Patient updated = patient.copyWith(
+      exemptionCode: exemptionCodes.isEmpty ? patient.exemptionCode : exemptionCodes.first,
+      exemptionCodes: exemptionCodes,
       archivedRecipeCount: archivedRecipeCount,
       lastPrescriptionDate: lastPrescriptionDate,
       hasDpc: hasDpc,
@@ -121,6 +132,28 @@ class PrescriptionsRepository {
       subcollectionPath: AppCollections.prescriptions,
       subDocumentId: prescriptionId,
     );
+    await refreshPatientAggregates(fiscalCode);
+  }
+
+  Future<void> requestPdfDeletion(String fiscalCode, String importId) async {
+    final DrivePdfImportsRepository importsRepository =
+        DrivePdfImportsRepository(datasource: datasource);
+    await importsRepository.softDeleteImport(importId);
+    await refreshPatientAggregates(fiscalCode);
+  }
+
+  Future<void> deletePrescriptionAndLinkedImport(String fiscalCode, String prescriptionId) async {
+    await datasource.deleteSubDocument(
+      collectionPath: AppCollections.patients,
+      documentId: fiscalCode,
+      subcollectionPath: AppCollections.prescriptions,
+      subDocumentId: prescriptionId,
+    );
+    final DrivePdfImportsRepository importsRepository =
+        DrivePdfImportsRepository(datasource: datasource);
+    try {
+      await importsRepository.deleteImport(prescriptionId);
+    } catch (_) {}
     await refreshPatientAggregates(fiscalCode);
   }
 

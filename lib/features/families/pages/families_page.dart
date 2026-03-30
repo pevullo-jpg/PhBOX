@@ -169,7 +169,7 @@ class _FamiliesPageState extends State<FamiliesPage> {
                             children: suggestions.map((patient) {
                               return ListTile(
                                 dense: true,
-                                title: Text(patient.fiscalCode, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                                title: Text(patient.displayFiscalCode, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
                                 subtitle: Text(patient.fullName.trim().toUpperCase(), style: const TextStyle(color: Colors.white70)),
                                 trailing: const Icon(Icons.add_circle_outline, color: Colors.white70),
                                 onTap: () {
@@ -206,7 +206,7 @@ class _FamiliesPageState extends State<FamiliesPage> {
                           runSpacing: 8,
                           children: selected.map((cf) {
                             final patient = _findPatient(patients, cf);
-                            final label = patient == null ? cf : '$cf · ${patient.fullName.trim().toUpperCase()}';
+                            final label = patient == null ? cf : '${patient.displayFiscalCode} · ${patient.fullName.trim().toUpperCase()}';
                             return Chip(
                               backgroundColor: AppColors.panelSoft,
                               label: Text(label, style: const TextStyle(color: Colors.white)),
