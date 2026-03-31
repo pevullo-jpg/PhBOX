@@ -42,10 +42,19 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
   @override
   Future<List<Map<String, dynamic>>> getCollectionGroup({
     required String collectionPath,
+    String? orderBy,
+    bool descending = false,
   }) async {
-    final QuerySnapshot<Map<String, dynamic>> snapshot = await firestore.collectionGroup(collectionPath).get();
-    return snapshot.docs.map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => doc.data()).toList();
+    Query<Map<String, dynamic>> query = firestore.collectionGroup(collectionPath);
+    if (orderBy != null) {
+      query = query.orderBy(orderBy, descending: descending);
+    }
+    final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
+    return snapshot.docs
+        .map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => doc.data())
+        .toList();
   }
+
 
   @override
   Future<void> deleteDocument({

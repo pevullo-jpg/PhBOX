@@ -17,27 +17,22 @@ class AdvancesRepository {
     );
   }
 
+  Future<List<Advance>> getAllAdvances() async {
+    final List<Map<String, dynamic>> maps = await datasource.getCollectionGroup(
+      collectionPath: AppCollections.advances,
+    );
+    return maps.map(Advance.fromMap).toList();
+  }
+
   Future<List<Advance>> getPatientAdvances(String fiscalCode) async {
     final List<Map<String, dynamic>> maps = await datasource.getSubCollection(
       collectionPath: AppCollections.patients,
       documentId: fiscalCode,
       subcollectionPath: AppCollections.advances,
-      orderBy: 'createdAt',
-      descending: true,
     );
     return maps.map(Advance.fromMap).toList();
   }
 
-
-
-  Future<List<Advance>> getAllAdvances() async {
-    final List<Map<String, dynamic>> maps = await datasource.getCollectionGroup(
-      collectionPath: AppCollections.advances,
-    );
-    final advances = maps.map(Advance.fromMap).where((item) => item.patientFiscalCode.trim().isNotEmpty).toList();
-    advances.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    return advances;
-  }
 
   Future<void> deleteAdvance(String fiscalCode, String id) {
     return datasource.deleteSubDocument(

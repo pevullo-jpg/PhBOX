@@ -28,13 +28,18 @@ class PrescriptionsRepository {
     await refreshPatientAggregates(prescription.patientFiscalCode);
   }
 
+  Future<List<Prescription>> getAllStoredPrescriptions() async {
+    final List<Map<String, dynamic>> maps = await datasource.getCollectionGroup(
+      collectionPath: AppCollections.prescriptions,
+    );
+    return maps.map(Prescription.fromMap).toList();
+  }
+
   Future<List<Prescription>> getPatientPrescriptions(String fiscalCode) async {
     final List<Map<String, dynamic>> maps = await datasource.getSubCollection(
       collectionPath: AppCollections.patients,
       documentId: fiscalCode,
       subcollectionPath: AppCollections.prescriptions,
-      orderBy: 'prescriptionDate',
-      descending: true,
     );
 
     if (maps.isNotEmpty) {
@@ -46,16 +51,6 @@ class PrescriptionsRepository {
     final List<DrivePdfImport> imports =
         await importsRepository.getImportsByPatient(fiscalCode);
     return imports.map(_importToPrescription).toList();
-  }
-
-
-  Future<List<Prescription>> getAllStoredPrescriptions() async {
-    final List<Map<String, dynamic>> maps = await datasource.getCollectionGroup(
-      collectionPath: AppCollections.prescriptions,
-    );
-    final prescriptions = maps.map(Prescription.fromMap).where((item) => item.patientFiscalCode.trim().isNotEmpty).toList();
-    prescriptions.sort((a, b) => b.prescriptionDate.compareTo(a.prescriptionDate));
-    return prescriptions;
   }
 
   Future<void> refreshPatientAggregates(String fiscalCode) async {

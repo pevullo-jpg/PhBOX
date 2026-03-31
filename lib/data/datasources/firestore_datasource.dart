@@ -18,6 +18,8 @@ abstract class FirestoreDatasource {
 
   Future<List<Map<String, dynamic>>> getCollectionGroup({
     required String collectionPath,
+    String? orderBy,
+    bool descending = false,
   });
 
   Future<void> deleteDocument({

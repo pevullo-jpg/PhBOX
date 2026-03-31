@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/utils/prescription_expiry_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
+import '../../../data/models/app_settings.dart';
 import '../../../data/models/booking.dart';
 import '../../../data/models/debt.dart';
 import '../../../data/models/doctor_patient_link.dart';
@@ -26,9 +27,6 @@ import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../features/patients/pages/patient_detail_page.dart';
 import '../../../theme/app_theme.dart';
-
-part 'dashboard_loader.dart';
-part 'dashboard_models.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -51,9 +49,10 @@ class _DashboardPageState extends State<DashboardPage> {
   late final SettingsRepository _settingsRepository;
 
   Future<_DashboardData>? _future;
-  List<String>? _doctorsCatalogCache;
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
+  bool _hasExtendedData = false;
+  bool _isLoadingExtendedData = false;
 
   @override
   void initState() {
@@ -72,57 +71,155 @@ class _DashboardPageState extends State<DashboardPage> {
     _familyGroupsRepository = FamilyGroupsRepository(datasource: datasource);
     _settingsRepository = SettingsRepository(datasource: datasource);
     _future = _load();
-    _searchController.addListener(() => setState(() {}));
+    _searchController.addListener(_handleSearchChanged);
   }
 
   @override
   void dispose() {
+    _searchController.removeListener(_handleSearchChanged);
     _searchController.dispose();
     super.dispose();
   }
 
-  Future<_DashboardData> _load() {
-    return _DashboardLoader(
-      patientsRepository: _patientsRepository,
-      prescriptionsRepository: _prescriptionsRepository,
-      advancesRepository: _advancesRepository,
-      debtsRepository: _debtsRepository,
-      bookingsRepository: _bookingsRepository,
-      drivePdfImportsRepository: _drivePdfImportsRepository,
-      doctorPatientLinksRepository: _doctorPatientLinksRepository,
-      familyGroupsRepository: _familyGroupsRepository,
-    ).load();
+  void _handleSearchChanged() {
+    final bool needsExtendedData = _requiresExtendedDataForCurrentState();
+    if (needsExtendedData && !_hasExtendedData && !_isLoadingExtendedData) {
+      _refresh();
+      return;
+    }
+    setState(() {});
   }
 
-  Future<List<String>> _getDoctorsCatalog() async {
-    final cached = _doctorsCatalogCache;
-    if (cached != null) {
-      return cached;
+  bool _requiresExtendedDataForCurrentState() {
+    final String rawQuery = _searchController.text.trim();
+    if (rawQuery.length >= 3) return true;
+    return _activeCardFilters.any((filter) =>
+        filter == _DashboardCardFilter.debiti ||
+        filter == _DashboardCardFilter.anticipi ||
+        filter == _DashboardCardFilter.prenotazioni);
+  }
+
+  Future<_DashboardData> _load() async {
+    final bool loadExtendedData = _requiresExtendedDataForCurrentState();
+    final List<Future<dynamic>> requests = <Future<dynamic>>[
+      _patientsRepository.getAllPatients(),
+      _drivePdfImportsRepository.getAllImports(),
+      _doctorPatientLinksRepository.getAllLinks(),
+      _familyGroupsRepository.getAllFamilies(),
+      _settingsRepository.getSettings(),
+      _prescriptionsRepository.getAllStoredPrescriptions(),
+    ];
+    if (loadExtendedData) {
+      requests.addAll(<Future<dynamic>>[
+        _debtsRepository.getAllDebts(),
+        _advancesRepository.getAllAdvances(),
+        _bookingsRepository.getAllBookings(),
+      ]);
     }
-    final settings = await _settingsRepository.getSettings();
-    final normalized = settings.doctorsCatalog
-        .map((item) => item.trim())
-        .where((item) => item.isNotEmpty)
-        .toSet()
-        .toList()
-      ..sort();
-    _doctorsCatalogCache = normalized;
-    return normalized;
+
+    final results = await Future.wait<dynamic>(requests);
+
+    final List<Patient> patients = results[0] as List<Patient>;
+    final List<DrivePdfImport> imports = results[1] as List<DrivePdfImport>;
+    final List<DoctorPatientLink> doctorLinks = results[2] as List<DoctorPatientLink>;
+    final List<FamilyGroup> families = results[3] as List<FamilyGroup>;
+    final AppSettings settings = results[4] as AppSettings;
+    final List<Prescription> allPrescriptions = results[5] as List<Prescription>;
+    final List<Debt> allDebts = loadExtendedData ? results[6] as List<Debt> : const <Debt>[];
+    final List<Advance> allAdvances = loadExtendedData ? results[7] as List<Advance> : const <Advance>[];
+    final List<Booking> allBookings = loadExtendedData ? results[8] as List<Booking> : const <Booking>[];
+
+    _hasExtendedData = loadExtendedData;
+    _isLoadingExtendedData = false;
+
+    final prescriptionsByCf = _groupByFiscalCode(allPrescriptions, (item) => item.patientFiscalCode);
+    final debtsByCf = _groupByFiscalCode(allDebts, (item) => item.patientFiscalCode);
+    final advancesByCf = _groupByFiscalCode(allAdvances, (item) => item.patientFiscalCode);
+    final bookingsByCf = _groupByFiscalCode(allBookings, (item) => item.patientFiscalCode);
+
+    _sortGroupsByDate(prescriptionsByCf, (item) => item.prescriptionDate);
+    _sortGroupsByDate(debtsByCf, (item) => item.createdAt);
+    _sortGroupsByDate(advancesByCf, (item) => item.createdAt);
+    _sortGroupsByDate(bookingsByCf, (item) => item.createdAt);
+
+    final summaries = patients.map((patient) {
+      final String fiscalCode = patient.fiscalCode.trim().toUpperCase();
+      return _PatientDashboardSummary.build(
+        patient: patient,
+        prescriptions: prescriptionsByCf[fiscalCode] ?? const <Prescription>[],
+        imports: imports,
+        debts: debtsByCf[fiscalCode] ?? const <Debt>[],
+        advances: advancesByCf[fiscalCode] ?? const <Advance>[],
+        bookings: bookingsByCf[fiscalCode] ?? const <Booking>[],
+        doctorLinks: doctorLinks,
+        families: families,
+      );
+    }).toList();
+
+    summaries.sort((a, b) {
+      if (a.hasExpiryAlert != b.hasExpiryAlert) {
+        return a.hasExpiryAlert ? -1 : 1;
+      }
+      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+    });
+
+    return _DashboardData(
+      summaries: summaries,
+      doctorsCatalog: settings.doctorsCatalog,
+      families: families,
+    );
+  }
+
+  Map<String, List<T>> _groupByFiscalCode<T>(
+    List<T> items,
+    String Function(T item) fiscalCodeSelector,
+  ) {
+    final Map<String, List<T>> grouped = <String, List<T>>{};
+    for (final item in items) {
+      final String normalized = fiscalCodeSelector(item).trim().toUpperCase();
+      if (normalized.isEmpty) continue;
+      grouped.putIfAbsent(normalized, () => <T>[]).add(item);
+    }
+    return grouped;
+  }
+
+  void _sortGroupsByDate<T>(
+    Map<String, List<T>> groups,
+    DateTime Function(T item) dateSelector,
+  ) {
+    for (final entries in groups.values) {
+      entries.sort((a, b) => dateSelector(b).compareTo(dateSelector(a)));
+    }
+  }
+
+  bool get _isCompactDashboardMode {
+    final String query = _searchController.text.trim();
+    return _activeCardFilters.isEmpty && query.length < 3;
+  }
+
+  bool get _showSearchThresholdHint {
+    final String query = _searchController.text.trim();
+    return _activeCardFilters.isEmpty && query.isNotEmpty && query.length < 3;
   }
 
   void _refresh() {
+    _isLoadingExtendedData = _requiresExtendedDataForCurrentState() && !_hasExtendedData;
     setState(() {
-      _doctorsCatalogCache = null;
       _future = _load();
     });
   }
 
   List<_PatientDashboardSummary> _applyFilters(List<_PatientDashboardSummary> input, List<FamilyGroup> families) {
-    final query = _searchController.text.trim().toLowerCase();
+    final String rawQuery = _searchController.text.trim();
+    final String query = rawQuery.toLowerCase();
+    final bool hasSearchThreshold = rawQuery.length >= 3;
+    final bool compactMode = _activeCardFilters.isEmpty && !hasSearchThreshold;
 
     bool matchesCardFilters(_PatientDashboardSummary item) {
       final activeFilters = _activeCardFilters.toList();
-      if (activeFilters.isEmpty) return true;
+      if (activeFilters.isEmpty) {
+        return compactMode ? item.hasExpiryAlert : true;
+      }
       for (final filter in activeFilters) {
         switch (filter) {
           case _DashboardCardFilter.ricette:
@@ -149,7 +246,7 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     bool matchesSearch(_PatientDashboardSummary item) {
-      if (query.isEmpty) return true;
+      if (!hasSearchThreshold) return true;
       return item.displayName.toLowerCase().contains(query) ||
           item.patient.fiscalCode.toLowerCase().contains(query) ||
           item.doctorName.toLowerCase().contains(query) ||
@@ -158,7 +255,9 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     final filtered = input.where(matchesCardFilters).toList();
-    if (query.isEmpty) return filtered;
+    if (!hasSearchThreshold) {
+      return filtered;
+    }
 
     final Map<String, _PatientDashboardSummary> byCf = {
       for (final item in filtered) item.patient.fiscalCode.trim().toUpperCase(): item,
@@ -187,16 +286,21 @@ class _DashboardPageState extends State<DashboardPage> {
     return result;
   }
 
-
   void _toggleCardFilter(_DashboardCardFilter filter) {
+    final bool wasSelected = _activeCardFilters.contains(filter);
     setState(() {
-      if (_activeCardFilters.contains(filter)) {
+      if (wasSelected) {
         _activeCardFilters.remove(filter);
         return;
       }
 
       _activeCardFilters.add(filter);
     });
+
+    final bool needsExtendedData = _requiresExtendedDataForCurrentState();
+    if (needsExtendedData && !_hasExtendedData && !_isLoadingExtendedData) {
+      _refresh();
+    }
   }
 
   Future<void> _openPdf(DrivePdfImport item) async {
@@ -401,9 +505,9 @@ class _DashboardPageState extends State<DashboardPage> {
     final drugController = TextEditingController();
     final noteController = TextEditingController();
     String selectedDoctor = summary.doctorName.trim() == '-' ? '' : summary.doctorName.trim();
-    final doctorsCatalog = await _getDoctorsCatalog();
+    final data = await _future!;
     final candidateList = <String>{
-      ...doctorsCatalog,
+      ...data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty),
       if (selectedDoctor.isNotEmpty) selectedDoctor,
     }.toList()
       ..sort();
@@ -606,7 +710,8 @@ class _DashboardPageState extends State<DashboardPage> {
     required _PatientDashboardSummary summary,
     required String key,
   }) async {
-    final doctorsCatalog = await _getDoctorsCatalog();
+    final data = await _future!;
+    final doctorsCatalog = data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty).toList()..sort();
 
     final debtDescriptionController = TextEditingController();
     final debtAmountController = TextEditingController();
@@ -1158,7 +1263,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final debtController = TextEditingController();
     final debtDescriptionController = TextEditingController();
     String selectedDoctor = '';
-    final doctorCandidates = (await _getDoctorsCatalog()).toSet().toList()..sort();
+    final doctorCandidates = data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList()..sort();
 
     List<String> _splitPatientName(String fullName) {
       final parts = fullName.trim().split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
@@ -1679,7 +1784,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               decoration: InputDecoration(
                                 isDense: true,
                                 contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                                hintText: 'Cerca assistito',
+                                hintText: 'Cerca assistito (min 3 lettere)',
                                 hintStyle: const TextStyle(color: Colors.white54),
                                 prefixIcon: const Icon(Icons.search, size: 20),
                                 filled: true,
@@ -1689,6 +1794,18 @@ class _DashboardPageState extends State<DashboardPage> {
                             ),
                           ),
                         ),
+                        const SizedBox(height: 8),
+                        if (_isCompactDashboardMode)
+                          SizedBox(
+                            width: cardsBlockWidth,
+                            child: Text(
+                              _showSearchThresholdHint
+                                  ? 'Dashboard compatta: mostro solo le scadenze. La ricerca completa si attiva da 3 lettere.'
+                                  : 'Dashboard compatta: mostro solo le scadenze. Il resto appare con un filtro o con almeno 3 lettere.',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Colors.white54, fontSize: 13.5, fontWeight: FontWeight.w600),
+                            ),
+                          ),
                         const SizedBox(height: 10),
                         Align(
                           alignment: Alignment.centerRight,
@@ -1729,7 +1846,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             borderRadius: BorderRadius.circular(18),
                             border: Border.all(color: Colors.white10),
                           ),
-                          child: const Row(
+                          child: Row(
                             children: [
                               SizedBox(width: 180, child: Text('Assistito', style: _headStyle)),
                               SizedBox(width: 220, child: Text('CF', style: _headStyle)),
@@ -1749,7 +1866,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 return a.hasExpiryAlert ? -1 : 1;
                               });
                               if (orderedSummaries.isEmpty) {
-                                return const Center(child: Text('Nessun assistito.', style: TextStyle(color: Colors.white70, fontSize: 18)));
+                                return Center(child: Text(_isCompactDashboardMode ? 'Nessuna scadenza attiva.' : 'Nessun assistito.', style: const TextStyle(color: Colors.white70, fontSize: 18)));
                               }
                               return ListView.separated(
                                 itemCount: orderedSummaries.length,
@@ -1816,7 +1933,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                           SizedBox(
                                             width: 240,
                                             child: Text(
-                                              item.doctorSurnameUpper,
+                                              item.doctorNameUpper,
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
                                               style: const TextStyle(color: Colors.white, fontSize: 18.2, fontWeight: FontWeight.w700),
@@ -1997,3 +2114,382 @@ class _DashboardPageState extends State<DashboardPage> {
     return '$day/$month/$year';
   }
 }
+
+class _DashboardData {
+  final List<_PatientDashboardSummary> summaries;
+  final List<String> doctorsCatalog;
+  final List<FamilyGroup> families;
+
+  const _DashboardData({
+    required this.summaries,
+    required this.doctorsCatalog,
+    required this.families,
+  });
+}
+
+class _PatientDashboardSummary {
+  final Patient patient;
+  final String doctorName;
+  final String exemptionCode;
+  final String city;
+  final List<Prescription> prescriptions;
+  final List<DrivePdfImport> imports;
+  final List<Debt> debts;
+  final List<Advance> advances;
+  final List<Booking> bookings;
+  final bool hasDpc;
+  final int recipeCount;
+  final bool hasExpiryAlert;
+  final String familyId;
+
+  const _PatientDashboardSummary({
+    required this.patient,
+    required this.doctorName,
+    required this.exemptionCode,
+    required this.city,
+    required this.prescriptions,
+    required this.imports,
+    required this.debts,
+    required this.advances,
+    required this.bookings,
+    required this.hasDpc,
+    required this.recipeCount,
+    required this.hasExpiryAlert,
+    required this.familyId,
+  });
+
+  String get displayName => patient.fullName.trim().isEmpty ? patient.fiscalCode : patient.fullName.trim();
+
+  double get totalDebt => debts.fold<double>(0, (sum, item) => sum + item.residualAmount);
+
+  String get doctorNameUpper => doctorName.trim().isEmpty ? '-' : doctorName.trim().toUpperCase();
+  String get doctorSurnameUpper {
+    final String cleaned = doctorName.trim();
+    if (cleaned.isEmpty || cleaned == '-') return '-';
+    final parts = cleaned.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
+    return (parts.isEmpty ? cleaned : parts.first).toUpperCase();
+  }
+
+  bool get hasActiveContent => recipeCount > 0 || hasDpc || debts.isNotEmpty || advances.isNotEmpty || bookings.isNotEmpty;
+
+  List<_FlagItem> get dpcItems {
+    final fromPrescriptions = prescriptions.where((item) => item.dpcFlag).map((item) {
+      return _FlagItem(
+        title: _dashboardPrescriptionTitle(item),
+        subtitle: '${_dashboardFormatDate(item.prescriptionDate)} · ${(item.doctorName ?? '-').trim().isEmpty ? '-' : item.doctorName!.trim()}',
+      );
+    });
+    final fromImports = imports.where((item) => item.isDpc).map((item) {
+      return _FlagItem(
+        title: item.therapy.isEmpty ? (item.fileName.trim().isEmpty ? 'DPC' : item.fileName.trim()) : item.therapy.join(', '),
+        subtitle: '${_dashboardFormatDate(item.prescriptionDate ?? item.createdAt)} · ${item.doctorFullName.trim().isEmpty ? '-' : item.doctorFullName.trim()}',
+      );
+    });
+    return [...fromPrescriptions, ...fromImports];
+  }
+
+  static _PatientDashboardSummary build({
+    required Patient patient,
+    required List<Prescription> prescriptions,
+    required List<DrivePdfImport> imports,
+    required List<Debt> debts,
+    required List<Advance> advances,
+    required List<Booking> bookings,
+    required List<DoctorPatientLink> doctorLinks,
+    required List<FamilyGroup> families,
+  }) {
+    final normalizedFiscalCode = patient.fiscalCode.trim().toUpperCase();
+    final normalizedFullName = patient.fullName.trim().toUpperCase();
+    final matchingImports = imports.where((item) {
+      final importFiscalCode = item.patientFiscalCode.trim().toUpperCase();
+      final importFullName = item.patientFullName.trim().toUpperCase();
+      final notDeleted = item.pdfDeleted != true && item.status.trim().toLowerCase() != 'deleted_pdf';
+      if (!notDeleted) return false;
+      if (importFiscalCode.isNotEmpty) {
+        return importFiscalCode == normalizedFiscalCode;
+      }
+      return normalizedFullName.isNotEmpty && importFullName == normalizedFullName;
+    }).toList();
+    final matchingDoctor = doctorLinks.where((item) {
+      return item.patientFiscalCode == patient.fiscalCode.trim().toUpperCase();
+    }).toList();
+    final prescriptionDoctor = prescriptions.map((e) => e.doctorName?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '');
+    final importDoctor = matchingImports.map((e) => e.doctorFullName.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '');
+    final linkDoctorFull = matchingDoctor.map((e) => e.doctorFullName.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '');
+    final patientDoctor = (patient.doctorName ?? '').trim();
+    final doctorName = linkDoctorFull.isNotEmpty
+        ? linkDoctorFull
+        : (patientDoctor.isNotEmpty
+            ? patientDoctor
+            : (importDoctor.isNotEmpty ? importDoctor : prescriptionDoctor));
+    final exemptionCode = (patient.exemptionCode ?? '').trim().isNotEmpty
+        ? patient.exemptionCode!.trim()
+        : (() {
+            final fromPrescription = prescriptions.map((e) => e.exemptionCode?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '');
+            if (fromPrescription.isNotEmpty) return fromPrescription;
+            return matchingImports.map((e) => e.exemptionCode.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '-');
+          })();
+    final city = (patient.city ?? '').trim().isNotEmpty
+        ? patient.city!.trim()
+        : (() {
+            final fromPrescription = prescriptions.map((e) => e.city?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '');
+            if (fromPrescription.isNotEmpty) return fromPrescription;
+            return matchingImports.map((e) => e.city.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '-');
+          })();
+    final int importsRecipeCount = matchingImports.fold<int>(0, (sum, item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
+    final int prescriptionsRecipeCount = prescriptions.fold<int>(0, (sum, item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
+    final int patientRecipeCount = patient.archivedRecipeCount > 0 ? patient.archivedRecipeCount : 0;
+    final recipeCount = importsRecipeCount > 0
+        ? importsRecipeCount
+        : (prescriptionsRecipeCount > 0 ? prescriptionsRecipeCount : (matchingImports.isNotEmpty ? matchingImports.length : patientRecipeCount));
+    final hasDpc = prescriptions.any((item) => item.dpcFlag) || matchingImports.any((item) => item.isDpc);
+    bool hasExpiringDate(DateTime? date) {
+      final info = PrescriptionExpiryUtils.evaluate(date);
+      return info.status == PrescriptionValidityStatus.expiringSoon || info.status == PrescriptionValidityStatus.expired;
+    }
+
+    final Iterable<DateTime?> expiryCandidates = <DateTime?>[
+      ...prescriptions.map((item) => item.expiryDate ?? item.prescriptionDate.add(const Duration(days: 30))),
+      ...matchingImports.map((item) {
+        final DateTime baseDate = item.prescriptionDate ?? item.createdAt;
+        return baseDate.add(const Duration(days: 30));
+      }),
+      if (patient.lastPrescriptionDate != null) patient.lastPrescriptionDate!.add(const Duration(days: 30)),
+    ];
+
+    final hasExpiryAlert = expiryCandidates.any(hasExpiringDate);
+    final familyId = (() {
+      for (final family in families) {
+        if (family.memberFiscalCodes.map((e) => e.trim().toUpperCase()).contains(normalizedFiscalCode)) {
+          return family.id;
+        }
+      }
+      return '';
+    })();
+    return _PatientDashboardSummary(
+      patient: patient,
+      doctorName: doctorName.isEmpty ? '-' : doctorName,
+      exemptionCode: exemptionCode.isEmpty ? '-' : exemptionCode,
+      city: city.isEmpty ? '-' : city,
+      prescriptions: prescriptions,
+      imports: matchingImports,
+      debts: debts,
+      advances: advances,
+      bookings: bookings,
+      hasDpc: hasDpc,
+      recipeCount: recipeCount,
+      hasExpiryAlert: hasExpiryAlert,
+      familyId: familyId,
+    );
+  }
+}
+
+class _FlagItem {
+  final String title;
+  final String subtitle;
+  final Future<void> Function()? onDelete;
+
+  const _FlagItem({required this.title, required this.subtitle, this.onDelete});
+}
+
+String _dashboardPrescriptionTitle(Prescription prescription) {
+  final label = prescription.items.map((e) => e.drugName.trim()).where((e) => e.isNotEmpty).join(', ');
+  return label.isEmpty ? 'Ricetta' : label;
+}
+
+String _dashboardFormatDate(DateTime? date) {
+  if (date == null) return '-';
+  final day = date.day.toString().padLeft(2, '0');
+  final month = date.month.toString().padLeft(2, '0');
+  final year = date.year.toString();
+  return '$day/$month/$year';
+}
+
+
+
+class _DashboardFamilyState {
+  final Map<String, int> activeCounts;
+  final Map<String, Color> colors;
+
+  const _DashboardFamilyState({required this.activeCounts, required this.colors});
+
+  factory _DashboardFamilyState.empty() => const _DashboardFamilyState(activeCounts: <String, int>{}, colors: <String, Color>{});
+
+  factory _DashboardFamilyState.fromFamilies(List<_PatientDashboardSummary> summaries, List<FamilyGroup> families) {
+    const palette = <Color>[
+      Color(0xFF2563EB),
+      Color(0xFF059669),
+      Color(0xFFD97706),
+      Color(0xFFDC2626),
+      Color(0xFF7C3AED),
+      Color(0xFF0891B2),
+      Color(0xFF65A30D),
+      Color(0xFFEA580C),
+    ];
+    final counts = <String, int>{};
+    final colors = <String, Color>{};
+    for (final family in families) {
+      final activeCount = summaries.where((item) => item.familyId == family.id && item.hasActiveContent).length;
+      counts[family.id] = activeCount;
+      colors[family.id] = palette[family.colorIndex % palette.length];
+    }
+    return _DashboardFamilyState(activeCounts: counts, colors: colors);
+  }
+
+  bool hasMultipleActive(String familyId) => (activeCounts[familyId] ?? 0) > 1;
+
+  Color colorFor(String familyId) => colors[familyId] ?? AppColors.yellow;
+}
+
+class _SummaryCard extends StatelessWidget {
+  final String title;
+  final String value;
+  final IconData icon;
+  final Color accent;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _SummaryCard({
+    required this.title,
+    required this.value,
+    required this.icon,
+    required this.accent,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: accent,
+      borderRadius: BorderRadius.circular(24),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          width: 220,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: isSelected ? Colors.white : Colors.transparent,
+              width: 2,
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.18),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: Colors.white),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _DashboardCardFilter { ricette, dpc, debiti, anticipi, prenotazioni, scadenze }
+
+class _FilterToggle extends StatelessWidget {
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const _FilterToggle({required this.label, required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return FilterChip(
+      selected: value,
+      onSelected: onChanged,
+      label: Text(label),
+      labelStyle: TextStyle(color: value ? Colors.black : Colors.white),
+      selectedColor: AppColors.yellow,
+      backgroundColor: AppColors.panel,
+      side: const BorderSide(color: Colors.white10),
+    );
+  }
+}
+
+class _FlagChip extends StatelessWidget {
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _FlagChip({required this.label, required this.color, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5),
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickEditFlag extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _QuickEditFlag({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Apri gestione',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: const BoxDecoration(
+            color: Color(0xFF7A7A7A),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.add, color: Colors.white, size: 20),
+        ),
+      ),
+    );
+  }
+}
+
+const TextStyle _headStyle = TextStyle(color: Colors.white70, fontWeight: FontWeight.w800, fontSize: 15);
