@@ -7,40 +7,52 @@ class DrivePdfImportsRepository {
 
   const DrivePdfImportsRepository({required this.datasource});
 
-  Future<void> saveImport(DrivePdfImport importItem) {
+  Future<void> saveImport(DrivePdfImport item) {
     return datasource.setDocument(
       collectionPath: AppCollections.drivePdfImports,
-      documentId: importItem.id,
-      data: importItem.toMap(),
+      documentId: item.id,
+      data: item.toMap(),
     );
   }
 
-  Future<List<DrivePdfImport>> getAllImports() async {
+  Future<List<DrivePdfImport>> getAllImports({bool includeInactive = false}) async {
     final List<Map<String, dynamic>> maps = await datasource.getCollection(
       collectionPath: AppCollections.drivePdfImports,
+      orderBy: 'updatedAt',
+      descending: true,
     );
-    final List<DrivePdfImport> items = maps.map(DrivePdfImport.fromMap).where((DrivePdfImport item) {
-      final status = item.status.trim().toLowerCase();
-      return (item.patientFiscalCode.trim().isNotEmpty || item.patientFullName.trim().isNotEmpty) && status != 'deleted' && status != 'deleted_pdf' && item.pdfDeleted != true;
-    }).toList();
-    items.sort((DrivePdfImport a, DrivePdfImport b) {
-      final DateTime aKey = a.prescriptionDate ?? a.updatedAt ?? a.createdAt;
-      final DateTime bKey = b.prescriptionDate ?? b.updatedAt ?? b.createdAt;
+    final List<DrivePdfImport> items = maps.map(DrivePdfImport.fromMap).toList();
+    final List<DrivePdfImport> filtered = includeInactive ? items : items.where((DrivePdfImport item) => !item.isInactiveForActiveFlows).toList();
+    filtered.sort((DrivePdfImport a, DrivePdfImport b) {
+      final DateTime aKey = a.prescriptionDate ?? a.updatedAt;
+      final DateTime bKey = b.prescriptionDate ?? b.updatedAt;
       return bKey.compareTo(aKey);
     });
-    return items;
-  }
-
-  Future<List<DrivePdfImport>> getImportsByPatient(String fiscalCode) async {
-    final String normalized = fiscalCode.trim().toUpperCase();
-    final List<DrivePdfImport> all = await getAllImports();
-    final List<DrivePdfImport> filtered = all.where((DrivePdfImport item) {
-      return item.patientFiscalCode.trim().toUpperCase() == normalized;
-    }).toList();
-    filtered.sort((DrivePdfImport a, DrivePdfImport b) => b.createdAt.compareTo(a.createdAt));
     return filtered;
   }
 
+  Future<List<DrivePdfImport>> getImportsByPatient(String fiscalCode, {bool includeInactive = false}) async {
+    final String normalized = fiscalCode.trim().toUpperCase();
+    final List<DrivePdfImport> all = await getAllImports(includeInactive: includeInactive);
+    final List<DrivePdfImport> filtered = all.where((DrivePdfImport item) {
+      return item.patientFiscalCode.trim().toUpperCase() == normalized;
+    }).toList();
+    filtered.sort((DrivePdfImport a, DrivePdfImport b) {
+      final DateTime aKey = a.prescriptionDate ?? a.updatedAt;
+      final DateTime bKey = b.prescriptionDate ?? b.updatedAt;
+      return bKey.compareTo(aKey);
+    });
+    return filtered;
+  }
+
+  Future<DrivePdfImport?> getImportById(String id) async {
+    final Map<String, dynamic>? map = await datasource.getDocument(
+      collectionPath: AppCollections.drivePdfImports,
+      documentId: id,
+    );
+    if (map == null) return null;
+    return DrivePdfImport.fromMap(<String, dynamic>{...map, 'id': map['id'] ?? id});
+  }
 
   Future<void> deleteImport(String id) {
     return datasource.deleteDocument(
@@ -49,30 +61,24 @@ class DrivePdfImportsRepository {
     );
   }
 
-  Future<void> softDeleteImport(String id) async {
+  Future<void> queueImportDeletion(String id) async {
     final Map<String, dynamic>? current = await datasource.getDocument(
       collectionPath: AppCollections.drivePdfImports,
       documentId: id,
     );
     if (current == null) return;
+    final DateTime now = DateTime.now();
     final Map<String, dynamic> next = <String, dynamic>{...current};
-    next['status'] = 'deleted_pdf';
-    next['deletedAt'] = DateTime.now().toIso8601String();
-    next['deleteMode'] = 'pdf_only_requested';
+    next['status'] = AppImportStatuses.deleteRequested;
     next['deletePdfRequested'] = true;
-    next['webViewLink'] = '';
-    next['openUrl'] = '';
+    next['excludeFromMerge'] = true;
+    next['excludeFromReanalysis'] = true;
+    next['deletionRequestedAt'] = now.toIso8601String();
+    next['updatedAt'] = now.toIso8601String();
     await datasource.setDocument(
       collectionPath: AppCollections.drivePdfImports,
       documentId: id,
       data: next,
     );
-  }
-
-  Future<void> deleteImportsByPatient(String fiscalCode) async {
-    final List<DrivePdfImport> imports = await getImportsByPatient(fiscalCode);
-    for (final DrivePdfImport item in imports) {
-      await deleteImport(item.id);
-    }
   }
 }

@@ -61,7 +61,7 @@ class DoctorPatientLink {
     if (normalized.isEmpty) return '';
     final parts = normalized.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
     if (parts.isEmpty) return '';
-    return parts.first.trim();
+    return parts.last.trim();
   }
 
   static DateTime? _readDate(dynamic value) {

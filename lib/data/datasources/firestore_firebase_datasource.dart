@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+
 import 'firestore_datasource.dart';
 
 class FirestoreFirebaseDatasource implements FirestoreDatasource {
@@ -21,7 +22,9 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     required String documentId,
   }) async {
     final doc = await firestore.collection(collectionPath).doc(documentId).get();
-    return doc.data();
+    final data = doc.data();
+    if (data == null) return null;
+    return <String, dynamic>{...data, 'id': doc.id, '_id': doc.id};
   }
 
   @override
@@ -35,9 +38,10 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
       query = query.orderBy(orderBy, descending: descending);
     }
     final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
-    return snapshot.docs.map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => doc.data()).toList();
+    return snapshot.docs
+        .map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => <String, dynamic>{...doc.data(), 'id': doc.id, '_id': doc.id})
+        .toList();
   }
-
 
   @override
   Future<void> deleteDocument({
@@ -59,18 +63,6 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
   }
 
   @override
-
-  @override
-  Future<void> deleteSubDocument({
-    required String collectionPath,
-    required String documentId,
-    required String subcollectionPath,
-    required String subDocumentId,
-  }) {
-    return firestore.collection(collectionPath).doc(documentId).collection(subcollectionPath).doc(subDocumentId).delete();
-  }
-
-  @override
   Future<List<Map<String, dynamic>>> getSubCollection({
     required String collectionPath,
     required String documentId,
@@ -83,6 +75,18 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
       query = query.orderBy(orderBy, descending: descending);
     }
     final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
-    return snapshot.docs.map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => doc.data()).toList();
+    return snapshot.docs
+        .map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => <String, dynamic>{...doc.data(), 'id': doc.id, '_id': doc.id})
+        .toList();
+  }
+
+  @override
+  Future<void> deleteSubDocument({
+    required String collectionPath,
+    required String documentId,
+    required String subcollectionPath,
+    required String subDocumentId,
+  }) {
+    return firestore.collection(collectionPath).doc(documentId).collection(subcollectionPath).doc(subDocumentId).delete();
   }
 }

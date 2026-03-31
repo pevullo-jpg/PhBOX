@@ -2,8 +2,9 @@ class Patient {
   final String fiscalCode;
   final String fullName;
   final String? city;
+  final String? exemption;
   final String? exemptionCode;
-  final List<String> exemptionCodes;
+  final List<String> exemptions;
   final String? doctorName;
   final List<String> therapiesSummary;
   final DateTime? lastPrescriptionDate;
@@ -20,8 +21,9 @@ class Patient {
     required this.fiscalCode,
     required this.fullName,
     this.city,
+    this.exemption,
     this.exemptionCode,
-    this.exemptionCodes = const <String>[],
+    this.exemptions = const <String>[],
     this.doctorName,
     this.therapiesSummary = const <String>[],
     this.lastPrescriptionDate,
@@ -39,8 +41,9 @@ class Patient {
     String? fiscalCode,
     String? fullName,
     String? city,
+    String? exemption,
     String? exemptionCode,
-    List<String>? exemptionCodes,
+    List<String>? exemptions,
     String? doctorName,
     List<String>? therapiesSummary,
     DateTime? lastPrescriptionDate,
@@ -57,8 +60,9 @@ class Patient {
       fiscalCode: fiscalCode ?? this.fiscalCode,
       fullName: fullName ?? this.fullName,
       city: city ?? this.city,
+      exemption: exemption ?? this.exemption,
       exemptionCode: exemptionCode ?? this.exemptionCode,
-      exemptionCodes: exemptionCodes ?? this.exemptionCodes,
+      exemptions: exemptions ?? this.exemptions,
       doctorName: doctorName ?? this.doctorName,
       therapiesSummary: therapiesSummary ?? this.therapiesSummary,
       lastPrescriptionDate: lastPrescriptionDate ?? this.lastPrescriptionDate,
@@ -73,27 +77,39 @@ class Patient {
     );
   }
 
-  List<String> get normalizedExemptionCodes => normalizeExemptionCodes(<dynamic>[
-    ...exemptionCodes,
-    exemptionCode,
-  ]);
+  String? get currentExemption {
+    final String resolved = _normalizeString(exemption).isNotEmpty
+        ? _normalizeString(exemption).toUpperCase()
+        : (_normalizeString(exemptionCode).isNotEmpty
+            ? _normalizeString(exemptionCode).toUpperCase()
+            : (normalizedExemptions.isEmpty ? '' : normalizedExemptions.first));
+    return resolved.isEmpty ? null : resolved;
+  }
 
-  String get primaryExemptionCode => normalizedExemptionCodes.isEmpty ? '' : normalizedExemptionCodes.first;
+  List<String> get normalizedExemptions {
+    return normalizeExemptionValues(<dynamic>[
+      ...exemptions,
+      exemption,
+      exemptionCode,
+    ]);
+  }
 
-  String get exemptionsDisplay => normalizedExemptionCodes.isEmpty ? '-' : normalizedExemptionCodes.join(', ');
-
-  bool get hasTemporaryFiscalCode => isTemporaryFiscalCode(fiscalCode);
-
-  String get displayFiscalCode => hasTemporaryFiscalCode ? '-' : fiscalCode.trim().toUpperCase();
+  String get exemptionsDisplay {
+    final List<String> values = normalizedExemptions;
+    return values.isEmpty ? '-' : values.join(', ');
+  }
 
   Map<String, dynamic> toMap() {
+    final String? current = currentExemption;
     return <String, dynamic>{
       'fiscalCode': fiscalCode,
       'fullName': fullName,
       'city': city,
-      'exemptionCode': primaryExemptionCode.isEmpty ? exemptionCode : primaryExemptionCode,
-      'exemptionCodes': normalizedExemptionCodes,
+      'exemption': current,
+      'exemptionCode': current,
+      'exemptions': normalizedExemptions,
       'doctorName': doctorName,
+      'doctorFullName': doctorName,
       'therapiesSummary': therapiesSummary,
       'lastPrescriptionDate': lastPrescriptionDate?.toIso8601String(),
       'hasDebt': hasDebt,
@@ -108,21 +124,26 @@ class Patient {
   }
 
   factory Patient.fromMap(Map<String, dynamic> map) {
-    final List<String> allExemptions = normalizeExemptionCodes(<dynamic>[
-      map['exemptionCode'],
+    final List<String> exemptions = normalizeExemptionValues(<dynamic>[
+      ..._readExemptionCollection(map['exemptions']),
       map['exemption'],
+      map['exemptionCode'],
       map['esenzione'],
-      map['exemptionCodes'],
-      map['exemptions'],
-      map['esenzioni'],
     ]);
+    final String? currentExemption = _firstNonEmpty(<dynamic>[
+      map['exemption'],
+      map['exemptionCode'],
+      map['esenzione'],
+      exemptions.isEmpty ? null : exemptions.first,
+    ])?.toUpperCase();
     return Patient(
-      fiscalCode: (map['fiscalCode'] ?? '') as String,
-      fullName: (map['fullName'] ?? '') as String,
-      city: map['city'] as String?,
-      exemptionCode: allExemptions.isEmpty ? null : allExemptions.first,
-      exemptionCodes: allExemptions,
-      doctorName: (map['doctorFullName'] ?? map['doctorName'] ?? map['doctor'] ?? map['medico']) as String?,
+      fiscalCode: _normalizeString(map['fiscalCode'] ?? map['patientFiscalCode'] ?? map['cf'] ?? map['codiceFiscale']).toUpperCase(),
+      fullName: _normalizeString(map['fullName'] ?? map['patientFullName'] ?? map['name']),
+      city: _nullIfEmpty(map['city']),
+      exemption: currentExemption,
+      exemptionCode: currentExemption,
+      exemptions: exemptions,
+      doctorName: _nullIfEmpty(map['doctorFullName'] ?? map['doctorName'] ?? map['doctor'] ?? map['medico']),
       therapiesSummary: List<String>.from(map['therapiesSummary'] ?? const <String>[]),
       lastPrescriptionDate: _readDate(map['lastPrescriptionDate']),
       hasDebt: (map['hasDebt'] ?? false) as bool,
@@ -136,41 +157,48 @@ class Patient {
     );
   }
 
-  static List<String> normalizeExemptionCodes(Iterable<dynamic> values) {
-    final List<String> result = <String>[];
-    final Set<String> seen = <String>{};
-
-    void addToken(String token) {
-      final String normalized = token.trim().toUpperCase();
-      if (normalized.isEmpty || normalized == '-') return;
-      if (seen.add(normalized)) {
-        result.add(normalized);
+  static List<String> normalizeExemptionValues(Iterable<dynamic> values) {
+    final Set<String> normalized = <String>{};
+    for (final dynamic value in values) {
+      if (value == null) continue;
+      if (value is List) {
+        normalized.addAll(normalizeExemptionValues(value));
+        continue;
+      }
+      final String text = value.toString().trim().toUpperCase();
+      if (text.isNotEmpty) {
+        normalized.add(text);
       }
     }
-
-    void collect(dynamic value) {
-      if (value == null) return;
-      if (value is Iterable) {
-        for (final item in value) {
-          collect(item);
-        }
-        return;
-      }
-      final String text = value.toString().trim();
-      if (text.isEmpty) return;
-      for (final part in text.split(RegExp(r'[,;|/\n]'))) {
-        addToken(part);
-      }
-    }
-
-    for (final value in values) {
-      collect(value);
-    }
+    final List<String> result = normalized.toList()..sort();
     return result;
   }
 
-  static bool isTemporaryFiscalCode(String value) {
-    return value.trim().toUpperCase().startsWith('TMP_PATIENT_');
+
+  static List<dynamic> _readExemptionCollection(dynamic value) {
+    if (value == null) return const <dynamic>[];
+    if (value is List) return List<dynamic>.from(value);
+    final String text = value.toString().trim();
+    if (text.isEmpty) return const <dynamic>[];
+    return text.split(RegExp(r'[,;|\n]')).map((item) => item.trim()).where((item) => item.isNotEmpty).toList();
+  }
+
+  static String _normalizeString(dynamic value) {
+    if (value == null) return '';
+    return value.toString().trim();
+  }
+
+  static String? _nullIfEmpty(dynamic value) {
+    final String text = _normalizeString(value);
+    return text.isEmpty ? null : text;
+  }
+
+  static String? _firstNonEmpty(Iterable<dynamic> values) {
+    for (final dynamic value in values) {
+      final String text = _normalizeString(value);
+      if (text.isNotEmpty) return text;
+    }
+    return null;
   }
 
   static DateTime? _readDate(dynamic value) {

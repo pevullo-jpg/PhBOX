@@ -11,3 +11,28 @@ class AppCollections {
   static const String prescriptionIntakes = 'prescription_intakes';
   static const String parserReferenceValues = 'parser_reference_values';
 }
+
+class AppImportStatuses {
+  static const String pending = 'pending';
+  static const String processing = 'processing';
+  static const String parsed = 'parsed';
+  static const String error = 'error';
+  static const String deleted = 'deleted';
+
+  // Backend-orchestrator statuses actually used by Apps Script.
+  static const String queued = 'queued';
+  static const String filteredValid = 'filtered_valid';
+  static const String filteredRejected = 'filtered_rejected';
+  static const String readyForMerge = 'ready_for_merge';
+  static const String mergedComponent = 'merged_component';
+  static const String readyForDb = 'ready_for_db';
+  static const String imported = 'imported';
+
+  static const String deletedPdf = 'deleted_pdf';
+  static const String deleteRequested = 'delete_requested';
+}
+
+class AppPrescriptionStatuses {
+  static const String active = 'active';
+  static const String deleteRequested = 'delete_requested';
+}

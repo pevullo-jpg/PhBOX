@@ -12,7 +12,7 @@ class DoctorPatientLinksRepository {
       collectionPath: AppCollections.doctorPatientLinks,
     );
     return maps.map(DoctorPatientLink.fromMap).where((DoctorPatientLink item) {
-      return item.patientFiscalCode.isNotEmpty && item.doctorName.isNotEmpty;
+      return item.patientFiscalCode.isNotEmpty && item.doctorFullName.isNotEmpty;
     }).toList();
   }
 
@@ -27,10 +27,11 @@ class DoctorPatientLinksRepository {
     final String normalizedCf = patientFiscalCode.trim().toUpperCase();
     final String normalizedDoctor = doctorFullName.trim();
     final List<String> parts = normalizedDoctor.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
-    final String doctorSurname = parts.isEmpty ? normalizedDoctor : parts.first;
-    final String doctorGivenName = parts.length > 1 ? parts.sublist(1).join(' ') : doctorSurname;
+    final String doctorSurname = parts.isEmpty ? normalizedDoctor : parts.last;
+    final String doctorGivenName = parts.length > 1 ? parts.sublist(0, parts.length - 1).join(' ') : normalizedDoctor;
     final DateTime now = DateTime.now();
-    final String documentId = '${normalizedCf}__manual';
+    final String safeDoctor = normalizedDoctor.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]+'), '_').replaceAll(RegExp(r'_+'), '_').replaceAll(RegExp(r'^_|_$'), '');
+    final String documentId = '${normalizedCf}_${safeDoctor.isEmpty ? 'NO_DOCTOR' : safeDoctor}';
     return datasource.setDocument(
       collectionPath: AppCollections.doctorPatientLinks,
       documentId: documentId,

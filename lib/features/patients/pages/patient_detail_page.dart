@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../../core/utils/doctor_display_utils.dart';
 import '../../../core/utils/prescription_expiry_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
@@ -109,25 +108,18 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     required List<Advance> advances,
   }) {
     for (final link in doctorLinks) {
-      final String candidate = DoctorDisplayUtils.bestDisplay(
-        preferred: link.doctorFullName,
-        fallbacks: [link.doctorName],
-      );
-      if (link.patientFiscalCode == widget.fiscalCode.trim().toUpperCase() && candidate != '-') {
-        return candidate;
+      if (link.patientFiscalCode == widget.fiscalCode.trim().toUpperCase() && link.doctorFullName.trim().isNotEmpty) {
+        return link.doctorFullName.trim();
       }
     }
-    final String patientDoctor = DoctorDisplayUtils.bestDisplay(preferred: patient?.doctorName);
-    if (patientDoctor != '-') {
-      return patientDoctor;
+    if (patient != null && (patient.doctorName ?? '').trim().isNotEmpty) {
+      return patient.doctorName!.trim();
     }
     for (final advance in advances) {
-      final String candidate = DoctorDisplayUtils.bestDisplay(preferred: advance.doctorName);
-      if (candidate != '-') return candidate;
+      if (advance.doctorName.trim().isNotEmpty) return advance.doctorName.trim();
     }
     for (final prescription in prescriptions) {
-      final String candidate = DoctorDisplayUtils.bestDisplay(preferred: prescription.doctorName);
-      if (candidate != '-') return candidate;
+      if ((prescription.doctorName ?? '').trim().isNotEmpty) return prescription.doctorName!.trim();
     }
     return '-';
   }
@@ -147,9 +139,18 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         ? null
         : data.prescriptions.map((item) => item.prescriptionDate).reduce((a, b) => a.isAfter(b) ? a : b);
     final archivedRecipeCount = data.prescriptions.fold<int>(0, (sum, item) => sum + item.prescriptionCount);
+    final exemptions = Patient.normalizeExemptionValues(<dynamic>[
+      ...patient.normalizedExemptions,
+      ...data.prescriptions.map((item) => item.exemptionCode),
+      ...data.imports.map((item) => item.exemptionCode),
+    ]);
+    final String? currentExemption = patient.currentExemption ?? (exemptions.isEmpty ? null : exemptions.first);
     await _patientsRepository.savePatient(
       patient.copyWith(
         doctorName: data.resolvedDoctorName == '-' ? patient.doctorName : data.resolvedDoctorName,
+        exemption: currentExemption,
+        exemptionCode: currentExemption,
+        exemptions: exemptions,
         hasDebt: data.debts.isNotEmpty,
         debtTotal: totalDebt,
         hasAdvance: data.advances.isNotEmpty,
@@ -227,7 +228,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         final expiryInfo = PrescriptionExpiryUtils.evaluate(prescription.expiryDate);
         return _managerCard(
           title: _prescriptionLabel(prescription),
-          subtitle: '${_formatDate(prescription.prescriptionDate)} · ${DoctorDisplayUtils.bestDisplay(preferred: prescription.doctorName, fallbacks: [data.resolvedDoctorName])} · ${expiryInfo.label}',
+          subtitle: '${_formatDate(prescription.prescriptionDate)} · ${prescription.doctorName ?? '-'} · ${expiryInfo.label}',
           actions: [
             if (matchingImport != null)
               TextButton.icon(
@@ -295,7 +296,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       children: data.advances.map((advance) {
         return _managerCard(
           title: advance.drugName,
-          subtitle: '${DoctorDisplayUtils.bestDisplay(preferred: advance.doctorName, fallbacks: [data.resolvedDoctorName])} · ${_formatDate(advance.createdAt)}',
+          subtitle: '${advance.doctorName.isEmpty ? '-' : advance.doctorName} · ${_formatDate(advance.createdAt)}',
           actions: [
             IconButton(
               onPressed: () => _deleteAdvance(patient, advance),
@@ -514,12 +515,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       return data.resolvedDoctorName.trim();
     }
     for (final advance in data.advances) {
-      final String candidate = DoctorDisplayUtils.bestDisplay(preferred: advance.doctorName);
-      if (candidate != '-') return candidate;
+      if (advance.doctorName.trim().isNotEmpty) return advance.doctorName.trim();
     }
     for (final prescription in data.prescriptions) {
-      final String candidate = DoctorDisplayUtils.bestDisplay(preferred: prescription.doctorName);
-      if (candidate != '-') return candidate;
+      if ((prescription.doctorName ?? '').trim().isNotEmpty) return prescription.doctorName!.trim();
     }
     return '-';
   }
@@ -606,7 +605,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
 
   Future<void> _deleteSinglePrescription(Patient patient, Prescription prescription) async {
     if (!await _confirmDelete('Eliminare questa ricetta?')) return;
-    await _prescriptionsRepository.deletePrescriptionAndLinkedImport(patient.fiscalCode, prescription.id);
+    await _prescriptionsRepository.requestDeletionForPrescription(patient.fiscalCode, prescription.id);
     _refresh('Ricetta eliminata.');
   }
 
@@ -773,7 +772,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                                     const SizedBox(height: 10),
                                                     _detailLine('Data', _formatDate(prescription.prescriptionDate)),
                                                     _detailLine('Scadenza', _formatDate(prescription.expiryDate)),
-                                                    _detailLine('Medico', DoctorDisplayUtils.bestDisplay(preferred: prescription.doctorName, fallbacks: [data.resolvedDoctorName])),
+                                                    _detailLine('Medico', (prescription.doctorName ?? '-').trim().isEmpty ? '-' : prescription.doctorName!.trim()),
                                                     _detailLine('Esenzione', (prescription.exemptionCode ?? '-').trim().isEmpty ? '-' : prescription.exemptionCode!.trim()),
                                                   ],
                                                 ),
@@ -815,13 +814,13 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(patient.fullName.trim().isEmpty ? patient.displayFiscalCode : patient.fullName.trim(), style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900)),
+          Text(patient.fullName.trim().isEmpty ? patient.fiscalCode : patient.fullName.trim(), style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900)),
           const SizedBox(height: 10),
           Wrap(
             spacing: 10,
             runSpacing: 10,
             children: [
-              _metaBadge('CF', patient.displayFiscalCode),
+              _metaBadge('CF', patient.fiscalCode),
               _metaBadge('Medico', data.resolvedDoctorName),
               _metaBadge('Esenzione', patient.exemptionsDisplay),
               _metaBadge('Città', (patient.city ?? '').trim().isEmpty ? '-' : patient.city!.trim()),
