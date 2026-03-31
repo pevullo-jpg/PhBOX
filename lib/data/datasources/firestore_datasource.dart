@@ -16,6 +16,15 @@ abstract class FirestoreDatasource {
     bool descending = false,
   });
 
+  Future<List<Map<String, dynamic>>> getCollectionWhereEquals({
+    required String collectionPath,
+    required String fieldName,
+    required Object? value,
+    String? orderBy,
+    bool descending = false,
+    int? limit,
+  });
+
   Future<void> deleteDocument({
     required String collectionPath,
     required String documentId,

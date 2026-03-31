@@ -12,7 +12,7 @@ class DoctorPatientLinksRepository {
       collectionPath: AppCollections.doctorPatientLinks,
     );
     return maps.map(DoctorPatientLink.fromMap).where((DoctorPatientLink item) {
-      return item.patientFiscalCode.isNotEmpty && item.doctorFullName.isNotEmpty;
+      return item.patientFiscalCode.isNotEmpty && item.doctorName.isNotEmpty;
     }).toList();
   }
 
@@ -30,8 +30,7 @@ class DoctorPatientLinksRepository {
     final String doctorSurname = parts.isEmpty ? normalizedDoctor : parts.last;
     final String doctorGivenName = parts.length > 1 ? parts.sublist(0, parts.length - 1).join(' ') : normalizedDoctor;
     final DateTime now = DateTime.now();
-    final String safeDoctor = normalizedDoctor.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]+'), '_').replaceAll(RegExp(r'_+'), '_').replaceAll(RegExp(r'^_|_$'), '');
-    final String documentId = '${normalizedCf}_${safeDoctor.isEmpty ? 'NO_DOCTOR' : safeDoctor}';
+    final String documentId = ([normalizedCf.isEmpty ? 'NO_CF' : normalizedCf, normalizedDoctor.isEmpty ? 'NO_DOCTOR' : normalizedDoctor]).join('_').replaceAll(RegExp(r'[^A-Za-z0-9_\-]'), '_');
     return datasource.setDocument(
       collectionPath: AppCollections.doctorPatientLinks,
       documentId: documentId,

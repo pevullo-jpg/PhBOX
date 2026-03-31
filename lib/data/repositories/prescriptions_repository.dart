@@ -37,40 +37,18 @@ class PrescriptionsRepository {
       descending: true,
     );
 
-    final List<Prescription> subPrescriptions = maps
-        .map(Prescription.fromMap)
-        .where((Prescription item) => !item.isDeleteRequested)
-        .toList();
+    final List<Prescription> fromSubcollection = maps.map(Prescription.fromMap).where((Prescription item) => !item.isDeleteRequested).toList();
 
     final DrivePdfImportsRepository importsRepository = DrivePdfImportsRepository(datasource: datasource);
     final List<DrivePdfImport> imports = await importsRepository.getImportsByPatient(fiscalCode);
-    final List<Prescription> importPrescriptions = imports.map(_importToPrescription).toList();
+    final List<Prescription> fromImports = imports.map(_importToPrescription).toList();
 
-    final Map<String, Prescription> byKey = <String, Prescription>{};
-    for (final Prescription item in subPrescriptions) {
-      final String key = _buildPrescriptionIdentityKey(
-        id: item.id,
-        driveFileId: null,
-        prescriptionDate: item.prescriptionDate,
-        doctorName: item.doctorName,
-        exemptionCode: item.exemptionCode,
-      );
-      byKey[key] = item;
+    final Map<String, Prescription> deduped = <String, Prescription>{};
+    for (final Prescription item in [...fromSubcollection, ...fromImports]) {
+      final String key = item.id.trim().isNotEmpty ? item.id.trim() : '${item.patientFiscalCode}_${item.prescriptionDate.toIso8601String()}';
+      deduped[key] = item;
     }
-
-    for (final DrivePdfImport item in imports) {
-      final Prescription candidate = _importToPrescription(item);
-      final String key = _buildPrescriptionIdentityKey(
-        id: candidate.id,
-        driveFileId: item.driveFileId,
-        prescriptionDate: candidate.prescriptionDate,
-        doctorName: candidate.doctorName,
-        exemptionCode: candidate.exemptionCode,
-      );
-      byKey.putIfAbsent(key, () => candidate);
-    }
-
-    final List<Prescription> prescriptions = byKey.values.where((Prescription item) => !item.isDeleteRequested).toList();
+    final List<Prescription> prescriptions = deduped.values.toList();
     prescriptions.sort((Prescription a, Prescription b) => b.prescriptionDate.compareTo(a.prescriptionDate));
     return prescriptions;
   }
@@ -309,25 +287,6 @@ class PrescriptionsRepository {
       if (normalizedExemptions.isNotEmpty) normalizedExemptions.first,
     ].where((String item) => item.isNotEmpty).toList();
     return candidates.isEmpty ? null : candidates.first;
-  }
-
-  String _buildPrescriptionIdentityKey({
-    required String id,
-    required String? driveFileId,
-    required DateTime prescriptionDate,
-    required String? doctorName,
-    required String? exemptionCode,
-  }) {
-    final String normalizedId = id.trim();
-    if (normalizedId.isNotEmpty) return 'id:$normalizedId';
-    final String normalizedDriveFileId = (driveFileId ?? '').trim();
-    if (normalizedDriveFileId.isNotEmpty) return 'file:$normalizedDriveFileId';
-    final String yyyy = prescriptionDate.year.toString().padLeft(4, '0');
-    final String mm = prescriptionDate.month.toString().padLeft(2, '0');
-    final String dd = prescriptionDate.day.toString().padLeft(2, '0');
-    final String doctor = (doctorName ?? '').trim().toUpperCase();
-    final String exemption = (exemptionCode ?? '').trim().toUpperCase();
-    return 'fallback:$yyyy-$mm-$dd|$doctor|$exemption';
   }
 
   String _readString(dynamic value) {

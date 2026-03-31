@@ -109,7 +109,6 @@ class Patient {
       'exemptionCode': current,
       'exemptions': normalizedExemptions,
       'doctorName': doctorName,
-      'doctorFullName': doctorName,
       'therapiesSummary': therapiesSummary,
       'lastPrescriptionDate': lastPrescriptionDate?.toIso8601String(),
       'hasDebt': hasDebt,
@@ -137,8 +136,8 @@ class Patient {
       exemptions.isEmpty ? null : exemptions.first,
     ])?.toUpperCase();
     return Patient(
-      fiscalCode: _normalizeString(map['fiscalCode'] ?? map['patientFiscalCode'] ?? map['cf'] ?? map['codiceFiscale']).toUpperCase(),
-      fullName: _normalizeString(map['fullName'] ?? map['patientFullName'] ?? map['name']),
+      fiscalCode: _normalizeString(map['fiscalCode']),
+      fullName: _normalizeString(map['fullName']),
       city: _nullIfEmpty(map['city']),
       exemption: currentExemption,
       exemptionCode: currentExemption,

@@ -153,7 +153,7 @@ class DrivePdfImport {
     final String status = _readString(map['status'] ?? AppImportStatuses.pending);
     final bool deletePdfRequested = _readBool(map['deletePdfRequested']) || status.toLowerCase() == AppImportStatuses.deleteRequested;
     return DrivePdfImport(
-      id: _readString(map['id'] ?? map['duplicateHash'] ?? map['_id']),
+      id: (map['id'] ?? map['_id'] ?? map['duplicateHash'] ?? '') as String,
       driveFileId: (map['driveFileId'] ?? map['fileId'] ?? '') as String,
       fileName: (map['fileName'] ?? '') as String,
       mimeType: (map['mimeType'] ?? 'application/pdf') as String,
@@ -220,7 +220,7 @@ class DrivePdfImport {
     final String text = value.toString().trim();
     if (text.isEmpty) return const <String>[];
     return text
-        .split(RegExp(r'[,;|\n]+'))
+        .split(RegExp(r'[,;|\n]'))
         .map((item) => item.trim())
         .where((item) => item.isNotEmpty)
         .toList();
