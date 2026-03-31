@@ -31,7 +31,7 @@ class DoctorPatientLink {
         ? rawDoctorName
         : (fullName.isNotEmpty ? fullName : doctorSurname);
     return DoctorPatientLink(
-      id: (map['id'] ?? map['_id'] ?? map['linkId'] ?? '') as String,
+      id: (map['id'] ?? map['linkId'] ?? '') as String,
       patientFiscalCode: _readString(
         map['patientFiscalCode'] ??
             map['fiscalCode'] ??
@@ -61,7 +61,7 @@ class DoctorPatientLink {
     if (normalized.isEmpty) return '';
     final parts = normalized.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
     if (parts.isEmpty) return '';
-    return parts.last.trim();
+    return parts.first.trim();
   }
 
   static DateTime? _readDate(dynamic value) {

@@ -29,28 +29,38 @@ class PrescriptionsRepository {
   }
 
   Future<List<Prescription>> getPatientPrescriptions(String fiscalCode) async {
-    final List<Map<String, dynamic>> maps = await datasource.getSubCollection(
-      collectionPath: AppCollections.patients,
-      documentId: fiscalCode,
-      subcollectionPath: AppCollections.prescriptions,
-      orderBy: 'prescriptionDate',
-      descending: true,
-    );
-
-    final List<Prescription> fromSubcollection = maps.map(Prescription.fromMap).where((Prescription item) => !item.isDeleteRequested).toList();
+    final Patient? patient = await patientsRepository.getPatientByFiscalCode(fiscalCode);
+    if (patient != null && patient.recipes.isNotEmpty) {
+      final List<Prescription> prescriptions = patient.recipes.map((Map<String, dynamic> raw) {
+        final DateTime prescriptionDate = DateTime.tryParse((raw['prescriptionDate'] ?? '').toString()) ?? DateTime.now();
+        return Prescription(
+          id: (raw['id'] ?? '').toString(),
+          patientFiscalCode: fiscalCode,
+          patientName: patient.fullName,
+          prescriptionDate: prescriptionDate,
+          expiryDate: prescriptionDate.add(const Duration(days: 30)),
+          doctorName: (raw['doctorName'] ?? '').toString().trim().isEmpty ? patient.doctorFullName ?? patient.doctorName : (raw['doctorName'] ?? '').toString(),
+          exemptionCode: (raw['exemptionCode'] ?? '').toString().trim().isEmpty ? patient.currentExemption : (raw['exemptionCode'] ?? '').toString(),
+          city: patient.city,
+          dpcFlag: raw['isDpc'] == true,
+          prescriptionCount: int.tryParse((raw['prescriptionCount'] ?? 1).toString()) ?? 1,
+          sourceType: 'patient_embedded',
+          status: raw['deletePdfRequested'] == true ? AppPrescriptionStatuses.deleteRequested : AppPrescriptionStatuses.active,
+          deleteRequested: raw['deletePdfRequested'] == true,
+          deletionRequestedAt: null,
+          extractedText: null,
+          items: const <PrescriptionItem>[],
+          createdAt: DateTime.tryParse((raw['createdAt'] ?? '').toString()) ?? patient.createdAt,
+          updatedAt: DateTime.tryParse((raw['updatedAt'] ?? '').toString()) ?? patient.updatedAt,
+        );
+      }).where((Prescription item) => !item.isDeleteRequested).toList();
+      prescriptions.sort((Prescription a, Prescription b) => b.prescriptionDate.compareTo(a.prescriptionDate));
+      return prescriptions;
+    }
 
     final DrivePdfImportsRepository importsRepository = DrivePdfImportsRepository(datasource: datasource);
     final List<DrivePdfImport> imports = await importsRepository.getImportsByPatient(fiscalCode);
-    final List<Prescription> fromImports = imports.map(_importToPrescription).toList();
-
-    final Map<String, Prescription> deduped = <String, Prescription>{};
-    for (final Prescription item in [...fromSubcollection, ...fromImports]) {
-      final String key = item.id.trim().isNotEmpty ? item.id.trim() : '${item.patientFiscalCode}_${item.prescriptionDate.toIso8601String()}';
-      deduped[key] = item;
-    }
-    final List<Prescription> prescriptions = deduped.values.toList();
-    prescriptions.sort((Prescription a, Prescription b) => b.prescriptionDate.compareTo(a.prescriptionDate));
-    return prescriptions;
+    return imports.map(_importToPrescription).toList();
   }
 
   Future<void> refreshPatientAggregates(String fiscalCode) async {
@@ -195,22 +205,7 @@ class PrescriptionsRepository {
   }
 
   Future<List<_SubPrescriptionRecord>> _getRawPatientPrescriptionRecords(String fiscalCode) async {
-    final List<Map<String, dynamic>> maps = await datasource.getSubCollection(
-      collectionPath: AppCollections.patients,
-      documentId: fiscalCode,
-      subcollectionPath: AppCollections.prescriptions,
-      orderBy: 'prescriptionDate',
-      descending: true,
-    );
-    return maps.map((_map) {
-      final Map<String, dynamic> recordMap = <String, dynamic>{..._map};
-      final String documentId = _readString(recordMap['id']);
-      return _SubPrescriptionRecord(
-        documentId: documentId,
-        raw: recordMap,
-        prescription: Prescription.fromMap(recordMap),
-      );
-    }).where((record) => record.documentId.trim().isNotEmpty || record.prescription.id.trim().isNotEmpty).toList();
+    return <_SubPrescriptionRecord>[];
   }
 
   Future<void> _markPrescriptionDeletionRequested({

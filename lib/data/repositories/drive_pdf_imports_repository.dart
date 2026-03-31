@@ -33,16 +33,9 @@ class DrivePdfImportsRepository {
 
   Future<List<DrivePdfImport>> getImportsByPatient(String fiscalCode, {bool includeInactive = false}) async {
     final String normalized = fiscalCode.trim().toUpperCase();
-    final List<Map<String, dynamic>> maps = await datasource.getCollectionWhereEquals(
-      collectionPath: AppCollections.drivePdfImports,
-      fieldName: 'patientFiscalCode',
-      value: normalized,
-      orderBy: 'updatedAt',
-      descending: true,
-      limit: 200,
-    );
-    final List<DrivePdfImport> filtered = maps.map(DrivePdfImport.fromMap).where((DrivePdfImport item) {
-      return includeInactive || !item.isInactiveForActiveFlows;
+    final List<DrivePdfImport> all = await getAllImports(includeInactive: includeInactive);
+    final List<DrivePdfImport> filtered = all.where((DrivePdfImport item) {
+      return item.patientFiscalCode.trim().toUpperCase() == normalized;
     }).toList();
     filtered.sort((DrivePdfImport a, DrivePdfImport b) {
       final DateTime aKey = a.prescriptionDate ?? a.updatedAt;

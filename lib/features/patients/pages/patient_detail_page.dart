@@ -108,13 +108,12 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     required List<Advance> advances,
   }) {
     for (final link in doctorLinks) {
-      if (link.patientFiscalCode == widget.fiscalCode.trim().toUpperCase()) {
-        final String resolvedDoctor = link.doctorFullName.trim().isNotEmpty ? link.doctorFullName.trim() : link.doctorName.trim();
-        if (resolvedDoctor.isNotEmpty) return resolvedDoctor;
+      if (link.patientFiscalCode == widget.fiscalCode.trim().toUpperCase() && link.doctorName.trim().isNotEmpty) {
+        return link.doctorName.trim();
       }
     }
-    if (patient != null && (patient.doctorName ?? '').trim().isNotEmpty) {
-      return patient.doctorName!.trim();
+    if (patient != null && ((patient.doctorFullName ?? patient.doctorName ?? '').trim().isNotEmpty)) {
+      return (patient.doctorFullName ?? patient.doctorName)!.trim();
     }
     for (final advance in advances) {
       if (advance.doctorName.trim().isNotEmpty) return advance.doctorName.trim();

@@ -27,10 +27,10 @@ class DoctorPatientLinksRepository {
     final String normalizedCf = patientFiscalCode.trim().toUpperCase();
     final String normalizedDoctor = doctorFullName.trim();
     final List<String> parts = normalizedDoctor.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
-    final String doctorSurname = parts.isEmpty ? normalizedDoctor : parts.last;
-    final String doctorGivenName = parts.length > 1 ? parts.sublist(0, parts.length - 1).join(' ') : normalizedDoctor;
+    final String doctorSurname = parts.isEmpty ? normalizedDoctor : parts.first;
+    final String doctorGivenName = parts.length > 1 ? parts.sublist(1).join(' ') : doctorSurname;
     final DateTime now = DateTime.now();
-    final String documentId = ([normalizedCf.isEmpty ? 'NO_CF' : normalizedCf, normalizedDoctor.isEmpty ? 'NO_DOCTOR' : normalizedDoctor]).join('_').replaceAll(RegExp(r'[^A-Za-z0-9_\-]'), '_');
+    final String documentId = '${normalizedCf}__manual';
     return datasource.setDocument(
       collectionPath: AppCollections.doctorPatientLinks,
       documentId: documentId,

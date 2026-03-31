@@ -6,13 +6,6 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
 
   FirestoreFirebaseDatasource(this.firestore);
 
-  Map<String, dynamic> _withDocId(DocumentSnapshot<Map<String, dynamic>> doc) {
-    final Map<String, dynamic> data = Map<String, dynamic>.from(doc.data() ?? const <String, dynamic>{});
-    data['id'] = data['id'] ?? doc.id;
-    data['_id'] = doc.id;
-    return data;
-  }
-
   @override
   Future<void> setDocument({
     required String collectionPath,
@@ -28,8 +21,7 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     required String documentId,
   }) async {
     final doc = await firestore.collection(collectionPath).doc(documentId).get();
-    if (!doc.exists) return null;
-    return _withDocId(doc);
+    return doc.data() == null ? null : <String, dynamic>{...doc.data()!, 'id': doc.id, '_id': doc.id};
   }
 
   @override
@@ -43,28 +35,9 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
       query = query.orderBy(orderBy, descending: descending);
     }
     final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
-    return snapshot.docs.map(_withDocId).toList();
+    return snapshot.docs.map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => <String, dynamic>{...doc.data(), 'id': doc.id, '_id': doc.id}).toList();
   }
 
-  @override
-  Future<List<Map<String, dynamic>>> getCollectionWhereEquals({
-    required String collectionPath,
-    required String fieldName,
-    required Object? value,
-    String? orderBy,
-    bool descending = false,
-    int? limit,
-  }) async {
-    Query<Map<String, dynamic>> query = firestore.collection(collectionPath).where(fieldName, isEqualTo: value);
-    if (orderBy != null) {
-      query = query.orderBy(orderBy, descending: descending);
-    }
-    if (limit != null) {
-      query = query.limit(limit);
-    }
-    final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
-    return snapshot.docs.map(_withDocId).toList();
-  }
 
   @override
   Future<void> deleteDocument({
@@ -84,6 +57,8 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
   }) {
     return firestore.collection(collectionPath).doc(documentId).collection(subcollectionPath).doc(subDocumentId).set(data);
   }
+
+  @override
 
   @override
   Future<void> deleteSubDocument({
@@ -108,6 +83,6 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
       query = query.orderBy(orderBy, descending: descending);
     }
     final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
-    return snapshot.docs.map(_withDocId).toList();
+    return snapshot.docs.map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => <String, dynamic>{...doc.data(), 'id': doc.id, '_id': doc.id}).toList();
   }
 }
