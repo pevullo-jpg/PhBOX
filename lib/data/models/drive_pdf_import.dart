@@ -220,8 +220,7 @@ class DrivePdfImport {
     final String text = value.toString().trim();
     if (text.isEmpty) return const <String>[];
     return text
-        .split(RegExp(r'[,;|
-]'))
+        .split(RegExp(r'[,;|\n]'))
         .map((item) => item.trim())
         .where((item) => item.isNotEmpty)
         .toList();
