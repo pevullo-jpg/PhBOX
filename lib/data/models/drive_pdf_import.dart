@@ -1,5 +1,3 @@
-import '../../core/constants/app_constants.dart';
-
 class DrivePdfImport {
   final String id;
   final String driveFileId;
@@ -18,10 +16,6 @@ class DrivePdfImport {
   final DateTime? prescriptionDate;
   final String webViewLink;
   final bool pdfDeleted;
-  final bool deletePdfRequested;
-  final bool excludeFromMerge;
-  final bool excludeFromReanalysis;
-  final DateTime? deletionRequestedAt;
   final String sourceType;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -44,10 +38,6 @@ class DrivePdfImport {
     this.prescriptionDate,
     this.webViewLink = '',
     this.pdfDeleted = false,
-    this.deletePdfRequested = false,
-    this.excludeFromMerge = false,
-    this.excludeFromReanalysis = false,
-    this.deletionRequestedAt,
     this.sourceType = 'script',
     required this.createdAt,
     required this.updatedAt,
@@ -71,10 +61,6 @@ class DrivePdfImport {
     DateTime? prescriptionDate,
     String? webViewLink,
     bool? pdfDeleted,
-    bool? deletePdfRequested,
-    bool? excludeFromMerge,
-    bool? excludeFromReanalysis,
-    DateTime? deletionRequestedAt,
     String? sourceType,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -97,27 +83,10 @@ class DrivePdfImport {
       prescriptionDate: prescriptionDate ?? this.prescriptionDate,
       webViewLink: webViewLink ?? this.webViewLink,
       pdfDeleted: pdfDeleted ?? this.pdfDeleted,
-      deletePdfRequested: deletePdfRequested ?? this.deletePdfRequested,
-      excludeFromMerge: excludeFromMerge ?? this.excludeFromMerge,
-      excludeFromReanalysis: excludeFromReanalysis ?? this.excludeFromReanalysis,
-      deletionRequestedAt: deletionRequestedAt ?? this.deletionRequestedAt,
       sourceType: sourceType ?? this.sourceType,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
-  }
-
-  String get normalizedStatus => status.trim().toLowerCase();
-
-  bool get isDeleteRequested {
-    return normalizedStatus == AppImportStatuses.deleteRequested || deletePdfRequested;
-  }
-
-  bool get isInactiveForActiveFlows {
-    return pdfDeleted ||
-        normalizedStatus == AppImportStatuses.deleted ||
-        normalizedStatus == AppImportStatuses.deletedPdf ||
-        isDeleteRequested;
   }
 
   Map<String, dynamic> toMap() {
@@ -139,10 +108,6 @@ class DrivePdfImport {
       'prescriptionDate': prescriptionDate?.toIso8601String(),
       'webViewLink': webViewLink,
       'pdfDeleted': pdfDeleted,
-      'deletePdfRequested': deletePdfRequested,
-      'excludeFromMerge': excludeFromMerge,
-      'excludeFromReanalysis': excludeFromReanalysis,
-      'deletionRequestedAt': deletionRequestedAt?.toIso8601String(),
       'sourceType': sourceType,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
@@ -150,14 +115,12 @@ class DrivePdfImport {
   }
 
   factory DrivePdfImport.fromMap(Map<String, dynamic> map) {
-    final String status = _readString(map['status'] ?? AppImportStatuses.pending);
-    final bool deletePdfRequested = _readBool(map['deletePdfRequested']) || status.toLowerCase() == AppImportStatuses.deleteRequested;
     return DrivePdfImport(
       id: (map['id'] ?? map['duplicateHash'] ?? '') as String,
       driveFileId: (map['driveFileId'] ?? map['fileId'] ?? '') as String,
       fileName: (map['fileName'] ?? '') as String,
       mimeType: (map['mimeType'] ?? 'application/pdf') as String,
-      status: status,
+      status: (map['status'] ?? 'pending') as String,
       errorMessage: (map['errorMessage'] ?? '') as String,
       patientFiscalCode: _readString(
         map['patientFiscalCode'] ??
@@ -196,16 +159,13 @@ class DrivePdfImport {
             map['mergedWebViewLink'] ??
             map['downloadUrl'],
       ),
-      pdfDeleted: _readBool(map['pdfDeleted']) || _readString(map['status']).toLowerCase() == AppImportStatuses.deletedPdf,
-      deletePdfRequested: deletePdfRequested,
-      excludeFromMerge: _readBool(map['excludeFromMerge']) || deletePdfRequested,
-      excludeFromReanalysis: _readBool(map['excludeFromReanalysis']) || deletePdfRequested,
-      deletionRequestedAt: _readDate(map['deletionRequestedAt']),
+      pdfDeleted: _readBool(map['pdfDeleted']) || _readString(map['status']).toLowerCase() == 'deleted_pdf',
       sourceType: _readString(map['sourceType'] ?? map['source']).isEmpty ? 'script' : _readString(map['sourceType'] ?? map['source']),
       createdAt: _readDate(map['createdAt'] ?? map['importedAt']) ?? DateTime.now(),
       updatedAt: _readDate(map['updatedAt'] ?? map['manifestUpdatedAt']) ?? DateTime.now(),
     );
   }
+
 
   static String _readString(dynamic value) {
     if (value == null) return '';
@@ -217,7 +177,7 @@ class DrivePdfImport {
     if (value is List) {
       return value.map((item) => item.toString().trim()).where((item) => item.isNotEmpty).toList();
     }
-    final String text = value.toString().trim();
+    final text = value.toString().trim();
     if (text.isEmpty) return const <String>[];
     return text
         .split(RegExp(r'[,;|\n]'))
@@ -228,7 +188,7 @@ class DrivePdfImport {
 
   static bool _readBool(dynamic value) {
     if (value is bool) return value;
-    final String normalized = value?.toString().trim().toLowerCase() ?? '';
+    final normalized = value?.toString().trim().toLowerCase() ?? '';
     return normalized == 'true' || normalized == '1' || normalized == 'si' || normalized == 'sì' || normalized == 'yes';
   }
 

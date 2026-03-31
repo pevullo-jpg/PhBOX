@@ -112,8 +112,8 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         return link.doctorName.trim();
       }
     }
-    if (patient != null && ((patient.doctorFullName ?? patient.doctorName ?? '').trim().isNotEmpty)) {
-      return (patient.doctorFullName ?? patient.doctorName)!.trim();
+    if (patient != null && (patient.doctorName ?? '').trim().isNotEmpty) {
+      return patient.doctorName!.trim();
     }
     for (final advance in advances) {
       if (advance.doctorName.trim().isNotEmpty) return advance.doctorName.trim();
@@ -139,18 +139,9 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         ? null
         : data.prescriptions.map((item) => item.prescriptionDate).reduce((a, b) => a.isAfter(b) ? a : b);
     final archivedRecipeCount = data.prescriptions.fold<int>(0, (sum, item) => sum + item.prescriptionCount);
-    final exemptions = Patient.normalizeExemptionValues(<dynamic>[
-      ...patient.normalizedExemptions,
-      ...data.prescriptions.map((item) => item.exemptionCode),
-      ...data.imports.map((item) => item.exemptionCode),
-    ]);
-    final String? currentExemption = patient.currentExemption ?? (exemptions.isEmpty ? null : exemptions.first);
     await _patientsRepository.savePatient(
       patient.copyWith(
         doctorName: data.resolvedDoctorName == '-' ? patient.doctorName : data.resolvedDoctorName,
-        exemption: currentExemption,
-        exemptionCode: currentExemption,
-        exemptions: exemptions,
         hasDebt: data.debts.isNotEmpty,
         debtTotal: totalDebt,
         hasAdvance: data.advances.isNotEmpty,
@@ -605,7 +596,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
 
   Future<void> _deleteSinglePrescription(Patient patient, Prescription prescription) async {
     if (!await _confirmDelete('Eliminare questa ricetta?')) return;
-    await _prescriptionsRepository.requestDeletionForPrescription(patient.fiscalCode, prescription.id);
+    await _prescriptionsRepository.deletePrescription(patient.fiscalCode, prescription.id);
+    try {
+      await _drivePdfImportsRepository.deleteImport(prescription.id);
+    } catch (_) {}
     _refresh('Ricetta eliminata.');
   }
 
@@ -822,7 +816,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
             children: [
               _metaBadge('CF', patient.fiscalCode),
               _metaBadge('Medico', data.resolvedDoctorName),
-              _metaBadge('Esenzione', patient.exemptionsDisplay),
+              _metaBadge('Esenzione', (patient.exemptionCode ?? '').trim().isEmpty ? '-' : patient.exemptionCode!.trim()),
               _metaBadge('Città', (patient.city ?? '').trim().isEmpty ? '-' : patient.city!.trim()),
               _metaBadge('Ultima ricetta', _formatDate(patient.lastPrescriptionDate)),
             ],

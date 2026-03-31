@@ -59,14 +59,6 @@ class IntakeToEntitiesService {
         final Patient? existing =
             await patientsRepository.getPatientByFiscalCode(intake.fiscalCode);
 
-        final List<String> exemptions = Patient.normalizeExemptionValues(<dynamic>[
-          ...(existing?.normalizedExemptions ?? const <String>[]),
-          intake.exemptionCode,
-        ]);
-        final String? currentExemption = intake.exemptionCode.trim().isEmpty
-            ? existing?.currentExemption
-            : intake.exemptionCode.trim().toUpperCase();
-
         final Patient patient = Patient(
           fiscalCode: intake.fiscalCode,
           fullName: intake.patientName.isEmpty
@@ -75,9 +67,9 @@ class IntakeToEntitiesService {
           city: intake.city.isEmpty ? existing?.city : intake.city,
           doctorName:
               intake.doctorName.isEmpty ? existing?.doctorName : intake.doctorName,
-          exemption: currentExemption,
-          exemptionCode: currentExemption,
-          exemptions: exemptions,
+          exemptionCode: intake.exemptionCode.isEmpty
+              ? existing?.exemptionCode
+              : intake.exemptionCode,
           archivedRecipeCount: (existing?.archivedRecipeCount ?? 0) + intake.prescriptionCount,
           hasDpc: (existing?.hasDpc ?? false) || intake.dpcFlag,
           hasAdvance: existing?.hasAdvance ?? false,
@@ -115,8 +107,8 @@ class IntakeToEntitiesService {
           doctorName:
               intake.doctorName.isEmpty ? patient.doctorName : intake.doctorName,
           exemptionCode: intake.exemptionCode.isEmpty
-              ? patient.currentExemption
-              : intake.exemptionCode.trim().toUpperCase(),
+              ? patient.exemptionCode
+              : intake.exemptionCode,
           city: intake.city.isEmpty ? patient.city : intake.city,
           prescriptionDate: prescriptionDate,
           expiryDate: _computeExpiryDate(prescriptionDate),

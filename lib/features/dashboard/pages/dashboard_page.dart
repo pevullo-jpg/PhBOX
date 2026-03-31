@@ -27,6 +27,9 @@ import '../../../data/repositories/settings_repository.dart';
 import '../../../features/patients/pages/patient_detail_page.dart';
 import '../../../theme/app_theme.dart';
 
+part 'dashboard_loader.dart';
+part 'dashboard_models.dart';
+
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
 
@@ -48,6 +51,7 @@ class _DashboardPageState extends State<DashboardPage> {
   late final SettingsRepository _settingsRepository;
 
   Future<_DashboardData>? _future;
+  List<String>? _doctorsCatalogCache;
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
 
@@ -77,46 +81,38 @@ class _DashboardPageState extends State<DashboardPage> {
     super.dispose();
   }
 
-  Future<_DashboardData> _load() async {
-    final patients = await _patientsRepository.getAllPatients();
-    final families = await _familyGroupsRepository.getAllFamilies();
+  Future<_DashboardData> _load() {
+    return _DashboardLoader(
+      patientsRepository: _patientsRepository,
+      prescriptionsRepository: _prescriptionsRepository,
+      advancesRepository: _advancesRepository,
+      debtsRepository: _debtsRepository,
+      bookingsRepository: _bookingsRepository,
+      drivePdfImportsRepository: _drivePdfImportsRepository,
+      doctorPatientLinksRepository: _doctorPatientLinksRepository,
+      familyGroupsRepository: _familyGroupsRepository,
+    ).load();
+  }
+
+  Future<List<String>> _getDoctorsCatalog() async {
+    final cached = _doctorsCatalogCache;
+    if (cached != null) {
+      return cached;
+    }
     final settings = await _settingsRepository.getSettings();
-
-    final summaries = await Future.wait(
-      patients.map((patient) async {
-        final prescriptions = await _prescriptionsRepository.getPatientPrescriptions(patient.fiscalCode);
-        final debts = patient.debts;
-        final advances = patient.advances;
-        final bookings = patient.bookings;
-        return _PatientDashboardSummary.build(
-          patient: patient,
-          prescriptions: prescriptions,
-          imports: const [],
-          debts: debts,
-          advances: advances,
-          bookings: bookings,
-          doctorLinks: const [],
-          families: families,
-        );
-      }),
-    );
-
-    summaries.sort((a, b) {
-      if (a.hasExpiryAlert != b.hasExpiryAlert) {
-        return a.hasExpiryAlert ? -1 : 1;
-      }
-      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
-    });
-
-    return _DashboardData(
-      summaries: summaries,
-      doctorsCatalog: settings.doctorsCatalog,
-      families: families,
-    );
+    final normalized = settings.doctorsCatalog
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    _doctorsCatalogCache = normalized;
+    return normalized;
   }
 
   void _refresh() {
     setState(() {
+      _doctorsCatalogCache = null;
       _future = _load();
     });
   }
@@ -265,7 +261,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 onPressed: () async {
                                   final bool confirmed = await _confirmDeleteRecipe(item);
                                   if (!confirmed) return;
-                                  await _prescriptionsRepository.requestDeletionForImport(item.patientFiscalCode, item.id);
+                                  await _drivePdfImportsRepository.softDeleteImport(item.id);
                                   if (mounted) {
                                     Navigator.of(context).pop();
                                     _refresh();
@@ -405,9 +401,9 @@ class _DashboardPageState extends State<DashboardPage> {
     final drugController = TextEditingController();
     final noteController = TextEditingController();
     String selectedDoctor = summary.doctorName.trim() == '-' ? '' : summary.doctorName.trim();
-    final data = await _future!;
+    final doctorsCatalog = await _getDoctorsCatalog();
     final candidateList = <String>{
-      ...data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty),
+      ...doctorsCatalog,
       if (selectedDoctor.isNotEmpty) selectedDoctor,
     }.toList()
       ..sort();
@@ -610,8 +606,7 @@ class _DashboardPageState extends State<DashboardPage> {
     required _PatientDashboardSummary summary,
     required String key,
   }) async {
-    final data = await _future!;
-    final doctorsCatalog = data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty).toList()..sort();
+    final doctorsCatalog = await _getDoctorsCatalog();
 
     final debtDescriptionController = TextEditingController();
     final debtAmountController = TextEditingController();
@@ -1163,7 +1158,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final debtController = TextEditingController();
     final debtDescriptionController = TextEditingController();
     String selectedDoctor = '';
-    final doctorCandidates = data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList()..sort();
+    final doctorCandidates = (await _getDoctorsCatalog()).toSet().toList()..sort();
 
     List<String> _splitPatientName(String fullName) {
       final parts = fullName.trim().split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
@@ -1544,7 +1539,11 @@ class _DashboardPageState extends State<DashboardPage> {
       for (final booking in summary.bookings) {
         await _bookingsRepository.deleteBooking(summary.patient.fiscalCode, booking.id);
       }
-      await _prescriptionsRepository.requestDeletionForAllPatientPrescriptions(summary.patient.fiscalCode);
+      await _prescriptionsRepository.deleteAllPatientPrescriptions(summary.patient.fiscalCode);
+      final recipeImports = summary.imports;
+      for (final importItem in recipeImports) {
+        await _drivePdfImportsRepository.softDeleteImport(importItem.id);
+      }
       final updated = summary.patient.copyWith(
         hasDebt: false,
         debtTotal: 0,
@@ -1557,7 +1556,6 @@ class _DashboardPageState extends State<DashboardPage> {
         updatedAt: DateTime.now(),
       );
       await _patientsRepository.savePatient(updated);
-      await _prescriptionsRepository.refreshPatientAggregates(summary.patient.fiscalCode);
       setState(() {
         _message = 'Dati assistito eliminati.';
       });
@@ -1915,7 +1913,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final item = summary.imports.first;
       final confirmed = await _confirmDeleteRecipe(item);
       if (!confirmed) return;
-      await _prescriptionsRepository.requestDeletionForImport(item.patientFiscalCode, item.id);
+      await _drivePdfImportsRepository.softDeleteImport(item.id);
       _refresh();
       return;
     }
@@ -1928,7 +1926,7 @@ class _DashboardPageState extends State<DashboardPage> {
             final confirmed = await _confirmDeleteRecipe(item);
             if (!confirmed) return;
             setLocalState(() => busy = true);
-            await _prescriptionsRepository.requestDeletionForImport(item.patientFiscalCode, item.id);
+            await _drivePdfImportsRepository.softDeleteImport(item.id);
             _refresh();
             setLocalState(() => busy = false);
             if (!mounted) return;
@@ -1999,370 +1997,3 @@ class _DashboardPageState extends State<DashboardPage> {
     return '$day/$month/$year';
   }
 }
-
-class _DashboardData {
-  final List<_PatientDashboardSummary> summaries;
-  final List<String> doctorsCatalog;
-  final List<FamilyGroup> families;
-
-  const _DashboardData({
-    required this.summaries,
-    required this.doctorsCatalog,
-    required this.families,
-  });
-}
-
-class _PatientDashboardSummary {
-  final Patient patient;
-  final String doctorName;
-  final String exemptionCode;
-  final String city;
-  final List<Prescription> prescriptions;
-  final List<DrivePdfImport> imports;
-  final List<Debt> debts;
-  final List<Advance> advances;
-  final List<Booking> bookings;
-  final bool hasDpc;
-  final int recipeCount;
-  final bool hasExpiryAlert;
-  final String familyId;
-
-  const _PatientDashboardSummary({
-    required this.patient,
-    required this.doctorName,
-    required this.exemptionCode,
-    required this.city,
-    required this.prescriptions,
-    required this.imports,
-    required this.debts,
-    required this.advances,
-    required this.bookings,
-    required this.hasDpc,
-    required this.recipeCount,
-    required this.hasExpiryAlert,
-    required this.familyId,
-  });
-
-  String get displayName => patient.fullName.trim().isEmpty ? patient.fiscalCode : patient.fullName.trim();
-
-  double get totalDebt => debts.fold<double>(0, (sum, item) => sum + item.residualAmount);
-
-  String get doctorNameUpper => doctorName.trim().isEmpty ? '-' : doctorName.trim().toUpperCase();
-  String get doctorSurnameUpper {
-    final String cleaned = doctorName.trim();
-    if (cleaned.isEmpty || cleaned == '-') return '-';
-    return cleaned.toUpperCase();
-  }
-
-  bool get hasActiveContent => recipeCount > 0 || hasDpc || debts.isNotEmpty || advances.isNotEmpty || bookings.isNotEmpty;
-
-  List<_FlagItem> get dpcItems {
-    final fromPrescriptions = prescriptions.where((item) => item.dpcFlag).map((item) {
-      return _FlagItem(
-        title: _dashboardPrescriptionTitle(item),
-        subtitle: '${_dashboardFormatDate(item.prescriptionDate)} · ${(item.doctorName ?? '-').trim().isEmpty ? '-' : item.doctorName!.trim()}',
-      );
-    });
-    final fromImports = imports.where((item) => item.isDpc).map((item) {
-      return _FlagItem(
-        title: item.therapy.isEmpty ? (item.fileName.trim().isEmpty ? 'DPC' : item.fileName.trim()) : item.therapy.join(', '),
-        subtitle: '${_dashboardFormatDate(item.prescriptionDate ?? item.createdAt)} · ${item.doctorFullName.trim().isEmpty ? '-' : item.doctorFullName.trim()}',
-      );
-    });
-    return [...fromPrescriptions, ...fromImports];
-  }
-
-  static _PatientDashboardSummary build({
-    required Patient patient,
-    required List<Prescription> prescriptions,
-    required List<DrivePdfImport> imports,
-    required List<Debt> debts,
-    required List<Advance> advances,
-    required List<Booking> bookings,
-    required List<DoctorPatientLink> doctorLinks,
-    required List<FamilyGroup> families,
-  }) {
-    final normalizedFiscalCode = patient.fiscalCode.trim().toUpperCase();
-    final normalizedFullName = patient.fullName.trim().toUpperCase();
-    final matchingImports = imports.where((item) {
-      final importFiscalCode = item.patientFiscalCode.trim().toUpperCase();
-      final importFullName = item.patientFullName.trim().toUpperCase();
-      if (item.isInactiveForActiveFlows) return false;
-      if (importFiscalCode.isNotEmpty) {
-        return importFiscalCode == normalizedFiscalCode;
-      }
-      return normalizedFullName.isNotEmpty && importFullName == normalizedFullName;
-    }).toList();
-    final matchingDoctor = doctorLinks.where((item) {
-      return item.patientFiscalCode == patient.fiscalCode.trim().toUpperCase();
-    }).toList();
-    final prescriptionDoctor = prescriptions.map((e) => e.doctorName?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '');
-    final importDoctor = matchingImports.map((e) => e.doctorFullName.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '');
-    final linkDoctorFull = matchingDoctor.map((e) => e.doctorFullName.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '');
-    final patientDoctor = (patient.doctorName ?? '').trim();
-    final doctorName = linkDoctorFull.isNotEmpty
-        ? linkDoctorFull
-        : (patientDoctor.isNotEmpty
-            ? patientDoctor
-            : (importDoctor.isNotEmpty ? importDoctor : prescriptionDoctor));
-    final exemptionCode = patient.normalizedExemptions.isNotEmpty
-        ? patient.exemptionsDisplay
-        : (() {
-            final List<String> observed = Patient.normalizeExemptionValues(<dynamic>[
-              ...prescriptions.map((e) => e.exemptionCode),
-              ...matchingImports.map((e) => e.exemptionCode),
-            ]);
-            return observed.isEmpty ? '-' : observed.join(', ');
-          })();
-    final city = (patient.city ?? '').trim().isNotEmpty
-        ? patient.city!.trim()
-        : (() {
-            final fromPrescription = prescriptions.map((e) => e.city?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '');
-            if (fromPrescription.isNotEmpty) return fromPrescription;
-            return matchingImports.map((e) => e.city.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '-');
-          })();
-    final int importsRecipeCount = matchingImports.fold<int>(0, (sum, item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
-    final int prescriptionsRecipeCount = prescriptions.fold<int>(0, (sum, item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
-    final recipeCount = importsRecipeCount > 0
-        ? importsRecipeCount
-        : (prescriptionsRecipeCount > 0 ? prescriptionsRecipeCount : (matchingImports.isNotEmpty ? matchingImports.length : 0));
-    final hasDpc = prescriptions.any((item) => item.dpcFlag) || matchingImports.any((item) => item.isDpc);
-    final hasExpiryAlert = prescriptions.any((item) {
-      final info = PrescriptionExpiryUtils.evaluate(item.expiryDate);
-      return info.status == PrescriptionValidityStatus.expiringSoon || info.status == PrescriptionValidityStatus.expired;
-    });
-    final familyId = (() {
-      for (final family in families) {
-        if (family.memberFiscalCodes.map((e) => e.trim().toUpperCase()).contains(normalizedFiscalCode)) {
-          return family.id;
-        }
-      }
-      return '';
-    })();
-    return _PatientDashboardSummary(
-      patient: patient,
-      doctorName: doctorName.isEmpty ? '-' : doctorName,
-      exemptionCode: exemptionCode.isEmpty ? '-' : exemptionCode,
-      city: city.isEmpty ? '-' : city,
-      prescriptions: prescriptions,
-      imports: matchingImports,
-      debts: debts,
-      advances: advances,
-      bookings: bookings,
-      hasDpc: hasDpc,
-      recipeCount: recipeCount,
-      hasExpiryAlert: hasExpiryAlert,
-      familyId: familyId,
-    );
-  }
-}
-
-class _FlagItem {
-  final String title;
-  final String subtitle;
-  final Future<void> Function()? onDelete;
-
-  const _FlagItem({required this.title, required this.subtitle, this.onDelete});
-}
-
-String _dashboardPrescriptionTitle(Prescription prescription) {
-  final label = prescription.items.map((e) => e.drugName.trim()).where((e) => e.isNotEmpty).join(', ');
-  return label.isEmpty ? 'Ricetta' : label;
-}
-
-String _dashboardFormatDate(DateTime? date) {
-  if (date == null) return '-';
-  final day = date.day.toString().padLeft(2, '0');
-  final month = date.month.toString().padLeft(2, '0');
-  final year = date.year.toString();
-  return '$day/$month/$year';
-}
-
-
-
-class _DashboardFamilyState {
-  final Map<String, int> activeCounts;
-  final Map<String, Color> colors;
-
-  const _DashboardFamilyState({required this.activeCounts, required this.colors});
-
-  factory _DashboardFamilyState.empty() => const _DashboardFamilyState(activeCounts: <String, int>{}, colors: <String, Color>{});
-
-  factory _DashboardFamilyState.fromFamilies(List<_PatientDashboardSummary> summaries, List<FamilyGroup> families) {
-    const palette = <Color>[
-      Color(0xFF2563EB),
-      Color(0xFF059669),
-      Color(0xFFD97706),
-      Color(0xFFDC2626),
-      Color(0xFF7C3AED),
-      Color(0xFF0891B2),
-      Color(0xFF65A30D),
-      Color(0xFFEA580C),
-    ];
-    final counts = <String, int>{};
-    final colors = <String, Color>{};
-    for (final family in families) {
-      final activeCount = summaries.where((item) => item.familyId == family.id && item.hasActiveContent).length;
-      counts[family.id] = activeCount;
-      colors[family.id] = palette[family.colorIndex % palette.length];
-    }
-    return _DashboardFamilyState(activeCounts: counts, colors: colors);
-  }
-
-  bool hasMultipleActive(String familyId) => (activeCounts[familyId] ?? 0) > 1;
-
-  Color colorFor(String familyId) => colors[familyId] ?? AppColors.yellow;
-}
-
-class _SummaryCard extends StatelessWidget {
-  final String title;
-  final String value;
-  final IconData icon;
-  final Color accent;
-  final bool isSelected;
-  final VoidCallback onTap;
-
-  const _SummaryCard({
-    required this.title,
-    required this.value,
-    required this.icon,
-    required this.accent,
-    required this.isSelected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: accent,
-      borderRadius: BorderRadius.circular(24),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(24),
-        child: Container(
-          width: 220,
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: isSelected ? Colors.white : Colors.transparent,
-              width: 2,
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.18),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(icon, color: Colors.white),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      value,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-enum _DashboardCardFilter { ricette, dpc, debiti, anticipi, prenotazioni, scadenze }
-
-class _FilterToggle extends StatelessWidget {
-  final String label;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  const _FilterToggle({required this.label, required this.value, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    return FilterChip(
-      selected: value,
-      onSelected: onChanged,
-      label: Text(label),
-      labelStyle: TextStyle(color: value ? Colors.black : Colors.white),
-      selectedColor: AppColors.yellow,
-      backgroundColor: AppColors.panel,
-      side: const BorderSide(color: Colors.white10),
-    );
-  }
-}
-
-class _FlagChip extends StatelessWidget {
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _FlagChip({required this.label, required this.color, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: Text(
-          label,
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5),
-        ),
-      ),
-    );
-  }
-}
-
-class _QuickEditFlag extends StatelessWidget {
-  final VoidCallback onTap;
-
-  const _QuickEditFlag({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: 'Apri gestione',
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: Container(
-          width: 36,
-          height: 36,
-          decoration: const BoxDecoration(
-            color: Color(0xFF7A7A7A),
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(Icons.add, color: Colors.white, size: 20),
-        ),
-      ),
-    );
-  }
-}
-
-const TextStyle _headStyle = TextStyle(color: Colors.white70, fontWeight: FontWeight.w800, fontSize: 15);

@@ -21,7 +21,7 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     required String documentId,
   }) async {
     final doc = await firestore.collection(collectionPath).doc(documentId).get();
-    return doc.data() == null ? null : <String, dynamic>{...doc.data()!, 'id': doc.id, '_id': doc.id};
+    return doc.data();
   }
 
   @override
@@ -35,9 +35,17 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
       query = query.orderBy(orderBy, descending: descending);
     }
     final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
-    return snapshot.docs.map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => <String, dynamic>{...doc.data(), 'id': doc.id, '_id': doc.id}).toList();
+    return snapshot.docs.map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => doc.data()).toList();
   }
 
+
+  @override
+  Future<List<Map<String, dynamic>>> getCollectionGroup({
+    required String collectionPath,
+  }) async {
+    final QuerySnapshot<Map<String, dynamic>> snapshot = await firestore.collectionGroup(collectionPath).get();
+    return snapshot.docs.map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => doc.data()).toList();
+  }
 
   @override
   Future<void> deleteDocument({
@@ -57,8 +65,6 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
   }) {
     return firestore.collection(collectionPath).doc(documentId).collection(subcollectionPath).doc(subDocumentId).set(data);
   }
-
-  @override
 
   @override
   Future<void> deleteSubDocument({
@@ -83,6 +89,6 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
       query = query.orderBy(orderBy, descending: descending);
     }
     final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
-    return snapshot.docs.map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => <String, dynamic>{...doc.data(), 'id': doc.id, '_id': doc.id}).toList();
+    return snapshot.docs.map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => doc.data()).toList();
   }
 }

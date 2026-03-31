@@ -16,6 +16,10 @@ abstract class FirestoreDatasource {
     bool descending = false,
   });
 
+  Future<List<Map<String, dynamic>>> getCollectionGroup({
+    required String collectionPath,
+  });
+
   Future<void> deleteDocument({
     required String collectionPath,
     required String documentId,

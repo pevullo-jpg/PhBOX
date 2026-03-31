@@ -4,8 +4,8 @@ import '../models/drive_pdf_import.dart';
 import '../models/patient.dart';
 import '../models/prescription.dart';
 import '../models/prescription_item.dart';
-import 'drive_pdf_imports_repository.dart';
 import 'patients_repository.dart';
+import 'drive_pdf_imports_repository.dart';
 
 class PrescriptionsRepository {
   final FirestoreDatasource datasource;
@@ -29,38 +29,33 @@ class PrescriptionsRepository {
   }
 
   Future<List<Prescription>> getPatientPrescriptions(String fiscalCode) async {
-    final Patient? patient = await patientsRepository.getPatientByFiscalCode(fiscalCode);
-    if (patient != null && patient.recipes.isNotEmpty) {
-      final List<Prescription> prescriptions = patient.recipes.map((Map<String, dynamic> raw) {
-        final DateTime prescriptionDate = DateTime.tryParse((raw['prescriptionDate'] ?? '').toString()) ?? DateTime.now();
-        return Prescription(
-          id: (raw['id'] ?? '').toString(),
-          patientFiscalCode: fiscalCode,
-          patientName: patient.fullName,
-          prescriptionDate: prescriptionDate,
-          expiryDate: prescriptionDate.add(const Duration(days: 30)),
-          doctorName: (raw['doctorName'] ?? '').toString().trim().isEmpty ? patient.doctorFullName ?? patient.doctorName : (raw['doctorName'] ?? '').toString(),
-          exemptionCode: (raw['exemptionCode'] ?? '').toString().trim().isEmpty ? patient.currentExemption : (raw['exemptionCode'] ?? '').toString(),
-          city: patient.city,
-          dpcFlag: raw['isDpc'] == true,
-          prescriptionCount: int.tryParse((raw['prescriptionCount'] ?? 1).toString()) ?? 1,
-          sourceType: 'patient_embedded',
-          status: raw['deletePdfRequested'] == true ? AppPrescriptionStatuses.deleteRequested : AppPrescriptionStatuses.active,
-          deleteRequested: raw['deletePdfRequested'] == true,
-          deletionRequestedAt: null,
-          extractedText: null,
-          items: const <PrescriptionItem>[],
-          createdAt: DateTime.tryParse((raw['createdAt'] ?? '').toString()) ?? patient.createdAt,
-          updatedAt: DateTime.tryParse((raw['updatedAt'] ?? '').toString()) ?? patient.updatedAt,
-        );
-      }).where((Prescription item) => !item.isDeleteRequested).toList();
-      prescriptions.sort((Prescription a, Prescription b) => b.prescriptionDate.compareTo(a.prescriptionDate));
-      return prescriptions;
+    final List<Map<String, dynamic>> maps = await datasource.getSubCollection(
+      collectionPath: AppCollections.patients,
+      documentId: fiscalCode,
+      subcollectionPath: AppCollections.prescriptions,
+      orderBy: 'prescriptionDate',
+      descending: true,
+    );
+
+    if (maps.isNotEmpty) {
+      return maps.map(Prescription.fromMap).toList();
     }
 
-    final DrivePdfImportsRepository importsRepository = DrivePdfImportsRepository(datasource: datasource);
-    final List<DrivePdfImport> imports = await importsRepository.getImportsByPatient(fiscalCode);
+    final DrivePdfImportsRepository importsRepository =
+        DrivePdfImportsRepository(datasource: datasource);
+    final List<DrivePdfImport> imports =
+        await importsRepository.getImportsByPatient(fiscalCode);
     return imports.map(_importToPrescription).toList();
+  }
+
+
+  Future<List<Prescription>> getAllStoredPrescriptions() async {
+    final List<Map<String, dynamic>> maps = await datasource.getCollectionGroup(
+      collectionPath: AppCollections.prescriptions,
+    );
+    final prescriptions = maps.map(Prescription.fromMap).where((item) => item.patientFiscalCode.trim().isNotEmpty).toList();
+    prescriptions.sort((a, b) => b.prescriptionDate.compareTo(a.prescriptionDate));
+    return prescriptions;
   }
 
   Future<void> refreshPatientAggregates(String fiscalCode) async {
@@ -68,46 +63,32 @@ class PrescriptionsRepository {
     if (patient == null) return;
 
     final List<Prescription> prescriptions = await getPatientPrescriptions(fiscalCode);
-    final DrivePdfImportsRepository importsRepository = DrivePdfImportsRepository(datasource: datasource);
-    final List<DrivePdfImport> imports = await importsRepository.getImportsByPatient(fiscalCode);
 
-    final int prescriptionsRecipeCount = prescriptions.fold<int>(0, (int sum, Prescription prescription) => sum + (prescription.prescriptionCount > 0 ? prescription.prescriptionCount : 1));
-    final int importsRecipeCount = imports.fold<int>(0, (int sum, DrivePdfImport item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
-    final int archivedRecipeCount = importsRecipeCount > 0 ? importsRecipeCount : prescriptionsRecipeCount;
+    final int archivedRecipeCount = prescriptions.fold<int>(0, (int sum, Prescription prescription) => sum + prescription.prescriptionCount);
 
-    final List<DateTime> observedDates = <DateTime>[
-      ...prescriptions.map((Prescription item) => item.prescriptionDate),
-      ...imports.map((DrivePdfImport item) => item.prescriptionDate ?? item.createdAt),
-    ];
-    final DateTime? lastPrescriptionDate = observedDates.isEmpty
-        ? null
-        : observedDates.reduce((DateTime a, DateTime b) => a.isAfter(b) ? a : b);
+    DateTime? lastPrescriptionDate;
+    bool hasDpc = false;
+    final Set<String> therapies = <String>{};
 
-    final bool hasDpc = prescriptions.any((Prescription item) => item.dpcFlag) || imports.any((DrivePdfImport item) => item.isDpc);
+    for (final Prescription prescription in prescriptions) {
+      if (lastPrescriptionDate == null ||
+          prescription.prescriptionDate.isAfter(lastPrescriptionDate)) {
+        lastPrescriptionDate = prescription.prescriptionDate;
+      }
 
-    final Set<String> therapies = <String>{
-      ...patient.therapiesSummary.map((String item) => item.trim()).where((String item) => item.isNotEmpty),
-      ...prescriptions.expand((Prescription prescription) => prescription.items).map((PrescriptionItem item) => item.drugName.trim()).where((String item) => item.isNotEmpty),
-      ...imports.expand((DrivePdfImport item) => item.therapy).map((String item) => item.trim()).where((String item) => item.isNotEmpty),
-    };
+      if (prescription.dpcFlag) {
+        hasDpc = true;
+      }
 
-    final List<String> exemptions = Patient.normalizeExemptionValues(<dynamic>[
-      ...patient.normalizedExemptions,
-      ...prescriptions.map((Prescription item) => item.exemptionCode),
-      ...imports.map((DrivePdfImport item) => item.exemptionCode),
-    ]);
-
-    final String? currentExemption = _resolveCurrentExemption(
-      existingCurrent: patient.currentExemption,
-      activePrescriptionCurrent: prescriptions.map((Prescription item) => item.exemptionCode?.trim() ?? '').firstWhere((String item) => item.isNotEmpty, orElse: () => ''),
-      activeImportCurrent: imports.map((DrivePdfImport item) => item.exemptionCode.trim()).firstWhere((String item) => item.isNotEmpty, orElse: () => ''),
-      normalizedExemptions: exemptions,
-    );
+      for (final item in prescription.items) {
+        final String drug = item.drugName.trim();
+        if (drug.isNotEmpty) {
+          therapies.add(drug);
+        }
+      }
+    }
 
     final Patient updated = patient.copyWith(
-      exemption: currentExemption,
-      exemptionCode: currentExemption,
-      exemptions: exemptions,
       archivedRecipeCount: archivedRecipeCount,
       lastPrescriptionDate: lastPrescriptionDate,
       hasDpc: hasDpc,
@@ -116,65 +97,6 @@ class PrescriptionsRepository {
     );
 
     await patientsRepository.savePatient(updated);
-  }
-
-  Future<void> requestDeletionForImport(String fiscalCode, String importId) async {
-    final DrivePdfImportsRepository importsRepository = DrivePdfImportsRepository(datasource: datasource);
-    final DrivePdfImport? importItem = await importsRepository.getImportById(importId);
-    if (importItem == null) return;
-
-    await importsRepository.queueImportDeletion(importId);
-
-    final DateTime now = DateTime.now();
-    final List<_SubPrescriptionRecord> records = await _getRawPatientPrescriptionRecords(fiscalCode);
-    for (final _SubPrescriptionRecord record in records) {
-      if (_recordMatchesImport(record, importItem)) {
-        await _markPrescriptionDeletionRequested(fiscalCode: fiscalCode, record: record, now: now);
-      }
-    }
-
-    await refreshPatientAggregates(fiscalCode);
-  }
-
-  Future<void> requestDeletionForPrescription(String fiscalCode, String prescriptionId) async {
-    final DateTime now = DateTime.now();
-    final List<_SubPrescriptionRecord> records = await _getRawPatientPrescriptionRecords(fiscalCode);
-    _SubPrescriptionRecord? selectedRecord;
-    for (final _SubPrescriptionRecord record in records) {
-      if (record.documentId == prescriptionId || record.prescription.id == prescriptionId) {
-        selectedRecord = record;
-        break;
-      }
-    }
-    if (selectedRecord == null) return;
-
-    await _markPrescriptionDeletionRequested(fiscalCode: fiscalCode, record: selectedRecord, now: now);
-
-    final DrivePdfImportsRepository importsRepository = DrivePdfImportsRepository(datasource: datasource);
-    final List<DrivePdfImport> imports = await importsRepository.getImportsByPatient(fiscalCode, includeInactive: true);
-    for (final DrivePdfImport item in imports) {
-      if (_importMatchesPrescription(item, selectedRecord.prescription)) {
-        await importsRepository.queueImportDeletion(item.id);
-      }
-    }
-
-    await refreshPatientAggregates(fiscalCode);
-  }
-
-  Future<void> requestDeletionForAllPatientPrescriptions(String fiscalCode) async {
-    final DrivePdfImportsRepository importsRepository = DrivePdfImportsRepository(datasource: datasource);
-    final List<DrivePdfImport> imports = await importsRepository.getImportsByPatient(fiscalCode);
-    for (final DrivePdfImport item in imports) {
-      await importsRepository.queueImportDeletion(item.id);
-    }
-
-    final DateTime now = DateTime.now();
-    final List<_SubPrescriptionRecord> records = await _getRawPatientPrescriptionRecords(fiscalCode);
-    for (final _SubPrescriptionRecord record in records.where((item) => !item.prescription.isDeleteRequested)) {
-      await _markPrescriptionDeletionRequested(fiscalCode: fiscalCode, record: record, now: now);
-    }
-
-    await refreshPatientAggregates(fiscalCode);
   }
 
   Prescription _importToPrescription(DrivePdfImport item) {
@@ -191,9 +113,6 @@ class PrescriptionsRepository {
       dpcFlag: item.isDpc,
       prescriptionCount: item.prescriptionCount,
       sourceType: item.sourceType,
-      status: item.isDeleteRequested ? AppPrescriptionStatuses.deleteRequested : AppPrescriptionStatuses.active,
-      deleteRequested: item.isDeleteRequested,
-      deletionRequestedAt: item.deletionRequestedAt,
       extractedText: null,
       items: item.therapy
           .where((String value) => value.trim().isNotEmpty)
@@ -204,100 +123,29 @@ class PrescriptionsRepository {
     );
   }
 
-  Future<List<_SubPrescriptionRecord>> _getRawPatientPrescriptionRecords(String fiscalCode) async {
-    return <_SubPrescriptionRecord>[];
-  }
 
-  Future<void> _markPrescriptionDeletionRequested({
-    required String fiscalCode,
-    required _SubPrescriptionRecord record,
-    required DateTime now,
-  }) async {
-    final String subDocumentId = record.documentId.trim().isNotEmpty ? record.documentId : record.prescription.id;
-    final Map<String, dynamic> next = <String, dynamic>{...record.raw};
-    next['id'] = subDocumentId;
-    next['status'] = AppPrescriptionStatuses.deleteRequested;
-    next['deleteRequested'] = true;
-    next['deletionRequestedAt'] = now.toIso8601String();
-    next['updatedAt'] = now.toIso8601String();
-    await datasource.setSubDocument(
+  Future<void> deletePrescription(String fiscalCode, String prescriptionId) async {
+    await datasource.deleteSubDocument(
       collectionPath: AppCollections.patients,
       documentId: fiscalCode,
       subcollectionPath: AppCollections.prescriptions,
-      subDocumentId: subDocumentId,
-      data: next,
+      subDocumentId: prescriptionId,
     );
+    await refreshPatientAggregates(fiscalCode);
   }
 
-  bool _recordMatchesImport(_SubPrescriptionRecord record, DrivePdfImport item) {
-    final Set<String> candidateIds = <String>{
-      record.documentId.trim(),
-      record.prescription.id.trim(),
-      _readString(record.raw['driveFileId']),
-      _readString(record.raw['fileId']),
-      _readString(record.raw['sourceImportId']),
-    }..removeWhere((String value) => value.isEmpty);
-
-    if (candidateIds.contains(item.id.trim())) return true;
-    if (item.driveFileId.trim().isNotEmpty && candidateIds.any((String value) => value.contains(item.driveFileId.trim()))) {
-      return true;
+  Future<void> deleteAllPatientPrescriptions(String fiscalCode) async {
+    final List<Prescription> prescriptions = await getPatientPrescriptions(fiscalCode);
+    for (final Prescription prescription in prescriptions) {
+      try {
+        await datasource.deleteSubDocument(
+          collectionPath: AppCollections.patients,
+          documentId: fiscalCode,
+          subcollectionPath: AppCollections.prescriptions,
+          subDocumentId: prescription.id,
+        );
+      } catch (_) {}
     }
-
-    final DateTime? recordDate = record.prescription.prescriptionDate;
-    final DateTime? importDate = item.prescriptionDate;
-    final bool sameDay = recordDate != null && importDate != null &&
-        recordDate.year == importDate.year &&
-        recordDate.month == importDate.month &&
-        recordDate.day == importDate.day;
-    final bool sameDoctor = (record.prescription.doctorName ?? '').trim().toUpperCase() == item.doctorFullName.trim().toUpperCase();
-    final bool sameExemption = (record.prescription.exemptionCode ?? '').trim().toUpperCase() == item.exemptionCode.trim().toUpperCase();
-    return sameDay && (sameDoctor || sameExemption);
+    await refreshPatientAggregates(fiscalCode);
   }
-
-  bool _importMatchesPrescription(DrivePdfImport item, Prescription prescription) {
-    final String prescriptionId = prescription.id.trim();
-    if (item.id.trim() == prescriptionId) return true;
-    if (item.driveFileId.trim().isNotEmpty && prescriptionId.contains(item.driveFileId.trim())) return true;
-
-    final DateTime? importDate = item.prescriptionDate;
-    final bool sameDay = importDate != null &&
-        importDate.year == prescription.prescriptionDate.year &&
-        importDate.month == prescription.prescriptionDate.month &&
-        importDate.day == prescription.prescriptionDate.day;
-    final bool sameDoctor = item.doctorFullName.trim().toUpperCase() == (prescription.doctorName ?? '').trim().toUpperCase();
-    final bool sameExemption = item.exemptionCode.trim().toUpperCase() == (prescription.exemptionCode ?? '').trim().toUpperCase();
-    return sameDay && (sameDoctor || sameExemption);
-  }
-
-  String? _resolveCurrentExemption({
-    required String? existingCurrent,
-    required String activePrescriptionCurrent,
-    required String activeImportCurrent,
-    required List<String> normalizedExemptions,
-  }) {
-    final List<String> candidates = <String>[
-      activePrescriptionCurrent.trim().toUpperCase(),
-      activeImportCurrent.trim().toUpperCase(),
-      (existingCurrent ?? '').trim().toUpperCase(),
-      if (normalizedExemptions.isNotEmpty) normalizedExemptions.first,
-    ].where((String item) => item.isNotEmpty).toList();
-    return candidates.isEmpty ? null : candidates.first;
-  }
-
-  String _readString(dynamic value) {
-    if (value == null) return '';
-    return value.toString().trim();
-  }
-}
-
-class _SubPrescriptionRecord {
-  final String documentId;
-  final Map<String, dynamic> raw;
-  final Prescription prescription;
-
-  const _SubPrescriptionRecord({
-    required this.documentId,
-    required this.raw,
-    required this.prescription,
-  });
 }
