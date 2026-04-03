@@ -51,8 +51,6 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<_DashboardData>? _future;
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
-  bool _hasExtendedData = false;
-  bool _isLoadingExtendedData = false;
 
   @override
   void initState() {
@@ -82,42 +80,21 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   void _handleSearchChanged() {
-    final bool needsExtendedData = _requiresExtendedDataForCurrentState();
-    if (needsExtendedData && !_hasExtendedData && !_isLoadingExtendedData) {
-      _refresh();
-      return;
-    }
     setState(() {});
   }
 
-  bool _requiresExtendedDataForCurrentState() {
-    final String rawQuery = _searchController.text.trim();
-    if (rawQuery.length >= 3) return true;
-    return _activeCardFilters.any((filter) =>
-        filter == _DashboardCardFilter.debiti ||
-        filter == _DashboardCardFilter.anticipi ||
-        filter == _DashboardCardFilter.prenotazioni);
-  }
-
   Future<_DashboardData> _load() async {
-    final bool loadExtendedData = _requiresExtendedDataForCurrentState();
-    final List<Future<dynamic>> requests = <Future<dynamic>>[
+    final results = await Future.wait<dynamic>(<Future<dynamic>>[
       _patientsRepository.getAllPatients(),
       _drivePdfImportsRepository.getAllImports(),
       _doctorPatientLinksRepository.getAllLinks(),
       _familyGroupsRepository.getAllFamilies(),
       _settingsRepository.getSettings(),
       _prescriptionsRepository.getAllStoredPrescriptions(),
-    ];
-    if (loadExtendedData) {
-      requests.addAll(<Future<dynamic>>[
-        _debtsRepository.getAllDebts(),
-        _advancesRepository.getAllAdvances(),
-        _bookingsRepository.getAllBookings(),
-      ]);
-    }
-
-    final results = await Future.wait<dynamic>(requests);
+      _debtsRepository.getAllDebts(),
+      _advancesRepository.getAllAdvances(),
+      _bookingsRepository.getAllBookings(),
+    ]);
 
     final List<Patient> patients = results[0] as List<Patient>;
     final List<DrivePdfImport> imports = results[1] as List<DrivePdfImport>;
@@ -125,12 +102,9 @@ class _DashboardPageState extends State<DashboardPage> {
     final List<FamilyGroup> families = results[3] as List<FamilyGroup>;
     final AppSettings settings = results[4] as AppSettings;
     final List<Prescription> allPrescriptions = results[5] as List<Prescription>;
-    final List<Debt> allDebts = loadExtendedData ? results[6] as List<Debt> : const <Debt>[];
-    final List<Advance> allAdvances = loadExtendedData ? results[7] as List<Advance> : const <Advance>[];
-    final List<Booking> allBookings = loadExtendedData ? results[8] as List<Booking> : const <Booking>[];
-
-    _hasExtendedData = loadExtendedData;
-    _isLoadingExtendedData = false;
+    final List<Debt> allDebts = results[6] as List<Debt>;
+    final List<Advance> allAdvances = results[7] as List<Advance>;
+    final List<Booking> allBookings = results[8] as List<Booking>;
 
     final prescriptionsByCf = _groupByFiscalCode(allPrescriptions, (item) => item.patientFiscalCode);
     final debtsByCf = _groupByFiscalCode(allDebts, (item) => item.patientFiscalCode);
@@ -203,7 +177,6 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   void _refresh() {
-    _isLoadingExtendedData = _requiresExtendedDataForCurrentState() && !_hasExtendedData;
     setState(() {
       _future = _load();
     });
@@ -296,11 +269,6 @@ class _DashboardPageState extends State<DashboardPage> {
 
       _activeCardFilters.add(filter);
     });
-
-    final bool needsExtendedData = _requiresExtendedDataForCurrentState();
-    if (needsExtendedData && !_hasExtendedData && !_isLoadingExtendedData) {
-      _refresh();
-    }
   }
 
   Future<void> _openPdf(DrivePdfImport item) async {
@@ -1688,8 +1656,15 @@ class _DashboardPageState extends State<DashboardPage> {
       future: _future,
       builder: (context, snapshot) {
         final data = snapshot.data;
-        final summaries = data == null ? const <_PatientDashboardSummary>[] : _applyFilters(data.summaries, data.families);
+        final allSummaries = data == null ? const <_PatientDashboardSummary>[] : data.summaries;
+        final summaries = data == null ? const <_PatientDashboardSummary>[] : _applyFilters(allSummaries, data.families);
         final expiring = summaries.where((item) => item.hasExpiryAlert).toList();
+        final totalRecipeCount = allSummaries.fold<int>(0, (sum, item) => sum + item.recipeCount);
+        final totalDpcCount = allSummaries.fold<int>(0, (sum, item) => sum + item.dpcItems.length);
+        final totalDebt = allSummaries.fold<double>(0, (sum, item) => sum + item.totalDebt);
+        final totalAdvances = allSummaries.fold<int>(0, (sum, item) => sum + item.advances.length);
+        final totalBookings = allSummaries.fold<int>(0, (sum, item) => sum + item.bookings.length);
+        final totalExpiring = allSummaries.where((item) => item.hasExpiryAlert).length;
         final familyState = data == null
             ? _DashboardFamilyState.empty()
             : _DashboardFamilyState.fromFamilies(data.summaries, data.families);
@@ -1724,7 +1699,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               children: [
                                 _SummaryCard(
                                   title: 'Ricette',
-                                  value: summaries.fold<int>(0, (sum, item) => sum + item.recipeCount).toString(),
+                                  value: totalRecipeCount.toString(),
                                   icon: Icons.receipt_long_outlined,
                                   accent: AppColors.green,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.ricette),
@@ -1732,7 +1707,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 ),
                                 _SummaryCard(
                                   title: 'Totale DPC',
-                                  value: summaries.fold<int>(0, (sum, item) => sum + item.dpcItems.length).toString(),
+                                  value: totalDpcCount.toString(),
                                   icon: Icons.local_shipping_outlined,
                                   accent: AppColors.coral,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.dpc),
@@ -1740,7 +1715,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 ),
                                 _SummaryCard(
                                   title: 'Debiti',
-                                  value: '€ ${summaries.fold<double>(0, (sum, item) => sum + item.totalDebt).toStringAsFixed(2)}',
+                                  value: '€ ${totalDebt.toStringAsFixed(2)}',
                                   icon: Icons.euro_outlined,
                                   accent: AppColors.wine,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.debiti),
@@ -1748,7 +1723,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 ),
                                 _SummaryCard(
                                   title: 'Anticipi',
-                                  value: summaries.fold<int>(0, (sum, item) => sum + item.advances.length).toString(),
+                                  value: totalAdvances.toString(),
                                   icon: Icons.payments_outlined,
                                   accent: AppColors.amber,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.anticipi),
@@ -1756,7 +1731,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 ),
                                 _SummaryCard(
                                   title: 'Prenotazioni',
-                                  value: summaries.fold<int>(0, (sum, item) => sum + item.bookings.length).toString(),
+                                  value: totalBookings.toString(),
                                   icon: Icons.event_note_outlined,
                                   accent: AppColors.yellow,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.prenotazioni),
@@ -1764,7 +1739,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 ),
                                 _SummaryCard(
                                   title: 'In scadenza',
-                                  value: expiring.length.toString(),
+                                  value: totalExpiring.toString(),
                                   icon: Icons.warning_amber_rounded,
                                   accent: AppColors.coral,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.scadenze),
