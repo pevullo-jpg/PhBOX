@@ -6,6 +6,7 @@ import 'dart:math' as math;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/utils/prescription_expiry_utils.dart';
+import '../../../core/utils/patient_identity_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
 import '../../../data/models/app_settings.dart';
@@ -1243,7 +1244,9 @@ class _DashboardPageState extends State<DashboardPage> {
     _PatientDashboardSummary? _findExactPatientByCf(String rawValue) {
       final normalizedCf = rawValue.trim().toUpperCase();
       for (final summary in data.summaries) {
-        if (summary.patient.fiscalCode.trim().toUpperCase() == normalizedCf) {
+        final String patientKey = summary.patient.fiscalCode.trim().toUpperCase();
+        if (isTemporaryPatientKey(patientKey)) continue;
+        if (patientKey == normalizedCf) {
           return summary;
         }
       }
@@ -1257,7 +1260,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final containsMatches = <_PatientDashboardSummary>[];
       for (final summary in data.summaries) {
         final patientCf = summary.patient.fiscalCode.trim().toUpperCase();
-        if (patientCf.isEmpty) continue;
+        if (patientCf.isEmpty || isTemporaryPatientKey(patientCf)) continue;
         if (patientCf.startsWith(normalizedQuery)) {
           startsWithMatches.add(summary);
         } else if (patientCf.contains(normalizedQuery)) {
@@ -1389,6 +1392,14 @@ class _DashboardPageState extends State<DashboardPage> {
                       _dialogField(nameController, 'Nome'),
                       const SizedBox(height: 12),
                       _dialogField(surnameController, 'Cognome'),
+                      const SizedBox(height: 8),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'È sufficiente compilare uno solo tra codice fiscale, nome e cognome.',
+                          style: TextStyle(color: Colors.white70, fontSize: 12),
+                        ),
+                      ),
                       const SizedBox(height: 12),
                       _dialogField(advanceController, 'Eventuale anticipo', onChanged: (_) => setLocalState(() {})),
                       if (advanceController.text.trim().isNotEmpty) ...[
@@ -1481,12 +1492,18 @@ class _DashboardPageState extends State<DashboardPage> {
       final fiscalCode = fiscalCodeController.text.trim().toUpperCase();
       final name = nameController.text.trim();
       final surname = surnameController.text.trim();
-      if (fiscalCode.isEmpty || name.isEmpty || surname.isEmpty) {
-        throw Exception('Codice fiscale, nome e cognome sono obbligatori.');
+      if (fiscalCode.isEmpty && name.isEmpty && surname.isEmpty) {
+        throw Exception('Inserisci almeno uno tra codice fiscale, nome e cognome.');
       }
 
       final now = DateTime.now();
-      final fullName = '$name $surname'.trim();
+      final patientDocumentId = buildManualPatientDocumentId(
+        fiscalCode: fiscalCode,
+        name: name,
+        surname: surname,
+        now: now,
+      );
+      final fullName = buildManualPatientFullName(name: name, surname: surname);
       final advanceText = advanceController.text.trim();
       final bookingText = bookingController.text.trim();
       final debtValue = double.tryParse(debtController.text.trim().replaceAll(',', '.')) ?? 0;
@@ -1501,7 +1518,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
       await _patientsRepository.savePatient(
         Patient(
-          fiscalCode: fiscalCode,
+          fiscalCode: patientDocumentId,
           fullName: fullName,
           hasDebt: debtValue > 0,
           debtTotal: debtValue > 0 ? debtValue : 0,
@@ -1516,7 +1533,7 @@ class _DashboardPageState extends State<DashboardPage> {
         await _advancesRepository.saveAdvance(
           Advance(
             id: 'adv_${now.microsecondsSinceEpoch}',
-            patientFiscalCode: fiscalCode,
+            patientFiscalCode: patientDocumentId,
             patientName: fullName,
             drugName: advanceText,
             doctorName: selectedDoctor.trim(),
@@ -1530,7 +1547,7 @@ class _DashboardPageState extends State<DashboardPage> {
         await _bookingsRepository.saveBooking(
           Booking(
             id: 'book_${now.microsecondsSinceEpoch}',
-            patientFiscalCode: fiscalCode,
+            patientFiscalCode: patientDocumentId,
             patientName: fullName,
             drugName: bookingText,
             createdAt: now,
@@ -1543,7 +1560,7 @@ class _DashboardPageState extends State<DashboardPage> {
         await _debtsRepository.saveDebt(
           Debt(
             id: 'debt_${now.microsecondsSinceEpoch}',
-            patientFiscalCode: fiscalCode,
+            patientFiscalCode: patientDocumentId,
             patientName: fullName,
             description: debtDescription,
             amount: debtValue,
@@ -1897,7 +1914,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                               style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
                                               onPressed: () => _openPatient(item),
                                               child: Text(
-                                                item.patient.fiscalCode,
+                                                visiblePatientFiscalCode(item.patient.fiscalCode),
                                                 textAlign: TextAlign.left,
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,

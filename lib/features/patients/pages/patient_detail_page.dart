@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/utils/prescription_expiry_utils.dart';
+import '../../../core/utils/patient_identity_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
 import '../../../data/models/app_settings.dart';
@@ -945,13 +946,19 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(patient.fullName.trim().isEmpty ? patient.fiscalCode : patient.fullName.trim(), style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900)),
+          Text(
+            visiblePatientTitle(
+              fullName: patient.fullName,
+              patientKey: patient.fiscalCode,
+            ),
+            style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900),
+          ),
           const SizedBox(height: 10),
           Wrap(
             spacing: 10,
             runSpacing: 10,
             children: [
-              _metaBadge('CF', patient.fiscalCode),
+              _metaBadge('CF', visiblePatientFiscalCode(patient.fiscalCode)),
               _metaBadge('Medico', data.resolvedDoctorName),
               _metaBadge('Esenzione', (patient.exemptionCode ?? '').trim().isEmpty ? '-' : patient.exemptionCode!.trim()),
               _metaBadge('Città', (patient.city ?? '').trim().isEmpty ? '-' : patient.city!.trim()),
