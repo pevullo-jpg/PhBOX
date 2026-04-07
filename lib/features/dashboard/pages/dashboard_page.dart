@@ -2173,25 +2173,36 @@ class _PatientDashboardSummary {
   bool get hasActiveContent => recipeCount > 0 || hasDpc || debts.isNotEmpty || advances.isNotEmpty || bookings.isNotEmpty;
 
   List<_FlagItem> get dpcItems {
-    final fromImports = <_FlagItem>[];
-    for (final importItem in imports) {
-      final dpcEntries = importItem.resolvedDpcEntries;
-      for (final entry in dpcEntries) {
-        fromImports.add(
-          _FlagItem(
-            title: _dashboardDpcEntryTitle(entry, fallbackFileName: importItem.fileName),
-            subtitle: _dashboardDpcEntrySubtitle(entry, fallbackDate: importItem.prescriptionDate ?? importItem.createdAt, fallbackDoctor: importItem.doctorFullName),
-          ),
-        );
-      }
-    }
-    if (fromImports.isNotEmpty) {
-      return fromImports;
-    }
-    return prescriptions.where((item) => item.dpcFlag).map((item) {
+    final preciseItems = prescriptions
+        .where((item) => item.dpcFlag && item.isActiveForDashboard)
+        .map((item) {
       return _FlagItem(
-        title: _dashboardPrescriptionTitle(item),
-        subtitle: '${_dashboardFormatDate(item.prescriptionDate)} · ${(item.doctorName ?? '-').trim().isEmpty ? '-' : item.doctorName!.trim()}',
+        title: _dashboardDpcPrescriptionTitle(item),
+        subtitle: _dashboardDpcPrescriptionSubtitle(item),
+      );
+    }).toList();
+    if (preciseItems.isNotEmpty) {
+      return preciseItems;
+    }
+
+    final safeImportItems = imports
+        .where((item) => item.isDpc && item.isActiveForDashboard && !item.containsMultiplePrescriptions)
+        .map((item) {
+      return _FlagItem(
+        title: item.therapy.isEmpty ? (item.fileName.trim().isEmpty ? 'DPC' : item.fileName.trim()) : item.therapy.join(', '),
+        subtitle: '${_dashboardFormatDate(item.prescriptionDate ?? item.createdAt)} · ${item.doctorFullName.trim().isEmpty ? '-' : item.doctorFullName.trim()}',
+      );
+    }).toList();
+    if (safeImportItems.isNotEmpty) {
+      return safeImportItems;
+    }
+
+    return imports
+        .where((item) => item.isDpc && item.isActiveForDashboard)
+        .map((item) {
+      return _FlagItem(
+        title: 'PDF multiplo con DPC',
+        subtitle: '${_dashboardFormatDate(item.prescriptionDate ?? item.createdAt)} · Apri il PDF dal flag Ricette per il dettaglio sicuro',
       );
     }).toList();
   }
@@ -2211,8 +2222,7 @@ class _PatientDashboardSummary {
     final matchingImports = imports.where((item) {
       final importFiscalCode = item.patientFiscalCode.trim().toUpperCase();
       final importFullName = item.patientFullName.trim().toUpperCase();
-      final notDeleted = item.pdfDeleted != true && item.status.trim().toLowerCase() != 'deleted_pdf';
-      if (!notDeleted) return false;
+      if (!item.isActiveForDashboard) return false;
       if (importFiscalCode.isNotEmpty) {
         return importFiscalCode == normalizedFiscalCode;
       }
@@ -2250,7 +2260,7 @@ class _PatientDashboardSummary {
     final recipeCount = importsRecipeCount > 0
         ? importsRecipeCount
         : (prescriptionsRecipeCount > 0 ? prescriptionsRecipeCount : (matchingImports.isNotEmpty ? matchingImports.length : patientRecipeCount));
-    final hasDpc = prescriptions.any((item) => item.dpcFlag) || matchingImports.any((item) => item.resolvedDpcEntries.isNotEmpty || item.isDpc);
+    final hasDpc = prescriptions.any((item) => item.dpcFlag) || matchingImports.any((item) => item.isDpc);
     bool hasExpiringDate(DateTime? date) {
       final info = PrescriptionExpiryUtils.evaluate(date);
       return info.status == PrescriptionValidityStatus.expiringSoon || info.status == PrescriptionValidityStatus.expired;
@@ -2300,41 +2310,24 @@ class _FlagItem {
   const _FlagItem({required this.title, required this.subtitle, this.onDelete});
 }
 
-String _dashboardDpcEntryTitle(DrivePdfPrescriptionEntry entry, {required String fallbackFileName}) {
-  final therapyLabel = entry.therapy.map((item) => item.trim()).where((item) => item.isNotEmpty).join(', ');
-  if (therapyLabel.isNotEmpty) return therapyLabel;
-  if (entry.prescriptionNre.trim().isNotEmpty) return 'NRE ${entry.prescriptionNre.trim()}';
-  final fileName = fallbackFileName.trim();
-  if (fileName.isNotEmpty) return fileName;
-  return 'Ricetta DPC';
-}
-
-String _dashboardDpcEntrySubtitle(
-  DrivePdfPrescriptionEntry entry, {
-  required DateTime? fallbackDate,
-  required String fallbackDoctor,
-}) {
-  final parts = <String>[];
-  if (entry.pageNumber != null && entry.pageNumber! > 0) {
-    parts.add('Pag. ${entry.pageNumber}');
-  }
-  if (entry.prescriptionNre.trim().isNotEmpty) {
-    parts.add('NRE ${entry.prescriptionNre.trim()}');
-  }
-  final dateLabel = _dashboardFormatDate(entry.prescriptionDate ?? fallbackDate);
-  if (dateLabel != '-') {
-    parts.add(dateLabel);
-  }
-  final doctor = entry.doctorFullName.trim().isNotEmpty ? entry.doctorFullName.trim() : fallbackDoctor.trim();
-  if (doctor.isNotEmpty) {
-    parts.add(doctor);
-  }
-  return parts.isEmpty ? '-' : parts.join(' · ');
-}
-
 String _dashboardPrescriptionTitle(Prescription prescription) {
   final label = prescription.items.map((e) => e.drugName.trim()).where((e) => e.isNotEmpty).join(', ');
   return label.isEmpty ? 'Ricetta' : label;
+}
+
+String _dashboardDpcPrescriptionTitle(Prescription prescription) {
+  final label = prescription.items.map((e) => e.drugName.trim()).where((e) => e.isNotEmpty).join(', ');
+  if (label.isNotEmpty) return label;
+  if (prescription.nre.trim().isNotEmpty) return 'NRE ${prescription.nre.trim()}';
+  return 'Ricetta DPC';
+}
+
+String _dashboardDpcPrescriptionSubtitle(Prescription prescription) {
+  final String doctor = (prescription.doctorName ?? '').trim();
+  final String pageInfo = prescription.pageRange.trim().isNotEmpty
+      ? ' · Pagine ${prescription.pageRange.trim()}'
+      : (prescription.pageIndex != null ? ' · Pag. ${prescription.pageIndex}' : '');
+  return '${_dashboardFormatDate(prescription.prescriptionDate)} · ${doctor.isEmpty ? '-' : doctor}$pageInfo';
 }
 
 String _dashboardFormatDate(DateTime? date) {

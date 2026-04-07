@@ -146,7 +146,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         debtTotal: totalDebt,
         hasAdvance: data.advances.isNotEmpty,
         hasBooking: data.bookings.isNotEmpty,
-        hasDpc: data.prescriptions.any((item) => item.dpcFlag) || data.imports.any((item) => item.resolvedDpcEntries.isNotEmpty || item.isDpc),
+        hasDpc: data.prescriptions.any((item) => item.dpcFlag) || data.imports.any((item) => item.isDpc),
         archivedRecipeCount: archivedRecipeCount,
         lastPrescriptionDate: lastPrescriptionDate,
         therapiesSummary: therapySummary,
@@ -668,7 +668,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                       ),
                                       _summaryCard(
                                         label: 'DPC',
-                                        value: data.prescriptions.any((item) => item.dpcFlag) || data.imports.any((item) => item.resolvedDpcEntries.isNotEmpty || item.isDpc) ? 'SI' : 'NO',
+                                        value: data.prescriptions.any((item) => item.dpcFlag) || data.imports.any((item) => item.isDpc) ? 'SI' : 'NO',
                                         subtitle: 'flag ricette',
                                         color: AppColors.coral,
                                         onTap: () => _managePrescriptions(data),
