@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/utils/prescription_expiry_utils.dart';
-import '../../../core/utils/patient_identity_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
 import '../../../data/models/app_settings.dart';
@@ -14,7 +13,6 @@ import '../../../data/models/doctor_patient_link.dart';
 import '../../../data/models/drive_pdf_import.dart';
 import '../../../data/models/patient.dart';
 import '../../../data/models/prescription.dart';
-import '../../../data/models/therapeutic_advice_note.dart';
 import '../../../data/repositories/advances_repository.dart';
 import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
@@ -23,7 +21,6 @@ import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
-import '../../../data/repositories/therapeutic_advice_repository.dart';
 import '../../../shared/navigation/app_navigation.dart';
 import '../../../shared/widgets/floating_page_menu.dart';
 import '../../../theme/app_theme.dart';
@@ -46,7 +43,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   late final DrivePdfImportsRepository _drivePdfImportsRepository;
   late final SettingsRepository _settingsRepository;
   late final DoctorPatientLinksRepository _doctorPatientLinksRepository;
-  late final TherapeuticAdviceRepository _therapeuticAdviceRepository;
 
   Future<_PatientDetailData>? _future;
   String _message = '';
@@ -66,7 +62,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     _drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
     _settingsRepository = SettingsRepository(datasource: datasource);
     _doctorPatientLinksRepository = DoctorPatientLinksRepository(datasource: datasource);
-    _therapeuticAdviceRepository = TherapeuticAdviceRepository(datasource: datasource);
     _future = _load();
   }
 
@@ -79,7 +74,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     final imports = await _drivePdfImportsRepository.getImportsByPatient(widget.fiscalCode);
     final doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
     final settings = await _settingsRepository.getSettings();
-    final therapeuticAdvice = await _therapeuticAdviceRepository.getByFiscalCode(widget.fiscalCode);
     final doctorName = _resolveDoctor(
       patient: patient,
       doctorLinks: doctorLinks,
@@ -95,7 +89,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       imports: imports,
       settings: settings,
       resolvedDoctorName: doctorName,
-      therapeuticAdvice: therapeuticAdvice,
     );
   }
 
@@ -153,7 +146,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         debtTotal: totalDebt,
         hasAdvance: data.advances.isNotEmpty,
         hasBooking: data.bookings.isNotEmpty,
-        hasDpc: data.prescriptions.any((item) => item.dpcFlag) || data.imports.any((item) => item.isDpc),
+        hasDpc: data.prescriptions.any((item) => item.dpcFlag) || data.imports.any((item) => item.resolvedDpcEntries.isNotEmpty || item.isDpc),
         archivedRecipeCount: archivedRecipeCount,
         lastPrescriptionDate: lastPrescriptionDate,
         therapiesSummary: therapySummary,
@@ -174,91 +167,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       mode: LaunchMode.platformDefault,
       webOnlyWindowName: '_blank',
     );
-  }
-
-  Future<void> _editTherapeuticAdvice(_PatientDetailData data) async {
-    final patient = data.patient;
-    if (patient == null) return;
-    final controller = TextEditingController(text: data.therapeuticAdvice?.text ?? '');
-    final bool? confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.panel,
-        title: const Text('Consigli terapeutici', style: TextStyle(color: Colors.white)),
-        content: SizedBox(
-          width: 560,
-          child: _dialogField(
-            controller,
-            'Note libere di presa in carico',
-            maxLines: 12,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Salva'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) {
-      controller.dispose();
-      return;
-    }
-    try {
-      final String textValue = controller.text.trim();
-      if (textValue.isEmpty) {
-        await _therapeuticAdviceRepository.clear(patient.fiscalCode);
-        _refresh('Consigli terapeutici rimossi.');
-      } else {
-        await _therapeuticAdviceRepository.save(
-          fiscalCode: patient.fiscalCode,
-          text: textValue,
-        );
-        _refresh('Consigli terapeutici salvati.');
-      }
-    } catch (e) {
-      setState(() => _message = 'Errore salvataggio consigli terapeutici: $e');
-    } finally {
-      controller.dispose();
-    }
-  }
-
-  Future<void> _clearTherapeuticAdvice(_PatientDetailData data) async {
-    final patient = data.patient;
-    if (patient == null || data.therapeuticAdvice == null) return;
-    final bool? confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.panel,
-        title: const Text('Rimuovi consigli terapeutici', style: TextStyle(color: Colors.white)),
-        content: const Text(
-          'Il testo libero associato a questo assistito verrà eliminato. Continuare?',
-          style: TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Elimina'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    try {
-      await _therapeuticAdviceRepository.clear(patient.fiscalCode);
-      _refresh('Consigli terapeutici rimossi.');
-    } catch (e) {
-      setState(() => _message = 'Errore eliminazione consigli terapeutici: $e');
-    }
   }
 
   Future<void> _openManageDialog({
@@ -760,7 +668,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                       ),
                                       _summaryCard(
                                         label: 'DPC',
-                                        value: data.prescriptions.any((item) => item.dpcFlag) || data.imports.any((item) => item.isDpc) ? 'SI' : 'NO',
+                                        value: data.prescriptions.any((item) => item.dpcFlag) || data.imports.any((item) => item.resolvedDpcEntries.isNotEmpty || item.isDpc) ? 'SI' : 'NO',
                                         subtitle: 'flag ricette',
                                         color: AppColors.coral,
                                         onTap: () => _managePrescriptions(data),
@@ -787,52 +695,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                         onTap: () => _manageBookings(data),
                                       ),
                                     ],
-                                  ),
-                                  const SizedBox(height: 18),
-                                  _section(
-                                    title: 'Consigli terapeutici',
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        if ((data.therapeuticAdvice?.text.trim() ?? '').isEmpty)
-                                          const Text(
-                                            'Nessun consiglio terapeutico registrato.',
-                                            style: TextStyle(color: Colors.white70),
-                                          )
-                                        else
-                                          Container(
-                                            width: double.infinity,
-                                            padding: const EdgeInsets.all(16),
-                                            decoration: BoxDecoration(
-                                              color: AppColors.panelSoft,
-                                              borderRadius: BorderRadius.circular(16),
-                                              border: Border.all(color: Colors.white10),
-                                            ),
-                                            child: Text(
-                                              data.therapeuticAdvice!.text,
-                                              style: const TextStyle(color: Colors.white, height: 1.45),
-                                            ),
-                                          ),
-                                        const SizedBox(height: 14),
-                                        Wrap(
-                                          spacing: 10,
-                                          runSpacing: 10,
-                                          children: [
-                                            FilledButton.icon(
-                                              onPressed: () => _editTherapeuticAdvice(data),
-                                              icon: Icon(data.therapeuticAdvice == null ? Icons.add_comment_outlined : Icons.edit_outlined),
-                                              label: Text(data.therapeuticAdvice == null ? 'Aggiungi' : 'Modifica'),
-                                            ),
-                                            if (data.therapeuticAdvice != null)
-                                              TextButton.icon(
-                                                onPressed: () => _clearTherapeuticAdvice(data),
-                                                icon: const Icon(Icons.delete_outline, color: AppColors.red),
-                                                label: const Text('Svuota', style: TextStyle(color: AppColors.red)),
-                                              ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
                                   ),
                                   const SizedBox(height: 18),
                                   _section(
@@ -946,19 +808,13 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            visiblePatientTitle(
-              fullName: patient.fullName,
-              patientKey: patient.fiscalCode,
-            ),
-            style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900),
-          ),
+          Text(patient.fullName.trim().isEmpty ? patient.fiscalCode : patient.fullName.trim(), style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900)),
           const SizedBox(height: 10),
           Wrap(
             spacing: 10,
             runSpacing: 10,
             children: [
-              _metaBadge('CF', visiblePatientFiscalCode(patient.fiscalCode)),
+              _metaBadge('CF', patient.fiscalCode),
               _metaBadge('Medico', data.resolvedDoctorName),
               _metaBadge('Esenzione', (patient.exemptionCode ?? '').trim().isEmpty ? '-' : patient.exemptionCode!.trim()),
               _metaBadge('Città', (patient.city ?? '').trim().isEmpty ? '-' : patient.city!.trim()),
@@ -1172,7 +1028,6 @@ class _PatientDetailData {
   final List<DrivePdfImport> imports;
   final AppSettings settings;
   final String resolvedDoctorName;
-  final TherapeuticAdviceNote? therapeuticAdvice;
 
   const _PatientDetailData({
     required this.patient,
@@ -1183,7 +1038,6 @@ class _PatientDetailData {
     required this.imports,
     required this.settings,
     required this.resolvedDoctorName,
-    required this.therapeuticAdvice,
   });
 
   double get totalDebt => debts.fold<double>(0, (sum, item) => sum + item.residualAmount);

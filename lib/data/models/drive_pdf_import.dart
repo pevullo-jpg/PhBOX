@@ -1,3 +1,59 @@
+class DrivePdfPrescriptionEntry {
+  final int? pageNumber;
+  final String identityKey;
+  final String prescriptionNre;
+  final DateTime? prescriptionDate;
+  final String doctorFullName;
+  final String exemptionCode;
+  final String city;
+  final List<String> therapy;
+  final bool isDpc;
+
+  const DrivePdfPrescriptionEntry({
+    this.pageNumber,
+    this.identityKey = '',
+    this.prescriptionNre = '',
+    this.prescriptionDate,
+    this.doctorFullName = '',
+    this.exemptionCode = '',
+    this.city = '',
+    this.therapy = const <String>[],
+    this.isDpc = false,
+  });
+
+  Map<String, dynamic> toMap() {
+    return <String, dynamic>{
+      'pageNumber': pageNumber,
+      'identityKey': identityKey,
+      'prescriptionNre': prescriptionNre,
+      'prescriptionDate': prescriptionDate?.toIso8601String(),
+      'doctorFullName': doctorFullName,
+      'exemptionCode': exemptionCode,
+      'city': city,
+      'therapy': therapy,
+      'isDpc': isDpc,
+    };
+  }
+
+  factory DrivePdfPrescriptionEntry.fromMap(Map<String, dynamic> map) {
+    return DrivePdfPrescriptionEntry(
+      pageNumber: DrivePdfImport._readInt(map['pageNumber'] ?? map['page'] ?? map['page_index']),
+      identityKey: DrivePdfImport._readString(map['identityKey'] ?? map['entryKey'] ?? map['key']),
+      prescriptionNre: DrivePdfImport._readString(
+        map['prescriptionNre'] ?? map['nre'] ?? map['recipeNre'] ?? map['prescription_nre'],
+      ),
+      prescriptionDate: DrivePdfImport._readDate(map['prescriptionDate'] ?? map['date'] ?? map['recipeDate']),
+      doctorFullName: DrivePdfImport._readString(
+        map['doctorFullName'] ?? map['doctorName'] ?? map['doctor'] ?? map['medico'],
+      ),
+      exemptionCode: DrivePdfImport._readString(map['exemptionCode'] ?? map['exemption'] ?? map['esenzione']),
+      city: DrivePdfImport._readString(map['city'] ?? map['comune']),
+      therapy: DrivePdfImport._readStringList(map['therapy'] ?? map['therapies'] ?? map['items']),
+      isDpc: DrivePdfImport._readBool(map['isDpc'] ?? map['dpc'] ?? map['dpcFlag']),
+    );
+  }
+}
+
 class DrivePdfImport {
   final String id;
   final String driveFileId;
@@ -17,6 +73,10 @@ class DrivePdfImport {
   final String webViewLink;
   final bool pdfDeleted;
   final String sourceType;
+  final List<DrivePdfPrescriptionEntry> prescriptionEntries;
+  final List<DrivePdfPrescriptionEntry> dpcPrescriptionEntries;
+  final DrivePdfPrescriptionEntry? primaryPrescriptionEntry;
+  final DrivePdfPrescriptionEntry? primaryDpcPrescriptionEntry;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -39,6 +99,10 @@ class DrivePdfImport {
     this.webViewLink = '',
     this.pdfDeleted = false,
     this.sourceType = 'script',
+    this.prescriptionEntries = const <DrivePdfPrescriptionEntry>[],
+    this.dpcPrescriptionEntries = const <DrivePdfPrescriptionEntry>[],
+    this.primaryPrescriptionEntry,
+    this.primaryDpcPrescriptionEntry,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -62,6 +126,10 @@ class DrivePdfImport {
     String? webViewLink,
     bool? pdfDeleted,
     String? sourceType,
+    List<DrivePdfPrescriptionEntry>? prescriptionEntries,
+    List<DrivePdfPrescriptionEntry>? dpcPrescriptionEntries,
+    DrivePdfPrescriptionEntry? primaryPrescriptionEntry,
+    DrivePdfPrescriptionEntry? primaryDpcPrescriptionEntry,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -84,9 +152,47 @@ class DrivePdfImport {
       webViewLink: webViewLink ?? this.webViewLink,
       pdfDeleted: pdfDeleted ?? this.pdfDeleted,
       sourceType: sourceType ?? this.sourceType,
+      prescriptionEntries: prescriptionEntries ?? this.prescriptionEntries,
+      dpcPrescriptionEntries: dpcPrescriptionEntries ?? this.dpcPrescriptionEntries,
+      primaryPrescriptionEntry: primaryPrescriptionEntry ?? this.primaryPrescriptionEntry,
+      primaryDpcPrescriptionEntry: primaryDpcPrescriptionEntry ?? this.primaryDpcPrescriptionEntry,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
+  }
+
+  List<DrivePdfPrescriptionEntry> get resolvedDpcEntries {
+    if (dpcPrescriptionEntries.isNotEmpty) {
+      return dpcPrescriptionEntries;
+    }
+
+    final fromEntries = prescriptionEntries.where((entry) => entry.isDpc).toList();
+    if (fromEntries.isNotEmpty) {
+      return fromEntries;
+    }
+
+    if (primaryDpcPrescriptionEntry != null) {
+      return <DrivePdfPrescriptionEntry>[primaryDpcPrescriptionEntry!];
+    }
+
+    if (primaryPrescriptionEntry != null && primaryPrescriptionEntry!.isDpc) {
+      return <DrivePdfPrescriptionEntry>[primaryPrescriptionEntry!];
+    }
+
+    if (isDpc) {
+      return <DrivePdfPrescriptionEntry>[
+        DrivePdfPrescriptionEntry(
+          prescriptionDate: prescriptionDate,
+          doctorFullName: doctorFullName,
+          exemptionCode: exemptionCode,
+          city: city,
+          therapy: therapy,
+          isDpc: true,
+        ),
+      ];
+    }
+
+    return const <DrivePdfPrescriptionEntry>[];
   }
 
   Map<String, dynamic> toMap() {
@@ -109,6 +215,10 @@ class DrivePdfImport {
       'webViewLink': webViewLink,
       'pdfDeleted': pdfDeleted,
       'sourceType': sourceType,
+      'prescriptionEntries': prescriptionEntries.map((entry) => entry.toMap()).toList(),
+      'dpcPrescriptionEntries': dpcPrescriptionEntries.map((entry) => entry.toMap()).toList(),
+      'primaryPrescriptionEntry': primaryPrescriptionEntry?.toMap(),
+      'primaryDpcPrescriptionEntry': primaryDpcPrescriptionEntry?.toMap(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
@@ -161,6 +271,10 @@ class DrivePdfImport {
       ),
       pdfDeleted: _readBool(map['pdfDeleted']) || _readString(map['status']).toLowerCase() == 'deleted_pdf',
       sourceType: _readString(map['sourceType'] ?? map['source']).isEmpty ? 'script' : _readString(map['sourceType'] ?? map['source']),
+      prescriptionEntries: _readEntryList(map['prescriptionEntries']),
+      dpcPrescriptionEntries: _readEntryList(map['dpcPrescriptionEntries']),
+      primaryPrescriptionEntry: _readEntry(map['primaryPrescriptionEntry']),
+      primaryDpcPrescriptionEntry: _readEntry(map['primaryDpcPrescriptionEntry']),
       createdAt: _readDate(map['createdAt'] ?? map['importedAt']) ?? DateTime.now(),
       updatedAt: _readDate(map['updatedAt'] ?? map['manifestUpdatedAt']) ?? DateTime.now(),
     );
@@ -212,5 +326,31 @@ class DrivePdfImport {
     if (value == null) return null;
     if (value is int) return value;
     return int.tryParse(value.toString());
+  }
+
+  static DrivePdfPrescriptionEntry? _readEntry(dynamic value) {
+    if (value is Map<String, dynamic>) {
+      return DrivePdfPrescriptionEntry.fromMap(value);
+    }
+    if (value is Map) {
+      return DrivePdfPrescriptionEntry.fromMap(Map<String, dynamic>.from(value));
+    }
+    return null;
+  }
+
+  static List<DrivePdfPrescriptionEntry> _readEntryList(dynamic value) {
+    if (value is! List) return const <DrivePdfPrescriptionEntry>[];
+    return value
+        .map((item) {
+          if (item is Map<String, dynamic>) {
+            return DrivePdfPrescriptionEntry.fromMap(item);
+          }
+          if (item is Map) {
+            return DrivePdfPrescriptionEntry.fromMap(Map<String, dynamic>.from(item));
+          }
+          return null;
+        })
+        .whereType<DrivePdfPrescriptionEntry>()
+        .toList();
   }
 }

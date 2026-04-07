@@ -56,19 +56,27 @@ class _PatientDashboardSummary {
   bool get hasActiveContent => recipeCount > 0 || hasDpc || debts.isNotEmpty || advances.isNotEmpty || bookings.isNotEmpty;
 
   List<_FlagItem> get dpcItems {
-    final fromPrescriptions = prescriptions.where((item) => item.dpcFlag).map((item) {
+    final fromImports = <_FlagItem>[];
+    for (final importItem in imports) {
+      final dpcEntries = importItem.resolvedDpcEntries;
+      for (final entry in dpcEntries) {
+        fromImports.add(
+          _FlagItem(
+            title: _dashboardDpcEntryTitle(entry, fallbackFileName: importItem.fileName),
+            subtitle: _dashboardDpcEntrySubtitle(entry, fallbackDate: importItem.prescriptionDate ?? importItem.createdAt, fallbackDoctor: importItem.doctorFullName),
+          ),
+        );
+      }
+    }
+    if (fromImports.isNotEmpty) {
+      return fromImports;
+    }
+    return prescriptions.where((item) => item.dpcFlag).map((item) {
       return _FlagItem(
         title: _dashboardPrescriptionTitle(item),
         subtitle: '${_dashboardFormatDate(item.prescriptionDate)} · ${(item.doctorName ?? '-').trim().isEmpty ? '-' : item.doctorName!.trim()}',
       );
-    });
-    final fromImports = imports.where((item) => item.isDpc).map((item) {
-      return _FlagItem(
-        title: item.therapy.isEmpty ? (item.fileName.trim().isEmpty ? 'DPC' : item.fileName.trim()) : item.therapy.join(', '),
-        subtitle: '${_dashboardFormatDate(item.prescriptionDate ?? item.createdAt)} · ${item.doctorFullName.trim().isEmpty ? '-' : item.doctorFullName.trim()}',
-      );
-    });
-    return [...fromPrescriptions, ...fromImports];
+    }).toList();
   }
 
   static _PatientDashboardSummary build({
@@ -110,7 +118,7 @@ class _PatientDashboardSummary {
     final recipeCount = importsRecipeCount > 0
         ? importsRecipeCount
         : (prescriptionsRecipeCount > 0 ? prescriptionsRecipeCount : (imports.isNotEmpty ? imports.length : patientRecipeCount));
-    final hasDpc = prescriptions.any((item) => item.dpcFlag) || imports.any((item) => item.isDpc);
+    final hasDpc = prescriptions.any((item) => item.dpcFlag) || imports.any((item) => item.resolvedDpcEntries.isNotEmpty || item.isDpc);
     final hasExpiryAlert = prescriptions.any((item) {
       final info = PrescriptionExpiryUtils.evaluate(item.expiryDate);
       return info.status == PrescriptionValidityStatus.expiringSoon || info.status == PrescriptionValidityStatus.expired;
