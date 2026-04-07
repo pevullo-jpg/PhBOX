@@ -20,11 +20,12 @@ class DrivePdfImportsRepository {
       collectionPath: AppCollections.drivePdfImports,
     );
     final List<DrivePdfImport> items = maps.map(DrivePdfImport.fromMap).where((DrivePdfImport item) {
-      return (item.patientFiscalCode.trim().isNotEmpty || item.patientFullName.trim().isNotEmpty) && item.isActiveForDashboard;
+      final status = item.status.trim().toLowerCase();
+      return (item.patientFiscalCode.trim().isNotEmpty || item.patientFullName.trim().isNotEmpty) && status != 'deleted' && status != 'deleted_pdf' && item.pdfDeleted != true;
     }).toList();
     items.sort((DrivePdfImport a, DrivePdfImport b) {
-      final DateTime aKey = a.prescriptionDate ?? a.updatedAt;
-      final DateTime bKey = b.prescriptionDate ?? b.updatedAt;
+      final DateTime aKey = a.prescriptionDate ?? a.updatedAt ?? a.createdAt;
+      final DateTime bKey = b.prescriptionDate ?? b.updatedAt ?? b.createdAt;
       return bKey.compareTo(aKey);
     });
     return items;
@@ -39,6 +40,7 @@ class DrivePdfImportsRepository {
     filtered.sort((DrivePdfImport a, DrivePdfImport b) => b.createdAt.compareTo(a.createdAt));
     return filtered;
   }
+
 
   Future<void> deleteImport(String id) {
     return datasource.deleteDocument(

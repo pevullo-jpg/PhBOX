@@ -10,4 +10,5 @@ class AppCollections {
   static const String families = 'families';
   static const String prescriptionIntakes = 'prescription_intakes';
   static const String parserReferenceValues = 'parser_reference_values';
+  static const String patientTherapeuticAdvice = 'patient_therapeutic_advice';
 }

@@ -1,14 +1,4 @@
 class DrivePdfImport {
-  static const Set<String> _inactiveStatuses = <String>{
-    'deleted',
-    'deleted_pdf',
-    'superseded',
-    'merged_source',
-    'merged_component',
-    'absorbed',
-    'inactive',
-  };
-
   final String id;
   final String driveFileId;
   final String fileName;
@@ -26,10 +16,6 @@ class DrivePdfImport {
   final DateTime? prescriptionDate;
   final String webViewLink;
   final bool pdfDeleted;
-  final bool deletePdfRequested;
-  final bool active;
-  final String mergedIntoImportId;
-  final String supersededBy;
   final String sourceType;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -52,30 +38,10 @@ class DrivePdfImport {
     this.prescriptionDate,
     this.webViewLink = '',
     this.pdfDeleted = false,
-    this.deletePdfRequested = false,
-    this.active = true,
-    this.mergedIntoImportId = '',
-    this.supersededBy = '',
     this.sourceType = 'script',
     required this.createdAt,
     required this.updatedAt,
   });
-
-  bool get containsMultiplePrescriptions => prescriptionCount > 1;
-
-  bool get isSuperseded {
-    if (mergedIntoImportId.trim().isNotEmpty) return true;
-    if (supersededBy.trim().isNotEmpty) return true;
-    return _inactiveStatuses.contains(status.trim().toLowerCase()) && status.trim().toLowerCase() != 'deleted' && status.trim().toLowerCase() != 'deleted_pdf';
-  }
-
-  bool get isActiveForDashboard {
-    if (!active) return false;
-    if (pdfDeleted || deletePdfRequested) return false;
-    final String normalizedStatus = status.trim().toLowerCase();
-    if (_inactiveStatuses.contains(normalizedStatus)) return false;
-    return !isSuperseded;
-  }
 
   DrivePdfImport copyWith({
     String? id,
@@ -95,10 +61,6 @@ class DrivePdfImport {
     DateTime? prescriptionDate,
     String? webViewLink,
     bool? pdfDeleted,
-    bool? deletePdfRequested,
-    bool? active,
-    String? mergedIntoImportId,
-    String? supersededBy,
     String? sourceType,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -121,10 +83,6 @@ class DrivePdfImport {
       prescriptionDate: prescriptionDate ?? this.prescriptionDate,
       webViewLink: webViewLink ?? this.webViewLink,
       pdfDeleted: pdfDeleted ?? this.pdfDeleted,
-      deletePdfRequested: deletePdfRequested ?? this.deletePdfRequested,
-      active: active ?? this.active,
-      mergedIntoImportId: mergedIntoImportId ?? this.mergedIntoImportId,
-      supersededBy: supersededBy ?? this.supersededBy,
       sourceType: sourceType ?? this.sourceType,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -150,10 +108,6 @@ class DrivePdfImport {
       'prescriptionDate': prescriptionDate?.toIso8601String(),
       'webViewLink': webViewLink,
       'pdfDeleted': pdfDeleted,
-      'deletePdfRequested': deletePdfRequested,
-      'active': active,
-      'mergedIntoImportId': mergedIntoImportId,
-      'supersededBy': supersededBy,
       'sourceType': sourceType,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
@@ -206,15 +160,12 @@ class DrivePdfImport {
             map['downloadUrl'],
       ),
       pdfDeleted: _readBool(map['pdfDeleted']) || _readString(map['status']).toLowerCase() == 'deleted_pdf',
-      deletePdfRequested: _readBool(map['deletePdfRequested']),
-      active: _readOptionalBool(map['active']) ?? !_readBool(map['inactive']),
-      mergedIntoImportId: _readString(map['mergedIntoImportId'] ?? map['mergedInto'] ?? map['absorbedIntoImportId']),
-      supersededBy: _readString(map['supersededBy'] ?? map['supersededByImportId']),
       sourceType: _readString(map['sourceType'] ?? map['source']).isEmpty ? 'script' : _readString(map['sourceType'] ?? map['source']),
       createdAt: _readDate(map['createdAt'] ?? map['importedAt']) ?? DateTime.now(),
       updatedAt: _readDate(map['updatedAt'] ?? map['manifestUpdatedAt']) ?? DateTime.now(),
     );
   }
+
 
   static String _readString(dynamic value) {
     if (value == null) return '';
@@ -239,11 +190,6 @@ class DrivePdfImport {
     if (value is bool) return value;
     final normalized = value?.toString().trim().toLowerCase() ?? '';
     return normalized == 'true' || normalized == '1' || normalized == 'si' || normalized == 'sì' || normalized == 'yes';
-  }
-
-  static bool? _readOptionalBool(dynamic value) {
-    if (value == null) return null;
-    return _readBool(value);
   }
 
   static DateTime? _readDate(dynamic value) {

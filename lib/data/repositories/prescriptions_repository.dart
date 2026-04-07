@@ -32,13 +32,7 @@ class PrescriptionsRepository {
     final List<Map<String, dynamic>> maps = await datasource.getCollectionGroup(
       collectionPath: AppCollections.prescriptions,
     );
-    final List<Prescription> items = maps.map(Prescription.fromMap).where((Prescription item) {
-      return item.patientFiscalCode.trim().isNotEmpty && item.isActiveForDashboard;
-    }).toList();
-    items.sort((Prescription a, Prescription b) {
-      return b.prescriptionDate.compareTo(a.prescriptionDate);
-    });
-    return items;
+    return maps.map(Prescription.fromMap).toList();
   }
 
   Future<List<Prescription>> getPatientPrescriptions(String fiscalCode) async {
@@ -49,12 +43,7 @@ class PrescriptionsRepository {
     );
 
     if (maps.isNotEmpty) {
-      final List<Prescription> items = maps
-          .map(Prescription.fromMap)
-          .where((Prescription item) => item.isActiveForDashboard)
-          .toList();
-      items.sort((Prescription a, Prescription b) => b.prescriptionDate.compareTo(a.prescriptionDate));
-      return items;
+      return maps.map(Prescription.fromMap).toList();
     }
 
     final DrivePdfImportsRepository importsRepository =
@@ -124,18 +113,11 @@ class PrescriptionsRepository {
           .where((String value) => value.trim().isNotEmpty)
           .map((String value) => PrescriptionItem(drugName: value.trim()))
           .toList(),
-      status: item.status,
-      pdfDeleted: item.pdfDeleted,
-      deletePdfRequested: item.deletePdfRequested,
-      active: item.active,
-      parentImportId: item.id,
-      driveFileId: item.driveFileId,
-      mergedIntoImportId: item.mergedIntoImportId,
-      supersededBy: item.supersededBy,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
     );
   }
+
 
   Future<void> deletePrescription(String fiscalCode, String prescriptionId) async {
     await datasource.deleteSubDocument(

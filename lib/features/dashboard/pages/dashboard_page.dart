@@ -6,6 +6,7 @@ import 'dart:math' as math;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/utils/prescription_expiry_utils.dart';
+import '../../../core/utils/patient_identity_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
 import '../../../data/models/app_settings.dart';
@@ -51,8 +52,6 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<_DashboardData>? _future;
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
-  bool _hasExtendedData = false;
-  bool _isLoadingExtendedData = false;
 
   @override
   void initState() {
@@ -82,42 +81,21 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   void _handleSearchChanged() {
-    final bool needsExtendedData = _requiresExtendedDataForCurrentState();
-    if (needsExtendedData && !_hasExtendedData && !_isLoadingExtendedData) {
-      _refresh();
-      return;
-    }
     setState(() {});
   }
 
-  bool _requiresExtendedDataForCurrentState() {
-    final String rawQuery = _searchController.text.trim();
-    if (rawQuery.length >= 3) return true;
-    return _activeCardFilters.any((filter) =>
-        filter == _DashboardCardFilter.debiti ||
-        filter == _DashboardCardFilter.anticipi ||
-        filter == _DashboardCardFilter.prenotazioni);
-  }
-
   Future<_DashboardData> _load() async {
-    final bool loadExtendedData = _requiresExtendedDataForCurrentState();
-    final List<Future<dynamic>> requests = <Future<dynamic>>[
+    final results = await Future.wait<dynamic>(<Future<dynamic>>[
       _patientsRepository.getAllPatients(),
       _drivePdfImportsRepository.getAllImports(),
       _doctorPatientLinksRepository.getAllLinks(),
       _familyGroupsRepository.getAllFamilies(),
       _settingsRepository.getSettings(),
       _prescriptionsRepository.getAllStoredPrescriptions(),
-    ];
-    if (loadExtendedData) {
-      requests.addAll(<Future<dynamic>>[
-        _debtsRepository.getAllDebts(),
-        _advancesRepository.getAllAdvances(),
-        _bookingsRepository.getAllBookings(),
-      ]);
-    }
-
-    final results = await Future.wait<dynamic>(requests);
+      _debtsRepository.getAllDebts(),
+      _advancesRepository.getAllAdvances(),
+      _bookingsRepository.getAllBookings(),
+    ]);
 
     final List<Patient> patients = results[0] as List<Patient>;
     final List<DrivePdfImport> imports = results[1] as List<DrivePdfImport>;
@@ -125,12 +103,9 @@ class _DashboardPageState extends State<DashboardPage> {
     final List<FamilyGroup> families = results[3] as List<FamilyGroup>;
     final AppSettings settings = results[4] as AppSettings;
     final List<Prescription> allPrescriptions = results[5] as List<Prescription>;
-    final List<Debt> allDebts = loadExtendedData ? results[6] as List<Debt> : const <Debt>[];
-    final List<Advance> allAdvances = loadExtendedData ? results[7] as List<Advance> : const <Advance>[];
-    final List<Booking> allBookings = loadExtendedData ? results[8] as List<Booking> : const <Booking>[];
-
-    _hasExtendedData = loadExtendedData;
-    _isLoadingExtendedData = false;
+    final List<Debt> allDebts = results[6] as List<Debt>;
+    final List<Advance> allAdvances = results[7] as List<Advance>;
+    final List<Booking> allBookings = results[8] as List<Booking>;
 
     final prescriptionsByCf = _groupByFiscalCode(allPrescriptions, (item) => item.patientFiscalCode);
     final debtsByCf = _groupByFiscalCode(allDebts, (item) => item.patientFiscalCode);
@@ -203,7 +178,6 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   void _refresh() {
-    _isLoadingExtendedData = _requiresExtendedDataForCurrentState() && !_hasExtendedData;
     setState(() {
       _future = _load();
     });
@@ -296,11 +270,6 @@ class _DashboardPageState extends State<DashboardPage> {
 
       _activeCardFilters.add(filter);
     });
-
-    final bool needsExtendedData = _requiresExtendedDataForCurrentState();
-    if (needsExtendedData && !_hasExtendedData && !_isLoadingExtendedData) {
-      _refresh();
-    }
   }
 
   Future<void> _openPdf(DrivePdfImport item) async {
@@ -1275,7 +1244,9 @@ class _DashboardPageState extends State<DashboardPage> {
     _PatientDashboardSummary? _findExactPatientByCf(String rawValue) {
       final normalizedCf = rawValue.trim().toUpperCase();
       for (final summary in data.summaries) {
-        if (summary.patient.fiscalCode.trim().toUpperCase() == normalizedCf) {
+        final String patientKey = summary.patient.fiscalCode.trim().toUpperCase();
+        if (isTemporaryPatientKey(patientKey)) continue;
+        if (patientKey == normalizedCf) {
           return summary;
         }
       }
@@ -1289,7 +1260,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final containsMatches = <_PatientDashboardSummary>[];
       for (final summary in data.summaries) {
         final patientCf = summary.patient.fiscalCode.trim().toUpperCase();
-        if (patientCf.isEmpty) continue;
+        if (patientCf.isEmpty || isTemporaryPatientKey(patientCf)) continue;
         if (patientCf.startsWith(normalizedQuery)) {
           startsWithMatches.add(summary);
         } else if (patientCf.contains(normalizedQuery)) {
@@ -1421,6 +1392,14 @@ class _DashboardPageState extends State<DashboardPage> {
                       _dialogField(nameController, 'Nome'),
                       const SizedBox(height: 12),
                       _dialogField(surnameController, 'Cognome'),
+                      const SizedBox(height: 8),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'È sufficiente compilare uno solo tra codice fiscale, nome e cognome.',
+                          style: TextStyle(color: Colors.white70, fontSize: 12),
+                        ),
+                      ),
                       const SizedBox(height: 12),
                       _dialogField(advanceController, 'Eventuale anticipo', onChanged: (_) => setLocalState(() {})),
                       if (advanceController.text.trim().isNotEmpty) ...[
@@ -1513,12 +1492,18 @@ class _DashboardPageState extends State<DashboardPage> {
       final fiscalCode = fiscalCodeController.text.trim().toUpperCase();
       final name = nameController.text.trim();
       final surname = surnameController.text.trim();
-      if (fiscalCode.isEmpty || name.isEmpty || surname.isEmpty) {
-        throw Exception('Codice fiscale, nome e cognome sono obbligatori.');
+      if (fiscalCode.isEmpty && name.isEmpty && surname.isEmpty) {
+        throw Exception('Inserisci almeno uno tra codice fiscale, nome e cognome.');
       }
 
       final now = DateTime.now();
-      final fullName = '$name $surname'.trim();
+      final patientDocumentId = buildManualPatientDocumentId(
+        fiscalCode: fiscalCode,
+        name: name,
+        surname: surname,
+        now: now,
+      );
+      final fullName = buildManualPatientFullName(name: name, surname: surname);
       final advanceText = advanceController.text.trim();
       final bookingText = bookingController.text.trim();
       final debtValue = double.tryParse(debtController.text.trim().replaceAll(',', '.')) ?? 0;
@@ -1533,7 +1518,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
       await _patientsRepository.savePatient(
         Patient(
-          fiscalCode: fiscalCode,
+          fiscalCode: patientDocumentId,
           fullName: fullName,
           hasDebt: debtValue > 0,
           debtTotal: debtValue > 0 ? debtValue : 0,
@@ -1548,7 +1533,7 @@ class _DashboardPageState extends State<DashboardPage> {
         await _advancesRepository.saveAdvance(
           Advance(
             id: 'adv_${now.microsecondsSinceEpoch}',
-            patientFiscalCode: fiscalCode,
+            patientFiscalCode: patientDocumentId,
             patientName: fullName,
             drugName: advanceText,
             doctorName: selectedDoctor.trim(),
@@ -1562,7 +1547,7 @@ class _DashboardPageState extends State<DashboardPage> {
         await _bookingsRepository.saveBooking(
           Booking(
             id: 'book_${now.microsecondsSinceEpoch}',
-            patientFiscalCode: fiscalCode,
+            patientFiscalCode: patientDocumentId,
             patientName: fullName,
             drugName: bookingText,
             createdAt: now,
@@ -1575,7 +1560,7 @@ class _DashboardPageState extends State<DashboardPage> {
         await _debtsRepository.saveDebt(
           Debt(
             id: 'debt_${now.microsecondsSinceEpoch}',
-            patientFiscalCode: fiscalCode,
+            patientFiscalCode: patientDocumentId,
             patientName: fullName,
             description: debtDescription,
             amount: debtValue,
@@ -1688,8 +1673,15 @@ class _DashboardPageState extends State<DashboardPage> {
       future: _future,
       builder: (context, snapshot) {
         final data = snapshot.data;
-        final summaries = data == null ? const <_PatientDashboardSummary>[] : _applyFilters(data.summaries, data.families);
+        final allSummaries = data == null ? const <_PatientDashboardSummary>[] : data.summaries;
+        final summaries = data == null ? const <_PatientDashboardSummary>[] : _applyFilters(allSummaries, data.families);
         final expiring = summaries.where((item) => item.hasExpiryAlert).toList();
+        final totalRecipeCount = allSummaries.fold<int>(0, (sum, item) => sum + item.recipeCount);
+        final totalDpcCount = allSummaries.fold<int>(0, (sum, item) => sum + item.dpcItems.length);
+        final totalDebt = allSummaries.fold<double>(0, (sum, item) => sum + item.totalDebt);
+        final totalAdvances = allSummaries.fold<int>(0, (sum, item) => sum + item.advances.length);
+        final totalBookings = allSummaries.fold<int>(0, (sum, item) => sum + item.bookings.length);
+        final totalExpiring = allSummaries.where((item) => item.hasExpiryAlert).length;
         final familyState = data == null
             ? _DashboardFamilyState.empty()
             : _DashboardFamilyState.fromFamilies(data.summaries, data.families);
@@ -1724,7 +1716,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               children: [
                                 _SummaryCard(
                                   title: 'Ricette',
-                                  value: summaries.fold<int>(0, (sum, item) => sum + item.recipeCount).toString(),
+                                  value: totalRecipeCount.toString(),
                                   icon: Icons.receipt_long_outlined,
                                   accent: AppColors.green,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.ricette),
@@ -1732,7 +1724,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 ),
                                 _SummaryCard(
                                   title: 'Totale DPC',
-                                  value: summaries.fold<int>(0, (sum, item) => sum + item.dpcItems.length).toString(),
+                                  value: totalDpcCount.toString(),
                                   icon: Icons.local_shipping_outlined,
                                   accent: AppColors.coral,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.dpc),
@@ -1740,7 +1732,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 ),
                                 _SummaryCard(
                                   title: 'Debiti',
-                                  value: '€ ${summaries.fold<double>(0, (sum, item) => sum + item.totalDebt).toStringAsFixed(2)}',
+                                  value: '€ ${totalDebt.toStringAsFixed(2)}',
                                   icon: Icons.euro_outlined,
                                   accent: AppColors.wine,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.debiti),
@@ -1748,7 +1740,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 ),
                                 _SummaryCard(
                                   title: 'Anticipi',
-                                  value: summaries.fold<int>(0, (sum, item) => sum + item.advances.length).toString(),
+                                  value: totalAdvances.toString(),
                                   icon: Icons.payments_outlined,
                                   accent: AppColors.amber,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.anticipi),
@@ -1756,7 +1748,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 ),
                                 _SummaryCard(
                                   title: 'Prenotazioni',
-                                  value: summaries.fold<int>(0, (sum, item) => sum + item.bookings.length).toString(),
+                                  value: totalBookings.toString(),
                                   icon: Icons.event_note_outlined,
                                   accent: AppColors.yellow,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.prenotazioni),
@@ -1764,7 +1756,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 ),
                                 _SummaryCard(
                                   title: 'In scadenza',
-                                  value: expiring.length.toString(),
+                                  value: totalExpiring.toString(),
                                   icon: Icons.warning_amber_rounded,
                                   accent: AppColors.coral,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.scadenze),
@@ -1922,7 +1914,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                               style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
                                               onPressed: () => _openPatient(item),
                                               child: Text(
-                                                item.patient.fiscalCode,
+                                                visiblePatientFiscalCode(item.patient.fiscalCode),
                                                 textAlign: TextAlign.left,
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
@@ -2173,38 +2165,19 @@ class _PatientDashboardSummary {
   bool get hasActiveContent => recipeCount > 0 || hasDpc || debts.isNotEmpty || advances.isNotEmpty || bookings.isNotEmpty;
 
   List<_FlagItem> get dpcItems {
-    final preciseItems = prescriptions
-        .where((item) => item.dpcFlag && item.isActiveForDashboard)
-        .map((item) {
+    final fromPrescriptions = prescriptions.where((item) => item.dpcFlag).map((item) {
       return _FlagItem(
-        title: _dashboardDpcPrescriptionTitle(item),
-        subtitle: _dashboardDpcPrescriptionSubtitle(item),
+        title: _dashboardPrescriptionTitle(item),
+        subtitle: '${_dashboardFormatDate(item.prescriptionDate)} · ${(item.doctorName ?? '-').trim().isEmpty ? '-' : item.doctorName!.trim()}',
       );
-    }).toList();
-    if (preciseItems.isNotEmpty) {
-      return preciseItems;
-    }
-
-    final safeImportItems = imports
-        .where((item) => item.isDpc && item.isActiveForDashboard && !item.containsMultiplePrescriptions)
-        .map((item) {
+    });
+    final fromImports = imports.where((item) => item.isDpc).map((item) {
       return _FlagItem(
         title: item.therapy.isEmpty ? (item.fileName.trim().isEmpty ? 'DPC' : item.fileName.trim()) : item.therapy.join(', '),
         subtitle: '${_dashboardFormatDate(item.prescriptionDate ?? item.createdAt)} · ${item.doctorFullName.trim().isEmpty ? '-' : item.doctorFullName.trim()}',
       );
-    }).toList();
-    if (safeImportItems.isNotEmpty) {
-      return safeImportItems;
-    }
-
-    return imports
-        .where((item) => item.isDpc && item.isActiveForDashboard)
-        .map((item) {
-      return _FlagItem(
-        title: 'PDF multiplo con DPC',
-        subtitle: '${_dashboardFormatDate(item.prescriptionDate ?? item.createdAt)} · Apri il PDF dal flag Ricette per il dettaglio sicuro',
-      );
-    }).toList();
+    });
+    return [...fromPrescriptions, ...fromImports];
   }
 
   static _PatientDashboardSummary build({
@@ -2222,7 +2195,8 @@ class _PatientDashboardSummary {
     final matchingImports = imports.where((item) {
       final importFiscalCode = item.patientFiscalCode.trim().toUpperCase();
       final importFullName = item.patientFullName.trim().toUpperCase();
-      if (!item.isActiveForDashboard) return false;
+      final notDeleted = item.pdfDeleted != true && item.status.trim().toLowerCase() != 'deleted_pdf';
+      if (!notDeleted) return false;
       if (importFiscalCode.isNotEmpty) {
         return importFiscalCode == normalizedFiscalCode;
       }
@@ -2313,21 +2287,6 @@ class _FlagItem {
 String _dashboardPrescriptionTitle(Prescription prescription) {
   final label = prescription.items.map((e) => e.drugName.trim()).where((e) => e.isNotEmpty).join(', ');
   return label.isEmpty ? 'Ricetta' : label;
-}
-
-String _dashboardDpcPrescriptionTitle(Prescription prescription) {
-  final label = prescription.items.map((e) => e.drugName.trim()).where((e) => e.isNotEmpty).join(', ');
-  if (label.isNotEmpty) return label;
-  if (prescription.nre.trim().isNotEmpty) return 'NRE ${prescription.nre.trim()}';
-  return 'Ricetta DPC';
-}
-
-String _dashboardDpcPrescriptionSubtitle(Prescription prescription) {
-  final String doctor = (prescription.doctorName ?? '').trim();
-  final String pageInfo = prescription.pageRange.trim().isNotEmpty
-      ? ' · Pagine ${prescription.pageRange.trim()}'
-      : (prescription.pageIndex != null ? ' · Pag. ${prescription.pageIndex}' : '');
-  return '${_dashboardFormatDate(prescription.prescriptionDate)} · ${doctor.isEmpty ? '-' : doctor}$pageInfo';
 }
 
 String _dashboardFormatDate(DateTime? date) {
