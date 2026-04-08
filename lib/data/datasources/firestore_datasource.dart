@@ -5,6 +5,12 @@ abstract class FirestoreDatasource {
     required Map<String, dynamic> data,
   });
 
+  Future<void> patchDocument({
+    required String collectionPath,
+    required String documentId,
+    required Map<String, dynamic> data,
+  });
+
   Future<Map<String, dynamic>?> getDocument({
     required String collectionPath,
     required String documentId,

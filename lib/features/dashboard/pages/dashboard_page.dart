@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/utils/prescription_expiry_utils.dart';
 import '../../../core/utils/patient_identity_utils.dart';
+import '../../../core/utils/phbox_contract_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
 import '../../../data/models/app_settings.dart';
@@ -58,10 +59,7 @@ class _DashboardPageState extends State<DashboardPage> {
     super.initState();
     final datasource = FirestoreFirebaseDatasource(FirebaseFirestore.instance);
     _patientsRepository = PatientsRepository(datasource: datasource);
-    _prescriptionsRepository = PrescriptionsRepository(
-      datasource: datasource,
-      patientsRepository: _patientsRepository,
-    );
+    _prescriptionsRepository = PrescriptionsRepository(datasource: datasource);
     _advancesRepository = AdvancesRepository(datasource: datasource);
     _debtsRepository = DebtsRepository(datasource: datasource);
     _bookingsRepository = BookingsRepository(datasource: datasource);
@@ -91,7 +89,7 @@ class _DashboardPageState extends State<DashboardPage> {
       _doctorPatientLinksRepository.getAllLinks(),
       _familyGroupsRepository.getAllFamilies(),
       _settingsRepository.getSettings(),
-      _prescriptionsRepository.getAllStoredPrescriptions(),
+      _prescriptionsRepository.getAllLegacyPrescriptions(),
       _debtsRepository.getAllDebts(),
       _advancesRepository.getAllAdvances(),
       _bookingsRepository.getAllBookings(),
@@ -334,7 +332,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 onPressed: () async {
                                   final bool confirmed = await _confirmDeleteRecipe(item);
                                   if (!confirmed) return;
-                                  await _drivePdfImportsRepository.softDeleteImport(item.id);
+                                  await _drivePdfImportsRepository.requestPdfDelete(item.id);
                                   if (mounted) {
                                     Navigator.of(context).pop();
                                     _refresh();
@@ -552,14 +550,12 @@ class _DashboardPageState extends State<DashboardPage> {
           updatedAt: now,
         ),
       );
-      await _doctorPatientLinksRepository.saveLink(
+      await _doctorPatientLinksRepository.saveManualOverride(
         patientFiscalCode: summary.patient.fiscalCode,
         patientFullName: summary.patient.fullName,
         doctorFullName: normalizedDoctor,
         city: summary.city == '-' ? null : summary.city,
       );
-      final Patient refreshedPatient = summary.patient.copyWith(doctorName: normalizedDoctor, updatedAt: now);
-      await _patientsRepository.savePatient(refreshedPatient);
       _refresh();
       return true;
     } catch (e) {
@@ -1516,14 +1512,10 @@ class _DashboardPageState extends State<DashboardPage> {
         throw Exception('Per il debito devi indicare la causale.');
       }
 
-      await _patientsRepository.savePatient(
+      await _patientsRepository.createManualPatient(
         Patient(
           fiscalCode: patientDocumentId,
           fullName: fullName,
-          hasDebt: debtValue > 0,
-          debtTotal: debtValue > 0 ? debtValue : 0,
-          hasAdvance: advanceText.isNotEmpty,
-          hasBooking: bookingText.isNotEmpty,
           createdAt: now,
           updatedAt: now,
         ),
@@ -1540,6 +1532,11 @@ class _DashboardPageState extends State<DashboardPage> {
             createdAt: now,
             updatedAt: now,
           ),
+        );
+        await _doctorPatientLinksRepository.saveManualOverride(
+          patientFiscalCode: patientDocumentId,
+          patientFullName: fullName,
+          doctorFullName: selectedDoctor.trim(),
         );
       }
 
@@ -1600,7 +1597,7 @@ class _DashboardPageState extends State<DashboardPage> {
           backgroundColor: AppColors.panel,
           title: const Text('Eliminazione totale', style: TextStyle(color: Colors.white)),
           content: Text(
-            'Eliminare debiti, anticipi, prenotazioni e ricette di ${summary.displayName}?',
+            'Eliminare debiti, anticipi, prenotazioni e richiedere la delete dei PDF ricetta di ${summary.displayName}?',
             style: const TextStyle(color: Colors.white70),
           ),
           actions: [
@@ -1629,25 +1626,12 @@ class _DashboardPageState extends State<DashboardPage> {
       for (final booking in summary.bookings) {
         await _bookingsRepository.deleteBooking(summary.patient.fiscalCode, booking.id);
       }
-      await _prescriptionsRepository.deleteAllPatientPrescriptions(summary.patient.fiscalCode);
       final recipeImports = summary.imports;
       for (final importItem in recipeImports) {
-        await _drivePdfImportsRepository.softDeleteImport(importItem.id);
+        await _drivePdfImportsRepository.requestPdfDelete(importItem.id);
       }
-      final updated = summary.patient.copyWith(
-        hasDebt: false,
-        debtTotal: 0,
-        hasAdvance: false,
-        hasBooking: false,
-        hasDpc: false,
-        archivedRecipeCount: 0,
-        lastPrescriptionDate: null,
-        therapiesSummary: const <String>[],
-        updatedAt: DateTime.now(),
-      );
-      await _patientsRepository.savePatient(updated);
       setState(() {
-        _message = 'Dati assistito eliminati.';
+        _message = 'Dati operativi rimossi e delete PDF richiesta.';
       });
       _refresh();
     } catch (e) {
@@ -2022,7 +2006,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final item = summary.imports.first;
       final confirmed = await _confirmDeleteRecipe(item);
       if (!confirmed) return;
-      await _drivePdfImportsRepository.softDeleteImport(item.id);
+      await _drivePdfImportsRepository.requestPdfDelete(item.id);
       _refresh();
       return;
     }
@@ -2035,7 +2019,7 @@ class _DashboardPageState extends State<DashboardPage> {
             final confirmed = await _confirmDeleteRecipe(item);
             if (!confirmed) return;
             setLocalState(() => busy = true);
-            await _drivePdfImportsRepository.softDeleteImport(item.id);
+            await _drivePdfImportsRepository.requestPdfDelete(item.id);
             _refresh();
             setLocalState(() => busy = false);
             if (!mounted) return;
@@ -2190,69 +2174,71 @@ class _PatientDashboardSummary {
     required List<DoctorPatientLink> doctorLinks,
     required List<FamilyGroup> families,
   }) {
-    final normalizedFiscalCode = patient.fiscalCode.trim().toUpperCase();
-    final normalizedFullName = patient.fullName.trim().toUpperCase();
-    final matchingImports = imports.where((item) {
-      final importFiscalCode = item.patientFiscalCode.trim().toUpperCase();
-      final importFullName = item.patientFullName.trim().toUpperCase();
-      final notDeleted = item.pdfDeleted != true && item.status.trim().toLowerCase() != 'deleted_pdf';
-      if (!notDeleted) return false;
-      if (importFiscalCode.isNotEmpty) {
-        return importFiscalCode == normalizedFiscalCode;
-      }
-      return normalizedFullName.isNotEmpty && importFullName == normalizedFullName;
-    }).toList();
-    final matchingDoctor = doctorLinks.where((item) {
-      return item.patientFiscalCode == patient.fiscalCode.trim().toUpperCase();
-    }).toList();
-    final prescriptionDoctor = prescriptions.map((e) => e.doctorName?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '');
-    final importDoctor = matchingImports.map((e) => e.doctorFullName.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '');
-    final linkDoctorFull = matchingDoctor.map((e) => e.doctorFullName.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '');
-    final patientDoctor = (patient.doctorName ?? '').trim();
-    final doctorName = linkDoctorFull.isNotEmpty
-        ? linkDoctorFull
-        : (patientDoctor.isNotEmpty
-            ? patientDoctor
-            : (importDoctor.isNotEmpty ? importDoctor : prescriptionDoctor));
-    final exemptionCode = (patient.exemptionCode ?? '').trim().isNotEmpty
-        ? patient.exemptionCode!.trim()
-        : (() {
-            final fromPrescription = prescriptions.map((e) => e.exemptionCode?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '');
-            if (fromPrescription.isNotEmpty) return fromPrescription;
-            return matchingImports.map((e) => e.exemptionCode.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '-');
-          })();
-    final city = (patient.city ?? '').trim().isNotEmpty
-        ? patient.city!.trim()
-        : (() {
-            final fromPrescription = prescriptions.map((e) => e.city?.trim() ?? '').firstWhere((e) => e.isNotEmpty, orElse: () => '');
-            if (fromPrescription.isNotEmpty) return fromPrescription;
-            return matchingImports.map((e) => e.city.trim()).firstWhere((e) => e.isNotEmpty, orElse: () => '-');
-          })();
-    final int importsRecipeCount = matchingImports.fold<int>(0, (sum, item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
-    final int prescriptionsRecipeCount = prescriptions.fold<int>(0, (sum, item) => sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1));
-    final int patientRecipeCount = patient.archivedRecipeCount > 0 ? patient.archivedRecipeCount : 0;
-    final recipeCount = importsRecipeCount > 0
-        ? importsRecipeCount
-        : (prescriptionsRecipeCount > 0 ? prescriptionsRecipeCount : (matchingImports.isNotEmpty ? matchingImports.length : patientRecipeCount));
-    final hasDpc = prescriptions.any((item) => item.dpcFlag) || matchingImports.any((item) => item.isDpc);
+    final String normalizedFiscalCode = patient.fiscalCode.trim().toUpperCase();
+    final List<DrivePdfImport> matchingImports =
+        PhboxContractUtils.visibleImportsForPatient(
+      patient: patient,
+      imports: imports,
+    );
+    final String doctorName = PhboxContractUtils.resolveDoctor(
+      fiscalCode: patient.fiscalCode,
+      doctorLinks: doctorLinks,
+      patientDoctorFullName: patient.doctorFullName,
+      visibleImports: matchingImports,
+      legacyPrescriptions: prescriptions,
+    );
+    final String exemptionCode = PhboxContractUtils.resolveExemption(
+      patient: patient,
+      visibleImports: matchingImports,
+      legacyPrescriptions: prescriptions,
+    );
+    final String city = PhboxContractUtils.resolveCity(
+      patient: patient,
+      visibleImports: matchingImports,
+      legacyPrescriptions: prescriptions,
+    );
+    final int recipeCount = PhboxContractUtils.resolveRecipeCount(
+      patient: patient,
+      visibleImports: matchingImports,
+      legacyPrescriptions: prescriptions,
+    );
+    final bool hasDpc = PhboxContractUtils.resolveHasDpc(
+      patient: patient,
+      visibleImports: matchingImports,
+      legacyPrescriptions: prescriptions,
+    );
+    final DateTime? lastPrescriptionDate =
+        PhboxContractUtils.resolveLastPrescriptionDate(
+      patient: patient,
+      visibleImports: matchingImports,
+      legacyPrescriptions: prescriptions,
+    );
+
     bool hasExpiringDate(DateTime? date) {
       final info = PrescriptionExpiryUtils.evaluate(date);
-      return info.status == PrescriptionValidityStatus.expiringSoon || info.status == PrescriptionValidityStatus.expired;
+      return info.status == PrescriptionValidityStatus.expiringSoon ||
+          info.status == PrescriptionValidityStatus.expired;
     }
 
     final Iterable<DateTime?> expiryCandidates = <DateTime?>[
-      ...prescriptions.map((item) => item.expiryDate ?? item.prescriptionDate.add(const Duration(days: 30))),
-      ...matchingImports.map((item) {
+      ...prescriptions.map(
+        (Prescription item) =>
+            item.expiryDate ?? item.prescriptionDate.add(const Duration(days: 30)),
+      ),
+      ...matchingImports.map((DrivePdfImport item) {
         final DateTime baseDate = item.prescriptionDate ?? item.createdAt;
         return baseDate.add(const Duration(days: 30));
       }),
-      if (patient.lastPrescriptionDate != null) patient.lastPrescriptionDate!.add(const Duration(days: 30)),
+      if (lastPrescriptionDate != null)
+        lastPrescriptionDate.add(const Duration(days: 30)),
     ];
 
-    final hasExpiryAlert = expiryCandidates.any(hasExpiringDate);
-    final familyId = (() {
-      for (final family in families) {
-        if (family.memberFiscalCodes.map((e) => e.trim().toUpperCase()).contains(normalizedFiscalCode)) {
+    final bool hasExpiryAlert = expiryCandidates.any(hasExpiringDate);
+    final String familyId = (() {
+      for (final FamilyGroup family in families) {
+        if (family.memberFiscalCodes
+            .map((String e) => e.trim().toUpperCase())
+            .contains(normalizedFiscalCode)) {
           return family.id;
         }
       }

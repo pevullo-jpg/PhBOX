@@ -1,3 +1,9 @@
+enum DoctorPatientLinkType {
+  manual,
+  primary,
+  other,
+}
+
 class DoctorPatientLink {
   final String id;
   final String patientFiscalCode;
@@ -14,6 +20,21 @@ class DoctorPatientLink {
     required this.doctorSurname,
     this.updatedAt,
   });
+
+  DoctorPatientLinkType get linkType {
+    final String normalizedId = id.trim().toLowerCase();
+    if (normalizedId.endsWith('__manual')) {
+      return DoctorPatientLinkType.manual;
+    }
+    if (normalizedId.endsWith('__primary')) {
+      return DoctorPatientLinkType.primary;
+    }
+    return DoctorPatientLinkType.other;
+  }
+
+  bool get isManual => linkType == DoctorPatientLinkType.manual;
+  bool get isPrimary => linkType == DoctorPatientLinkType.primary;
+  bool get isStableAssociation => isManual || isPrimary;
 
   factory DoctorPatientLink.fromMap(Map<String, dynamic> map) {
     final String fullName = _readString(
@@ -54,12 +75,13 @@ class DoctorPatientLink {
     return value.toString().trim();
   }
 
-
-
   static String _extractSurname(String fullName) {
     final String normalized = fullName.trim();
     if (normalized.isEmpty) return '';
-    final parts = normalized.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
+    final List<String> parts = normalized
+        .split(RegExp(r'\s+'))
+        .where((String e) => e.isNotEmpty)
+        .toList();
     if (parts.isEmpty) return '';
     return parts.first.trim();
   }
@@ -75,7 +97,9 @@ class DoctorPatientLink {
     } catch (_) {}
     try {
       final dynamic seconds = (value as dynamic).seconds;
-      if (seconds is int) return DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+      if (seconds is int) {
+        return DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+      }
     } catch (_) {}
     return null;
   }

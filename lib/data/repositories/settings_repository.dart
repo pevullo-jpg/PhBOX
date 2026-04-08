@@ -21,10 +21,10 @@ class SettingsRepository {
   }
 
   Future<void> saveSettings(AppSettings settings) {
-    return datasource.setDocument(
+    return datasource.patchDocument(
       collectionPath: AppCollections.appSettings,
       documentId: 'main',
-      data: settings.toMap(),
+      data: settings.toFrontendPatchMap(),
     );
   }
 }

@@ -7,11 +7,18 @@ class PatientsRepository {
 
   const PatientsRepository({required this.datasource});
 
-  Future<void> savePatient(Patient patient) {
-    return datasource.setDocument(
+  Future<void> createManualPatient(Patient patient) async {
+    final Map<String, dynamic>? existing = await datasource.getDocument(
       collectionPath: AppCollections.patients,
       documentId: patient.fiscalCode,
-      data: patient.toMap(),
+    );
+    if (existing != null) {
+      return;
+    }
+    await datasource.setDocument(
+      collectionPath: AppCollections.patients,
+      documentId: patient.fiscalCode,
+      data: patient.toManualCreateMap(),
     );
   }
 

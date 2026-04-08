@@ -26,10 +26,7 @@ class _ExpiriesPageState extends State<ExpiriesPage> {
     super.initState();
     final datasource = FirestoreFirebaseDatasource(FirebaseFirestore.instance);
     patientsRepository = PatientsRepository(datasource: datasource);
-    prescriptionsRepository = PrescriptionsRepository(
-      datasource: datasource,
-      patientsRepository: patientsRepository,
-    );
+    prescriptionsRepository = PrescriptionsRepository(datasource: datasource);
   }
 
   Future<List<_ExpiryRow>> _loadRows() async {

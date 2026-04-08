@@ -1,97 +1,58 @@
 import '../../core/constants/app_constants.dart';
 import '../datasources/firestore_datasource.dart';
 import '../models/drive_pdf_import.dart';
-import '../models/patient.dart';
 import '../models/prescription.dart';
 import '../models/prescription_item.dart';
-import 'patients_repository.dart';
 import 'drive_pdf_imports_repository.dart';
 
 class PrescriptionsRepository {
   final FirestoreDatasource datasource;
-  final PatientsRepository patientsRepository;
 
-  const PrescriptionsRepository({
-    required this.datasource,
-    required this.patientsRepository,
-  });
+  const PrescriptionsRepository({required this.datasource});
 
-  Future<void> savePrescription(Prescription prescription) async {
-    await datasource.setSubDocument(
+  Future<void> savePrescription(Prescription prescription) {
+    return datasource.setSubDocument(
       collectionPath: AppCollections.patients,
       documentId: prescription.patientFiscalCode,
       subcollectionPath: AppCollections.prescriptions,
       subDocumentId: prescription.id,
       data: prescription.toMap(),
     );
-
-    await refreshPatientAggregates(prescription.patientFiscalCode);
   }
 
-  Future<List<Prescription>> getAllStoredPrescriptions() async {
+  Future<List<Prescription>> getAllLegacyPrescriptions() async {
     final List<Map<String, dynamic>> maps = await datasource.getCollectionGroup(
       collectionPath: AppCollections.prescriptions,
     );
-    return maps.map(Prescription.fromMap).toList();
+    final List<Prescription> items = maps.map(Prescription.fromMap).toList();
+    items.sort((Prescription a, Prescription b) {
+      return b.prescriptionDate.compareTo(a.prescriptionDate);
+    });
+    return items;
   }
 
-  Future<List<Prescription>> getPatientPrescriptions(String fiscalCode) async {
+  Future<List<Prescription>> getLegacyPatientPrescriptions(String fiscalCode) async {
     final List<Map<String, dynamic>> maps = await datasource.getSubCollection(
       collectionPath: AppCollections.patients,
       documentId: fiscalCode,
       subcollectionPath: AppCollections.prescriptions,
     );
+    final List<Prescription> items = maps.map(Prescription.fromMap).toList();
+    items.sort((Prescription a, Prescription b) {
+      return b.prescriptionDate.compareTo(a.prescriptionDate);
+    });
+    return items;
+  }
 
-    if (maps.isNotEmpty) {
-      return maps.map(Prescription.fromMap).toList();
-    }
-
+  Future<List<Prescription>> getPatientPrescriptions(String fiscalCode) async {
     final DrivePdfImportsRepository importsRepository =
         DrivePdfImportsRepository(datasource: datasource);
     final List<DrivePdfImport> imports =
         await importsRepository.getImportsByPatient(fiscalCode);
-    return imports.map(_importToPrescription).toList();
-  }
-
-  Future<void> refreshPatientAggregates(String fiscalCode) async {
-    final Patient? patient = await patientsRepository.getPatientByFiscalCode(fiscalCode);
-    if (patient == null) return;
-
-    final List<Prescription> prescriptions = await getPatientPrescriptions(fiscalCode);
-
-    final int archivedRecipeCount = prescriptions.fold<int>(0, (int sum, Prescription prescription) => sum + prescription.prescriptionCount);
-
-    DateTime? lastPrescriptionDate;
-    bool hasDpc = false;
-    final Set<String> therapies = <String>{};
-
-    for (final Prescription prescription in prescriptions) {
-      if (lastPrescriptionDate == null ||
-          prescription.prescriptionDate.isAfter(lastPrescriptionDate)) {
-        lastPrescriptionDate = prescription.prescriptionDate;
-      }
-
-      if (prescription.dpcFlag) {
-        hasDpc = true;
-      }
-
-      for (final item in prescription.items) {
-        final String drug = item.drugName.trim();
-        if (drug.isNotEmpty) {
-          therapies.add(drug);
-        }
-      }
+    if (imports.isNotEmpty) {
+      return imports.map(_importToPrescription).toList();
     }
-
-    final Patient updated = patient.copyWith(
-      archivedRecipeCount: archivedRecipeCount,
-      lastPrescriptionDate: lastPrescriptionDate,
-      hasDpc: hasDpc,
-      therapiesSummary: therapies.toList()..sort(),
-      updatedAt: DateTime.now(),
-    );
-
-    await patientsRepository.savePatient(updated);
+    return getLegacyPatientPrescriptions(fiscalCode);
   }
 
   Prescription _importToPrescription(DrivePdfImport item) {
@@ -116,31 +77,5 @@ class PrescriptionsRepository {
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
     );
-  }
-
-
-  Future<void> deletePrescription(String fiscalCode, String prescriptionId) async {
-    await datasource.deleteSubDocument(
-      collectionPath: AppCollections.patients,
-      documentId: fiscalCode,
-      subcollectionPath: AppCollections.prescriptions,
-      subDocumentId: prescriptionId,
-    );
-    await refreshPatientAggregates(fiscalCode);
-  }
-
-  Future<void> deleteAllPatientPrescriptions(String fiscalCode) async {
-    final List<Prescription> prescriptions = await getPatientPrescriptions(fiscalCode);
-    for (final Prescription prescription in prescriptions) {
-      try {
-        await datasource.deleteSubDocument(
-          collectionPath: AppCollections.patients,
-          documentId: fiscalCode,
-          subcollectionPath: AppCollections.prescriptions,
-          subDocumentId: prescription.id,
-        );
-      } catch (_) {}
-    }
-    await refreshPatientAggregates(fiscalCode);
   }
 }

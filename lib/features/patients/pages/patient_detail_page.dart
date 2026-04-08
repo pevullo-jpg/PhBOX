@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/utils/prescription_expiry_utils.dart';
 import '../../../core/utils/patient_identity_utils.dart';
+import '../../../core/utils/phbox_contract_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
 import '../../../data/models/app_settings.dart';
@@ -59,10 +60,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     _advancesRepository = AdvancesRepository(datasource: datasource);
     _debtsRepository = DebtsRepository(datasource: datasource);
     _bookingsRepository = BookingsRepository(datasource: datasource);
-    _prescriptionsRepository = PrescriptionsRepository(
-      datasource: datasource,
-      patientsRepository: _patientsRepository,
-    );
+    _prescriptionsRepository = PrescriptionsRepository(datasource: datasource);
     _drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
     _settingsRepository = SettingsRepository(datasource: datasource);
     _doctorPatientLinksRepository = DoctorPatientLinksRepository(datasource: datasource);
@@ -84,7 +82,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       patient: patient,
       doctorLinks: doctorLinks,
       prescriptions: prescriptions,
-      advances: advances,
+      imports: imports,
     );
     return _PatientDetailData(
       patient: patient,
@@ -112,58 +110,19 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     required Patient? patient,
     required List<DoctorPatientLink> doctorLinks,
     required List<Prescription> prescriptions,
-    required List<Advance> advances,
+    required List<DrivePdfImport> imports,
   }) {
-    for (final link in doctorLinks) {
-      if (link.patientFiscalCode == widget.fiscalCode.trim().toUpperCase() && link.doctorName.trim().isNotEmpty) {
-        return link.doctorName.trim();
-      }
-    }
-    if (patient != null && (patient.doctorName ?? '').trim().isNotEmpty) {
-      return patient.doctorName!.trim();
-    }
-    for (final advance in advances) {
-      if (advance.doctorName.trim().isNotEmpty) return advance.doctorName.trim();
-    }
-    for (final prescription in prescriptions) {
-      if ((prescription.doctorName ?? '').trim().isNotEmpty) return prescription.doctorName!.trim();
-    }
-    return '-';
-  }
-
-  Future<void> _syncPatientAggregates(_PatientDetailData data) async {
-    final patient = data.patient;
-    if (patient == null) return;
-    final double totalDebt = data.debts.fold<double>(0, (sum, item) => sum + item.residualAmount);
-    final therapySummary = data.prescriptions
-        .expand((item) => item.items)
-        .map((item) => item.drugName.trim())
-        .where((item) => item.isNotEmpty)
-        .toSet()
-        .toList()
-      ..sort();
-    final lastPrescriptionDate = data.prescriptions.isEmpty
-        ? null
-        : data.prescriptions.map((item) => item.prescriptionDate).reduce((a, b) => a.isAfter(b) ? a : b);
-    final archivedRecipeCount = data.prescriptions.fold<int>(0, (sum, item) => sum + item.prescriptionCount);
-    await _patientsRepository.savePatient(
-      patient.copyWith(
-        doctorName: data.resolvedDoctorName == '-' ? patient.doctorName : data.resolvedDoctorName,
-        hasDebt: data.debts.isNotEmpty,
-        debtTotal: totalDebt,
-        hasAdvance: data.advances.isNotEmpty,
-        hasBooking: data.bookings.isNotEmpty,
-        hasDpc: data.prescriptions.any((item) => item.dpcFlag) || data.imports.any((item) => item.isDpc),
-        archivedRecipeCount: archivedRecipeCount,
-        lastPrescriptionDate: lastPrescriptionDate,
-        therapiesSummary: therapySummary,
-        updatedAt: DateTime.now(),
-      ),
+    return PhboxContractUtils.resolveDoctor(
+      fiscalCode: widget.fiscalCode,
+      doctorLinks: doctorLinks,
+      patientDoctorFullName: patient?.doctorFullName,
+      visibleImports: imports,
+      legacyPrescriptions: prescriptions,
     );
   }
 
   Future<void> _openPdf(DrivePdfImport item) async {
-    final String directLink = item.webViewLink.trim();
+    final String directLink = item.effectiveViewLink.trim();
     final String fallbackLink = item.driveFileId.trim().isNotEmpty
         ? 'https://drive.google.com/file/d/${item.driveFileId.trim()}/view'
         : '';
@@ -319,10 +278,11 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                 icon: const Icon(Icons.open_in_new),
                 label: const Text('PDF'),
               ),
-            IconButton(
-              onPressed: () => _deleteSinglePrescription(patient, prescription),
-              icon: const Icon(Icons.delete_outline, color: AppColors.red),
-            ),
+            if (matchingImport != null)
+              IconButton(
+                onPressed: () => _requestPrescriptionDelete(matchingImport),
+                icon: const Icon(Icons.delete_outline, color: AppColors.red),
+              ),
           ],
           extra: [
             _detailLine('Esenzione', (prescription.exemptionCode ?? '-').trim().isEmpty ? '-' : prescription.exemptionCode!.trim()),
@@ -577,13 +537,12 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
           updatedAt: now,
         ),
       );
-      await _doctorPatientLinksRepository.saveLink(
+      await _doctorPatientLinksRepository.saveManualOverride(
         patientFiscalCode: patient.fiscalCode,
         patientFullName: patient.fullName,
         doctorFullName: doctor,
         city: patient.city,
       );
-      await _patientsRepository.savePatient(patient.copyWith(doctorName: doctor, updatedAt: now));
       _refresh('Anticipo aggiunto.');
     } catch (e) {
       setState(() => _message = 'Errore salvataggio anticipo: $e');
@@ -686,13 +645,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     _refresh('Prenotazione eliminata.');
   }
 
-  Future<void> _deleteSinglePrescription(Patient patient, Prescription prescription) async {
+  Future<void> _requestPrescriptionDelete(DrivePdfImport item) async {
     if (!await _confirmDelete('Eliminare questa ricetta?')) return;
-    await _prescriptionsRepository.deletePrescription(patient.fiscalCode, prescription.id);
-    try {
-      await _drivePdfImportsRepository.deleteImport(prescription.id);
-    } catch (_) {}
-    _refresh('Ricetta eliminata.');
+    await _drivePdfImportsRepository.requestPdfDelete(item.id);
+    _refresh('Richiesta delete PDF registrata.');
   }
 
   Future<bool> _confirmDelete(String text) async {
@@ -760,7 +716,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                       ),
                                       _summaryCard(
                                         label: 'DPC',
-                                        value: data.prescriptions.any((item) => item.dpcFlag) || data.imports.any((item) => item.isDpc) ? 'SI' : 'NO',
+                                        value: data.hasDpc ? 'SI' : 'NO',
                                         subtitle: 'flag ricette',
                                         color: AppColors.coral,
                                         onTap: () => _managePrescriptions(data),
@@ -837,12 +793,12 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                   const SizedBox(height: 18),
                                   _section(
                                     title: 'Terapie riepilogative',
-                                    child: data.patient!.therapiesSummary.isEmpty
+                                    child: data.therapiesSummary.isEmpty
                                         ? const Text('Nessuna terapia disponibile.', style: TextStyle(color: Colors.white70))
                                         : Wrap(
                                             spacing: 10,
                                             runSpacing: 10,
-                                            children: data.patient!.therapiesSummary
+                                            children: data.therapiesSummary
                                                 .map((item) => Container(
                                                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                                                       decoration: BoxDecoration(
@@ -960,9 +916,9 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
             children: [
               _metaBadge('CF', visiblePatientFiscalCode(patient.fiscalCode)),
               _metaBadge('Medico', data.resolvedDoctorName),
-              _metaBadge('Esenzione', (patient.exemptionCode ?? '').trim().isEmpty ? '-' : patient.exemptionCode!.trim()),
-              _metaBadge('Città', (patient.city ?? '').trim().isEmpty ? '-' : patient.city!.trim()),
-              _metaBadge('Ultima ricetta', _formatDate(patient.lastPrescriptionDate)),
+              _metaBadge('Esenzione', data.primaryExemption),
+              _metaBadge('Città', data.displayCity),
+              _metaBadge('Ultima ricetta', _formatDate(data.lastPrescriptionDate)),
             ],
           ),
         ],
@@ -1186,7 +1142,78 @@ class _PatientDetailData {
     required this.therapeuticAdvice,
   });
 
-  double get totalDebt => debts.fold<double>(0, (sum, item) => sum + item.residualAmount);
+  double get totalDebt => debts.fold<double>(0, (double sum, Debt item) => sum + item.residualAmount);
 
-  int get totalRecipeCount => prescriptions.fold<int>(0, (sum, item) => sum + item.prescriptionCount);
+  int get totalRecipeCount {
+    final Patient? currentPatient = patient;
+    if (currentPatient == null) {
+      return prescriptions.fold<int>(0, (int sum, Prescription item) => sum + item.prescriptionCount);
+    }
+    return PhboxContractUtils.resolveRecipeCount(
+      patient: currentPatient,
+      visibleImports: imports,
+      legacyPrescriptions: imports.isNotEmpty ? const <Prescription>[] : prescriptions,
+    );
+  }
+
+  bool get hasDpc {
+    final Patient? currentPatient = patient;
+    if (currentPatient == null) {
+      return imports.any((DrivePdfImport item) => item.isDpc) ||
+          prescriptions.any((Prescription item) => item.dpcFlag);
+    }
+    return PhboxContractUtils.resolveHasDpc(
+      patient: currentPatient,
+      visibleImports: imports,
+      legacyPrescriptions: imports.isNotEmpty ? const <Prescription>[] : prescriptions,
+    );
+  }
+
+  DateTime? get lastPrescriptionDate {
+    final Patient? currentPatient = patient;
+    if (currentPatient == null) {
+      return null;
+    }
+    return PhboxContractUtils.resolveLastPrescriptionDate(
+      patient: currentPatient,
+      visibleImports: imports,
+      legacyPrescriptions: imports.isNotEmpty ? const <Prescription>[] : prescriptions,
+    );
+  }
+
+  List<String> get therapiesSummary {
+    final Patient? currentPatient = patient;
+    if (currentPatient == null) {
+      return const <String>[];
+    }
+    return PhboxContractUtils.resolveTherapiesSummary(
+      patient: currentPatient,
+      visibleImports: imports,
+      prescriptions: prescriptions,
+    );
+  }
+
+  String get primaryExemption {
+    final Patient? currentPatient = patient;
+    if (currentPatient == null) {
+      return '-';
+    }
+    return PhboxContractUtils.resolveExemption(
+      patient: currentPatient,
+      visibleImports: imports,
+      legacyPrescriptions: imports.isNotEmpty ? const <Prescription>[] : prescriptions,
+    );
+  }
+
+  String get displayCity {
+    final Patient? currentPatient = patient;
+    if (currentPatient == null) {
+      return '-';
+    }
+    return PhboxContractUtils.resolveCity(
+      patient: currentPatient,
+      visibleImports: imports,
+      legacyPrescriptions: imports.isNotEmpty ? const <Prescription>[] : prescriptions,
+    );
+  }
 }
