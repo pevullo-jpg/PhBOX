@@ -40,9 +40,9 @@ class PatientsRepository {
   }
 
   Future<void> deletePatient(String fiscalCode) {
-    return datasource.deleteDocument(
-      collectionPath: AppCollections.patients,
-      documentId: fiscalCode,
+    throw UnsupportedError(
+      'Frontend baseline v1.1.2: deletePatient è disabilitato per evitare '
+      'cancellazioni distruttive fuori contratto.',
     );
   }
 }

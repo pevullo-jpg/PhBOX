@@ -64,13 +64,24 @@ class IntakeToEntitiesService {
           fullName: intake.patientName.isEmpty
               ? (existing?.fullName ?? 'Assistito senza nome')
               : intake.patientName,
+          city: intake.city.isEmpty ? existing?.city : intake.city,
+          doctorName:
+              intake.doctorName.isEmpty ? existing?.doctorName : intake.doctorName,
+          exemptionCode: intake.exemptionCode.isEmpty
+              ? existing?.exemptionCode
+              : intake.exemptionCode,
+          archivedRecipeCount: (existing?.archivedRecipeCount ?? 0) + intake.prescriptionCount,
+          hasDpc: (existing?.hasDpc ?? false) || intake.dpcFlag,
+          hasAdvance: existing?.hasAdvance ?? false,
+          hasDebt: existing?.hasDebt ?? false,
+          hasBooking: existing?.hasBooking ?? false,
+          debtTotal: existing?.debtTotal ?? 0,
+          lastPrescriptionDate: intake.prescriptionDate,
           updatedAt: DateTime.now(),
           createdAt: existing?.createdAt ?? DateTime.now(),
         );
 
-        if (existing == null) {
-          await patientsRepository.createManualPatient(patient);
-        }
+        await patientsRepository.savePatient(patient);
 
         final List<PrescriptionItem> items = intake.medicines.isEmpty
             ? <PrescriptionItem>[]
@@ -94,11 +105,11 @@ class IntakeToEntitiesService {
           patientFiscalCode: intake.fiscalCode,
           patientName: patient.fullName,
           doctorName:
-              intake.doctorName.isEmpty ? existing?.doctorName : intake.doctorName,
+              intake.doctorName.isEmpty ? patient.doctorName : intake.doctorName,
           exemptionCode: intake.exemptionCode.isEmpty
-              ? existing?.exemptionCode
+              ? patient.exemptionCode
               : intake.exemptionCode,
-          city: intake.city.isEmpty ? existing?.city : intake.city,
+          city: intake.city.isEmpty ? patient.city : intake.city,
           prescriptionDate: prescriptionDate,
           expiryDate: _computeExpiryDate(prescriptionDate),
           dpcFlag: intake.dpcFlag,

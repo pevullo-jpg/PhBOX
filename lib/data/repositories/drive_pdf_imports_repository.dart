@@ -8,10 +8,9 @@ class DrivePdfImportsRepository {
   const DrivePdfImportsRepository({required this.datasource});
 
   Future<void> saveImport(DrivePdfImport importItem) {
-    return datasource.setDocument(
-      collectionPath: AppCollections.drivePdfImports,
-      documentId: importItem.id,
-      data: importItem.toMap(),
+    throw UnsupportedError(
+      'Frontend baseline v1.1.2: drive_pdf_imports è backend-owned. '
+      'Il frontend non può più scrivere documenti archivistici.',
     );
   }
 
