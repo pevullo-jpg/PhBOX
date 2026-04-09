@@ -85,7 +85,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<_DashboardData> _load() async {
     final results = await Future.wait<dynamic>(<Future<dynamic>>[
       _patientsRepository.getAllPatients(),
-      _drivePdfImportsRepository.getAllImports(),
+      _drivePdfImportsRepository.getAllImports(includeHidden: true),
       _doctorPatientLinksRepository.getAllLinks(),
       _familyGroupsRepository.getAllFamilies(),
       _settingsRepository.getSettings(),
@@ -2175,42 +2175,47 @@ class _PatientDashboardSummary {
     required List<FamilyGroup> families,
   }) {
     final String normalizedFiscalCode = patient.fiscalCode.trim().toUpperCase();
-    final List<DrivePdfImport> matchingImports =
-        PhboxContractUtils.visibleImportsForPatient(
+    final List<DrivePdfImport> allImportsForPatient =
+        PhboxContractUtils.allImportsForPatient(
       patient: patient,
       imports: imports,
     );
+    final List<DrivePdfImport> visibleImportsForPatient =
+        allImportsForPatient.where((DrivePdfImport item) => !item.isHiddenFromFrontend).toList();
     final String doctorName = PhboxContractUtils.resolveDoctor(
       fiscalCode: patient.fiscalCode,
       doctorLinks: doctorLinks,
       patientDoctorFullName: patient.doctorFullName,
-      visibleImports: matchingImports,
+      visibleImports: visibleImportsForPatient,
       legacyPrescriptions: prescriptions,
     );
     final String exemptionCode = PhboxContractUtils.resolveExemption(
       patient: patient,
-      visibleImports: matchingImports,
+      visibleImports: visibleImportsForPatient,
       legacyPrescriptions: prescriptions,
     );
     final String city = PhboxContractUtils.resolveCity(
       patient: patient,
-      visibleImports: matchingImports,
+      visibleImports: visibleImportsForPatient,
       legacyPrescriptions: prescriptions,
     );
     final int recipeCount = PhboxContractUtils.resolveRecipeCount(
       patient: patient,
-      visibleImports: matchingImports,
+      allImports: allImportsForPatient,
+      visibleImports: visibleImportsForPatient,
       legacyPrescriptions: prescriptions,
     );
     final bool hasDpc = PhboxContractUtils.resolveHasDpc(
       patient: patient,
-      visibleImports: matchingImports,
+      allImports: allImportsForPatient,
+      visibleImports: visibleImportsForPatient,
       legacyPrescriptions: prescriptions,
     );
     final DateTime? lastPrescriptionDate =
         PhboxContractUtils.resolveLastPrescriptionDate(
       patient: patient,
-      visibleImports: matchingImports,
+      allImports: allImportsForPatient,
+      visibleImports: visibleImportsForPatient,
       legacyPrescriptions: prescriptions,
     );
 
@@ -2221,16 +2226,19 @@ class _PatientDashboardSummary {
     }
 
     final Iterable<DateTime?> expiryCandidates = <DateTime?>[
-      ...prescriptions.map(
-        (Prescription item) =>
-            item.expiryDate ?? item.prescriptionDate.add(const Duration(days: 30)),
-      ),
-      ...matchingImports.map((DrivePdfImport item) {
-        final DateTime baseDate = item.prescriptionDate ?? item.createdAt;
-        return baseDate.add(const Duration(days: 30));
-      }),
-      if (lastPrescriptionDate != null)
-        lastPrescriptionDate.add(const Duration(days: 30)),
+      if (allImportsForPatient.isNotEmpty)
+        ...visibleImportsForPatient.map((DrivePdfImport item) {
+          final DateTime baseDate = item.prescriptionDate ?? item.createdAt;
+          return baseDate.add(const Duration(days: 30));
+        })
+      else if (patient.hasLastPrescriptionDateAggregate)
+        if (lastPrescriptionDate != null)
+          lastPrescriptionDate.add(const Duration(days: 30))
+      else
+        ...prescriptions.map(
+          (Prescription item) =>
+              item.expiryDate ?? item.prescriptionDate.add(const Duration(days: 30)),
+        ),
     ];
 
     final bool hasExpiryAlert = expiryCandidates.any(hasExpiringDate);
@@ -2250,7 +2258,7 @@ class _PatientDashboardSummary {
       exemptionCode: exemptionCode.isEmpty ? '-' : exemptionCode,
       city: city.isEmpty ? '-' : city,
       prescriptions: prescriptions,
-      imports: matchingImports,
+      imports: visibleImportsForPatient,
       debts: debts,
       advances: advances,
       bookings: bookings,

@@ -47,10 +47,15 @@ class PrescriptionsRepository {
   Future<List<Prescription>> getPatientPrescriptions(String fiscalCode) async {
     final DrivePdfImportsRepository importsRepository =
         DrivePdfImportsRepository(datasource: datasource);
-    final List<DrivePdfImport> imports =
-        await importsRepository.getImportsByPatient(fiscalCode);
-    if (imports.isNotEmpty) {
-      return imports.map(_importToPrescription).toList();
+    final List<DrivePdfImport> allImports = await importsRepository.getImportsByPatient(
+      fiscalCode,
+      includeHidden: true,
+    );
+    final List<DrivePdfImport> visibleImports = allImports.where((DrivePdfImport item) {
+      return !item.isHiddenFromFrontend;
+    }).toList();
+    if (allImports.isNotEmpty) {
+      return visibleImports.map(_importToPrescription).toList();
     }
     return getLegacyPatientPrescriptions(fiscalCode);
   }

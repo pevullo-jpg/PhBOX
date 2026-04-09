@@ -15,16 +15,22 @@ class DrivePdfImportsRepository {
     );
   }
 
-  Future<List<DrivePdfImport>> getAllImports() async {
+  Future<List<DrivePdfImport>> getAllImports({bool includeHidden = false}) async {
     final List<Map<String, dynamic>> maps = await datasource.getCollection(
       collectionPath: AppCollections.drivePdfImports,
     );
     final List<DrivePdfImport> items = maps
         .map(DrivePdfImport.fromMap)
         .where((DrivePdfImport item) {
-      return (item.patientFiscalCode.trim().isNotEmpty ||
-              item.patientFullName.trim().isNotEmpty) &&
-          !item.isHiddenFromFrontend;
+      final bool hasPatientIdentity =
+          item.patientFiscalCode.trim().isNotEmpty || item.patientFullName.trim().isNotEmpty;
+      if (!hasPatientIdentity) {
+        return false;
+      }
+      if (!includeHidden && item.isHiddenFromFrontend) {
+        return false;
+      }
+      return true;
     }).toList();
     items.sort((DrivePdfImport a, DrivePdfImport b) {
       return b.chronologyDate.compareTo(a.chronologyDate);
@@ -32,9 +38,12 @@ class DrivePdfImportsRepository {
     return items;
   }
 
-  Future<List<DrivePdfImport>> getImportsByPatient(String fiscalCode) async {
+  Future<List<DrivePdfImport>> getImportsByPatient(
+    String fiscalCode, {
+    bool includeHidden = false,
+  }) async {
     final String normalized = fiscalCode.trim().toUpperCase();
-    final List<DrivePdfImport> all = await getAllImports();
+    final List<DrivePdfImport> all = await getAllImports(includeHidden: includeHidden);
     final List<DrivePdfImport> filtered = all.where((DrivePdfImport item) {
       return item.patientFiscalCode.trim().toUpperCase() == normalized;
     }).toList();

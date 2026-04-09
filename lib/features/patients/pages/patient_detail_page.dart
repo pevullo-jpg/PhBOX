@@ -74,7 +74,11 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     final debts = await _debtsRepository.getPatientDebts(widget.fiscalCode);
     final bookings = await _bookingsRepository.getPatientBookings(widget.fiscalCode);
     final prescriptions = await _prescriptionsRepository.getPatientPrescriptions(widget.fiscalCode);
-    final imports = await _drivePdfImportsRepository.getImportsByPatient(widget.fiscalCode);
+    final allImports = await _drivePdfImportsRepository.getImportsByPatient(
+      widget.fiscalCode,
+      includeHidden: true,
+    );
+    final imports = allImports.where((DrivePdfImport item) => !item.isHiddenFromFrontend).toList();
     final doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
     final settings = await _settingsRepository.getSettings();
     final therapeuticAdvice = await _therapeuticAdviceRepository.getByFiscalCode(widget.fiscalCode);
@@ -91,6 +95,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       bookings: bookings,
       prescriptions: prescriptions,
       imports: imports,
+      allImports: allImports,
       settings: settings,
       resolvedDoctorName: doctorName,
       therapeuticAdvice: therapeuticAdvice,
@@ -1126,6 +1131,7 @@ class _PatientDetailData {
   final List<Booking> bookings;
   final List<Prescription> prescriptions;
   final List<DrivePdfImport> imports;
+  final List<DrivePdfImport> allImports;
   final AppSettings settings;
   final String resolvedDoctorName;
   final TherapeuticAdviceNote? therapeuticAdvice;
@@ -1137,6 +1143,7 @@ class _PatientDetailData {
     required this.bookings,
     required this.prescriptions,
     required this.imports,
+    required this.allImports,
     required this.settings,
     required this.resolvedDoctorName,
     required this.therapeuticAdvice,
@@ -1151,8 +1158,9 @@ class _PatientDetailData {
     }
     return PhboxContractUtils.resolveRecipeCount(
       patient: currentPatient,
+      allImports: allImports,
       visibleImports: imports,
-      legacyPrescriptions: imports.isNotEmpty ? const <Prescription>[] : prescriptions,
+      legacyPrescriptions: prescriptions,
     );
   }
 
@@ -1164,8 +1172,9 @@ class _PatientDetailData {
     }
     return PhboxContractUtils.resolveHasDpc(
       patient: currentPatient,
+      allImports: allImports,
       visibleImports: imports,
-      legacyPrescriptions: imports.isNotEmpty ? const <Prescription>[] : prescriptions,
+      legacyPrescriptions: prescriptions,
     );
   }
 
@@ -1176,8 +1185,9 @@ class _PatientDetailData {
     }
     return PhboxContractUtils.resolveLastPrescriptionDate(
       patient: currentPatient,
+      allImports: allImports,
       visibleImports: imports,
-      legacyPrescriptions: imports.isNotEmpty ? const <Prescription>[] : prescriptions,
+      legacyPrescriptions: prescriptions,
     );
   }
 
@@ -1188,6 +1198,7 @@ class _PatientDetailData {
     }
     return PhboxContractUtils.resolveTherapiesSummary(
       patient: currentPatient,
+      allImports: allImports,
       visibleImports: imports,
       prescriptions: prescriptions,
     );

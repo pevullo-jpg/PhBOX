@@ -7,22 +7,35 @@ import '../../data/models/prescription_item.dart';
 class PhboxContractUtils {
   const PhboxContractUtils._();
 
-  static List<DrivePdfImport> visibleImportsForPatient({
+  static List<DrivePdfImport> allImportsForPatient({
     required Patient patient,
     required List<DrivePdfImport> imports,
   }) {
     final String normalizedFiscalCode = patient.fiscalCode.trim().toUpperCase();
     final String normalizedFullName = patient.fullName.trim().toUpperCase();
     final List<DrivePdfImport> matches = imports.where((DrivePdfImport item) {
-      if (item.isHiddenFromFrontend) {
-        return false;
-      }
       final String importFiscalCode = item.patientFiscalCode.trim().toUpperCase();
       final String importFullName = item.patientFullName.trim().toUpperCase();
       if (importFiscalCode.isNotEmpty) {
         return importFiscalCode == normalizedFiscalCode;
       }
       return normalizedFullName.isNotEmpty && importFullName == normalizedFullName;
+    }).toList();
+    matches.sort((DrivePdfImport a, DrivePdfImport b) {
+      return b.chronologyDate.compareTo(a.chronologyDate);
+    });
+    return matches;
+  }
+
+  static List<DrivePdfImport> visibleImportsForPatient({
+    required Patient patient,
+    required List<DrivePdfImport> imports,
+  }) {
+    final List<DrivePdfImport> matches = allImportsForPatient(
+      patient: patient,
+      imports: imports,
+    ).where((DrivePdfImport item) {
+      return !item.isHiddenFromFrontend;
     }).toList();
     matches.sort((DrivePdfImport a, DrivePdfImport b) {
       return b.chronologyDate.compareTo(a.chronologyDate);
@@ -165,10 +178,11 @@ class PhboxContractUtils {
 
   static int resolveRecipeCount({
     required Patient patient,
+    required List<DrivePdfImport> allImports,
     required List<DrivePdfImport> visibleImports,
     required List<Prescription> legacyPrescriptions,
   }) {
-    if (visibleImports.isNotEmpty) {
+    if (allImports.isNotEmpty) {
       return visibleImports.fold<int>(0, (int sum, DrivePdfImport item) {
         return sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1);
       });
@@ -185,10 +199,11 @@ class PhboxContractUtils {
 
   static bool resolveHasDpc({
     required Patient patient,
+    required List<DrivePdfImport> allImports,
     required List<DrivePdfImport> visibleImports,
     required List<Prescription> legacyPrescriptions,
   }) {
-    if (visibleImports.isNotEmpty) {
+    if (allImports.isNotEmpty) {
       return visibleImports.any((DrivePdfImport item) => item.isDpc);
     }
     if (patient.hasHasDpcAggregate) {
@@ -199,10 +214,11 @@ class PhboxContractUtils {
 
   static DateTime? resolveLastPrescriptionDate({
     required Patient patient,
+    required List<DrivePdfImport> allImports,
     required List<DrivePdfImport> visibleImports,
     required List<Prescription> legacyPrescriptions,
   }) {
-    if (visibleImports.isNotEmpty) {
+    if (allImports.isNotEmpty) {
       DateTime? value;
       for (final DrivePdfImport item in visibleImports) {
         final DateTime candidate = item.prescriptionDate ?? item.createdAt;
@@ -228,10 +244,11 @@ class PhboxContractUtils {
 
   static List<String> resolveTherapiesSummary({
     required Patient patient,
+    required List<DrivePdfImport> allImports,
     required List<DrivePdfImport> visibleImports,
     required List<Prescription> prescriptions,
   }) {
-    if (visibleImports.isNotEmpty) {
+    if (allImports.isNotEmpty) {
       final Set<String> importValues = <String>{};
       for (final DrivePdfImport item in visibleImports) {
         for (final String therapy in item.therapy) {
