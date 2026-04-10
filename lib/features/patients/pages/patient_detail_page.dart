@@ -1,13 +1,11 @@
-import 'dart:math' as math;
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/utils/prescription_expiry_utils.dart';
 import '../../../core/utils/patient_identity_utils.dart';
 import '../../../core/utils/phbox_contract_utils.dart';
-import '../../../core/utils/prescription_expiry_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
 import '../../../data/models/app_settings.dart';
@@ -15,17 +13,14 @@ import '../../../data/models/booking.dart';
 import '../../../data/models/debt.dart';
 import '../../../data/models/doctor_patient_link.dart';
 import '../../../data/models/drive_pdf_import.dart';
-import '../../../data/models/family_group.dart';
 import '../../../data/models/patient.dart';
 import '../../../data/models/prescription.dart';
-import '../../../data/models/prescription_item.dart';
 import '../../../data/models/therapeutic_advice_note.dart';
 import '../../../data/repositories/advances_repository.dart';
 import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
 import '../../../data/repositories/doctor_patient_links_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
-import '../../../data/repositories/family_groups_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
@@ -44,17 +39,6 @@ class PatientDetailPage extends StatefulWidget {
 }
 
 class _PatientDetailPageState extends State<PatientDetailPage> {
-  static const List<Color> _familyPalette = <Color>[
-    Color(0xFF2563EB),
-    Color(0xFF059669),
-    Color(0xFFD97706),
-    Color(0xFFDC2626),
-    Color(0xFF7C3AED),
-    Color(0xFF0891B2),
-    Color(0xFF65A30D),
-    Color(0xFFEA580C),
-  ];
-
   late final PatientsRepository _patientsRepository;
   late final AdvancesRepository _advancesRepository;
   late final DebtsRepository _debtsRepository;
@@ -64,7 +48,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   late final SettingsRepository _settingsRepository;
   late final DoctorPatientLinksRepository _doctorPatientLinksRepository;
   late final TherapeuticAdviceRepository _therapeuticAdviceRepository;
-  late final FamilyGroupsRepository _familyGroupsRepository;
 
   Future<_PatientDetailData>? _future;
   String _message = '';
@@ -82,53 +65,29 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     _settingsRepository = SettingsRepository(datasource: datasource);
     _doctorPatientLinksRepository = DoctorPatientLinksRepository(datasource: datasource);
     _therapeuticAdviceRepository = TherapeuticAdviceRepository(datasource: datasource);
-    _familyGroupsRepository = FamilyGroupsRepository(datasource: datasource);
     _future = _load();
   }
 
   Future<_PatientDetailData> _load() async {
-    final Patient? patient = await _patientsRepository.getPatientByFiscalCode(widget.fiscalCode);
-    final List<Advance> advances = await _advancesRepository.getPatientAdvances(widget.fiscalCode);
-    final List<Debt> debts = await _debtsRepository.getPatientDebts(widget.fiscalCode);
-    final List<Booking> bookings = await _bookingsRepository.getPatientBookings(widget.fiscalCode);
-    final List<Prescription> prescriptions = await _prescriptionsRepository.getPatientPrescriptions(widget.fiscalCode);
-    final List<DrivePdfImport> allImports = await _drivePdfImportsRepository.getImportsByPatient(
+    final patient = await _patientsRepository.getPatientByFiscalCode(widget.fiscalCode);
+    final advances = await _advancesRepository.getPatientAdvances(widget.fiscalCode);
+    final debts = await _debtsRepository.getPatientDebts(widget.fiscalCode);
+    final bookings = await _bookingsRepository.getPatientBookings(widget.fiscalCode);
+    final prescriptions = await _prescriptionsRepository.getPatientPrescriptions(widget.fiscalCode);
+    final allImports = await _drivePdfImportsRepository.getImportsByPatient(
       widget.fiscalCode,
       includeHidden: true,
     );
-    final List<DrivePdfImport> imports = allImports.where((DrivePdfImport item) {
-      return !item.isHiddenFromFrontend;
-    }).toList();
-    final List<DoctorPatientLink> doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
-    final AppSettings settings = await _settingsRepository.getSettings();
-    final TherapeuticAdviceNote? therapeuticAdvice = await _therapeuticAdviceRepository.getByFiscalCode(widget.fiscalCode);
-    final List<FamilyGroup> allFamilies = await _familyGroupsRepository.getAllFamilies();
-    final List<Patient> allPatients = patient == null ? const <Patient>[] : await _patientsRepository.getAllPatients();
-
-    final String doctorName = _resolveDoctor(
+    final imports = allImports.where((DrivePdfImport item) => !item.isHiddenFromFrontend).toList();
+    final doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
+    final settings = await _settingsRepository.getSettings();
+    final therapeuticAdvice = await _therapeuticAdviceRepository.getByFiscalCode(widget.fiscalCode);
+    final doctorName = _resolveDoctor(
       patient: patient,
       doctorLinks: doctorLinks,
       prescriptions: prescriptions,
       imports: imports,
     );
-    final _ResolvedFamily family = _resolveFamily(
-      patient: patient,
-      allFamilies: allFamilies,
-      allPatients: allPatients,
-    );
-
-    advances.sort((Advance a, Advance b) => b.updatedAt.compareTo(a.updatedAt));
-    debts.sort((Debt a, Debt b) {
-      final DateTime aDate = a.dueDate ?? a.createdAt;
-      final DateTime bDate = b.dueDate ?? b.createdAt;
-      return bDate.compareTo(aDate);
-    });
-    bookings.sort((Booking a, Booking b) {
-      final DateTime aDate = a.expectedDate ?? a.createdAt;
-      final DateTime bDate = b.expectedDate ?? b.createdAt;
-      return aDate.compareTo(bDate);
-    });
-
     return _PatientDetailData(
       patient: patient,
       advances: advances,
@@ -140,54 +99,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       settings: settings,
       resolvedDoctorName: doctorName,
       therapeuticAdvice: therapeuticAdvice,
-      family: family.group,
-      familyMembers: family.members,
-      familyColor: family.color,
-    );
-  }
-
-  _ResolvedFamily _resolveFamily({
-    required Patient? patient,
-    required List<FamilyGroup> allFamilies,
-    required List<Patient> allPatients,
-  }) {
-    if (patient == null) {
-      return const _ResolvedFamily.empty();
-    }
-    final String normalizedFiscalCode = patient.fiscalCode.trim().toUpperCase();
-    FamilyGroup? family;
-    for (final FamilyGroup current in allFamilies) {
-      if (current.memberFiscalCodes.map((String value) => value.trim().toUpperCase()).contains(normalizedFiscalCode)) {
-        family = current;
-        break;
-      }
-    }
-    if (family == null) {
-      return const _ResolvedFamily.empty();
-    }
-
-    final Map<String, Patient> patientByCf = <String, Patient>{
-      for (final Patient item in allPatients) item.fiscalCode.trim().toUpperCase(): item,
-    };
-    final List<_FamilyMemberData> members = family.memberFiscalCodes.map((String fiscalCode) {
-      final String normalized = fiscalCode.trim().toUpperCase();
-      final Patient? related = patientByCf[normalized];
-      return _FamilyMemberData(
-        fiscalCode: normalized,
-        fullName: related?.fullName ?? '',
-        isCurrent: normalized == normalizedFiscalCode,
-      );
-    }).toList();
-    members.sort((_FamilyMemberData a, _FamilyMemberData b) {
-      if (a.isCurrent && !b.isCurrent) return -1;
-      if (!a.isCurrent && b.isCurrent) return 1;
-      return a.displayName.compareTo(b.displayName);
-    });
-
-    return _ResolvedFamily(
-      group: family,
-      members: members,
-      color: _familyPalette[family.colorIndex % _familyPalette.length],
     );
   }
 
@@ -230,12 +141,12 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   }
 
   Future<void> _editTherapeuticAdvice(_PatientDetailData data) async {
-    final Patient? patient = data.patient;
+    final patient = data.patient;
     if (patient == null) return;
-    final TextEditingController controller = TextEditingController(text: data.therapeuticAdvice?.text ?? '');
+    final controller = TextEditingController(text: data.therapeuticAdvice?.text ?? '');
     final bool? confirmed = await showDialog<bool>(
       context: context,
-      builder: (BuildContext context) => AlertDialog(
+      builder: (context) => AlertDialog(
         backgroundColor: AppColors.panel,
         title: const Text('Consigli terapeutici', style: TextStyle(color: Colors.white)),
         content: SizedBox(
@@ -282,11 +193,11 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   }
 
   Future<void> _clearTherapeuticAdvice(_PatientDetailData data) async {
-    final Patient? patient = data.patient;
+    final patient = data.patient;
     if (patient == null || data.therapeuticAdvice == null) return;
     final bool? confirmed = await showDialog<bool>(
       context: context,
-      builder: (BuildContext context) => AlertDialog(
+      builder: (context) => AlertDialog(
         backgroundColor: AppColors.panel,
         title: const Text('Rimuovi consigli terapeutici', style: TextStyle(color: Colors.white)),
         content: const Text(
@@ -321,7 +232,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   }) async {
     await showDialog<void>(
       context: context,
-      builder: (BuildContext context) => Dialog(
+      builder: (context) => Dialog(
         backgroundColor: AppColors.panel,
         child: SizedBox(
           width: 820,
@@ -334,10 +245,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                 Row(
                   children: [
                     Expanded(
-                      child: Text(
-                        title,
-                        style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900),
-                      ),
+                      child: Text(title, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
                     ),
                     if (action != null) action,
                   ],
@@ -358,376 +266,293 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   }
 
   Future<void> _managePrescriptions(_PatientDetailData data) async {
+    final patient = data.patient;
+    if (patient == null) return;
     await _openManageDialog(
-      title: 'Ricette archivistiche',
-      children: data.prescriptions.map((Prescription prescription) {
-        final DrivePdfImport? matchingImport = _findImportForPrescription(data.imports, prescription.id);
-        return _buildPrescriptionCard(
-          prescription: prescription,
-          importItem: matchingImport,
-          compact: true,
+      title: 'Ricette',
+      children: data.prescriptions.map((prescription) {
+        final matchingImport = _findImportForPrescription(data.imports, prescription.id);
+        final expiryInfo = PrescriptionExpiryUtils.evaluate(prescription.expiryDate);
+        return _managerCard(
+          title: _prescriptionLabel(prescription),
+          subtitle: '${_formatDate(prescription.prescriptionDate)} · ${prescription.doctorName ?? '-'} · ${expiryInfo.label}',
+          actions: [
+            if (matchingImport != null)
+              TextButton.icon(
+                onPressed: () => _openPdf(matchingImport),
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('PDF'),
+              ),
+            if (matchingImport != null)
+              IconButton(
+                onPressed: () => _requestPrescriptionDelete(matchingImport),
+                icon: const Icon(Icons.delete_outline, color: AppColors.red),
+              ),
+          ],
+          extra: [
+            _detailLine('Esenzione', (prescription.exemptionCode ?? '-').trim().isEmpty ? '-' : prescription.exemptionCode!.trim()),
+            _detailLine('DPC', prescription.dpcFlag ? 'SI' : 'NO'),
+            _detailLine('Terapie', _prescriptionLabel(prescription)),
+          ],
         );
       }).toList(),
     );
   }
 
   Future<void> _manageDebts(_PatientDetailData data) async {
-    final Patient? patient = data.patient;
+    final patient = data.patient;
     if (patient == null) return;
     await _openManageDialog(
       title: 'Debiti',
       action: FilledButton.icon(
         onPressed: () {
           Navigator.of(context).pop();
-          _addOrEditDebt(patient);
+          _addDebt(patient);
         },
         icon: const Icon(Icons.add),
         label: const Text('Aggiungi'),
       ),
-      children: data.debts.map((Debt debt) {
+      children: data.debts.map((debt) {
         return _managerCard(
           title: '${debt.description} · € ${debt.residualAmount.toStringAsFixed(2)}',
           subtitle: 'Creazione ${_formatDate(debt.createdAt)} · Scadenza ${_formatDate(debt.dueDate)}',
           actions: [
             IconButton(
-              tooltip: 'Modifica',
-              onPressed: () {
-                Navigator.of(context).pop();
-                _addOrEditDebt(patient, initial: debt);
-              },
-              icon: const Icon(Icons.edit_outlined, color: Colors.white70),
-            ),
-            IconButton(
-              tooltip: 'Elimina',
               onPressed: () => _deleteDebt(patient, debt),
               icon: const Icon(Icons.delete_outline, color: AppColors.red),
             ),
           ],
-          extra: [
-            _detailLine('Importo totale', '€ ${debt.amount.toStringAsFixed(2)}'),
-            _detailLine('Pagato', '€ ${debt.paidAmount.toStringAsFixed(2)}'),
-            _detailLine('Stato', _humanDebtStatus(debt.status, debt.residualAmount)),
-            if ((debt.note ?? '').trim().isNotEmpty) _detailLine('Nota', debt.note!.trim()),
-          ],
+          extra: [if ((debt.note ?? '').trim().isNotEmpty) _detailLine('Nota', debt.note!.trim())],
         );
       }).toList(),
     );
   }
 
   Future<void> _manageAdvances(_PatientDetailData data) async {
-    final Patient? patient = data.patient;
+    final patient = data.patient;
     if (patient == null) return;
     await _openManageDialog(
       title: 'Anticipi',
       action: FilledButton.icon(
         onPressed: () {
           Navigator.of(context).pop();
-          _addOrEditAdvance(data);
+          _addAdvance(data);
         },
         icon: const Icon(Icons.add),
         label: const Text('Aggiungi'),
       ),
-      children: data.advances.map((Advance advance) {
+      children: data.advances.map((advance) {
         return _managerCard(
           title: advance.drugName,
           subtitle: '${advance.doctorName.isEmpty ? '-' : advance.doctorName} · ${_formatDate(advance.createdAt)}',
           actions: [
             IconButton(
-              tooltip: 'Modifica',
-              onPressed: () {
-                Navigator.of(context).pop();
-                _addOrEditAdvance(data, initial: advance);
-              },
-              icon: const Icon(Icons.edit_outlined, color: Colors.white70),
-            ),
-            IconButton(
-              tooltip: 'Elimina',
               onPressed: () => _deleteAdvance(patient, advance),
               icon: const Icon(Icons.delete_outline, color: AppColors.red),
             ),
           ],
-          extra: [
-            _detailLine('Stato', _humanAdvanceStatus(advance.status)),
-            if (advance.matchedTherapyFlag) _detailLine('Terapia', 'Collegato a terapia nota'),
-            if ((advance.note ?? '').trim().isNotEmpty) _detailLine('Nota', advance.note!.trim()),
-          ],
+          extra: [if ((advance.note ?? '').trim().isNotEmpty) _detailLine('Nota', advance.note!.trim())],
         );
       }).toList(),
     );
   }
 
   Future<void> _manageBookings(_PatientDetailData data) async {
-    final Patient? patient = data.patient;
+    final patient = data.patient;
     if (patient == null) return;
     await _openManageDialog(
       title: 'Prenotazioni',
       action: FilledButton.icon(
         onPressed: () {
           Navigator.of(context).pop();
-          _addOrEditBooking(patient);
+          _addBooking(patient);
         },
         icon: const Icon(Icons.add),
         label: const Text('Aggiungi'),
       ),
-      children: data.bookings.map((Booking booking) {
+      children: data.bookings.map((booking) {
         return _managerCard(
           title: '${booking.drugName} x${booking.quantity}',
           subtitle: 'Registrata ${_formatDate(booking.createdAt)} · Prevista ${_formatDate(booking.expectedDate)}',
           actions: [
             IconButton(
-              tooltip: 'Modifica',
-              onPressed: () {
-                Navigator.of(context).pop();
-                _addOrEditBooking(patient, initial: booking);
-              },
-              icon: const Icon(Icons.edit_outlined, color: Colors.white70),
-            ),
-            IconButton(
-              tooltip: 'Elimina',
               onPressed: () => _deleteBooking(patient, booking),
               icon: const Icon(Icons.delete_outline, color: AppColors.red),
             ),
           ],
-          extra: [
-            _detailLine('Stato', _humanBookingStatus(booking.status)),
-            if ((booking.note ?? '').trim().isNotEmpty) _detailLine('Nota', booking.note!.trim()),
-          ],
+          extra: [if ((booking.note ?? '').trim().isNotEmpty) _detailLine('Nota', booking.note!.trim())],
         );
       }).toList(),
     );
   }
 
-  Future<void> _addOrEditDebt(Patient patient, {Debt? initial}) async {
-    final TextEditingController descriptionController = TextEditingController(text: initial?.description ?? '');
-    final TextEditingController amountController = TextEditingController(
-      text: initial == null ? '' : initial.amount.toStringAsFixed(2).replaceAll('.', ','),
-    );
-    final TextEditingController paidController = TextEditingController(
-      text: initial == null ? '0' : initial.paidAmount.toStringAsFixed(2).replaceAll('.', ','),
-    );
-    final TextEditingController dueDateController = TextEditingController(
-      text: _formatDate(initial?.dueDate),
-    );
-    final TextEditingController noteController = TextEditingController(text: initial?.note ?? '');
-
-    final bool? confirmed = await showDialog<bool>(
+  Future<void> _addDebt(Patient patient) async {
+    final descriptionController = TextEditingController();
+    final amountController = TextEditingController();
+    final noteController = TextEditingController();
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (BuildContext context) => AlertDialog(
+      builder: (context) => AlertDialog(
         backgroundColor: AppColors.panel,
-        title: Text(initial == null ? 'Nuovo debito' : 'Modifica debito', style: const TextStyle(color: Colors.white)),
+        title: const Text('Nuovo debito', style: TextStyle(color: Colors.white)),
         content: SizedBox(
-          width: 460,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _dialogField(descriptionController, 'Causale'),
-                const SizedBox(height: 12),
-                _dialogField(
-                  amountController,
-                  'Importo totale (€)',
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
-                ),
-                const SizedBox(height: 12),
-                _dialogField(
-                  paidController,
-                  'Pagato (€)',
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
-                ),
-                const SizedBox(height: 12),
-                _dialogField(
-                  dueDateController,
-                  'Scadenza (gg/mm/aaaa)',
-                  keyboardType: TextInputType.datetime,
-                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9/]'))],
-                ),
-                const SizedBox(height: 12),
-                _dialogField(noteController, 'Nota', maxLines: 3),
-              ],
-            ),
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _dialogField(descriptionController, 'Causale'),
+              const SizedBox(height: 12),
+              _dialogField(
+                amountController,
+                'Importo (€)',
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Data inserimento: ${_formatDate(DateTime.now())}', style: const TextStyle(color: Colors.white70)),
+              ),
+              const SizedBox(height: 12),
+              _dialogField(noteController, 'Nota', maxLines: 3),
+            ],
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Salva'),
-          ),
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Annulla', style: TextStyle(color: Colors.white70))),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Salva')),
         ],
       ),
     );
-
-    if (confirmed != true) {
-      descriptionController.dispose();
-      amountController.dispose();
-      paidController.dispose();
-      dueDateController.dispose();
-      noteController.dispose();
-      return;
-    }
-
+    if (confirmed != true) return;
     try {
-      final double amount = _parseEuro(amountController.text);
-      final double paid = _parseEuro(paidController.text);
-      final DateTime? dueDate = _parseItalianDate(dueDateController.text);
+      final amount = _parseEuro(amountController.text);
       if (descriptionController.text.trim().isEmpty || amount <= 0) {
-        throw Exception('Causale e importo totale sono obbligatori.');
+        throw Exception('Causale e importo sono obbligatori.');
       }
-      if (paid < 0 || paid > amount) {
-        throw Exception('Il pagato deve essere compreso tra 0 e importo totale.');
-      }
-      final double residual = math.max(0, amount - paid);
-      final DateTime now = DateTime.now();
-      final Debt debt = Debt(
-        id: initial?.id ?? _localId('debt'),
-        patientFiscalCode: patient.fiscalCode,
-        patientName: patient.fullName,
-        description: descriptionController.text.trim(),
-        amount: amount,
-        paidAmount: paid,
-        residualAmount: residual,
-        createdAt: initial?.createdAt ?? now,
-        dueDate: dueDate,
-        status: residual <= 0 ? 'closed' : 'open',
-        note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
+      final now = DateTime.now();
+      await _debtsRepository.saveDebt(
+        Debt(
+          id: _localId('debt'),
+          patientFiscalCode: patient.fiscalCode,
+          patientName: patient.fullName,
+          description: descriptionController.text.trim(),
+          amount: amount,
+          paidAmount: 0,
+          residualAmount: amount,
+          createdAt: now,
+          dueDate: now,
+          note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
+        ),
       );
-      await _debtsRepository.saveDebt(debt);
-      _refresh(initial == null ? 'Debito aggiunto.' : 'Debito aggiornato.');
+      _refresh('Debito aggiunto.');
     } catch (e) {
       setState(() => _message = 'Errore salvataggio debito: $e');
     } finally {
       descriptionController.dispose();
       amountController.dispose();
-      paidController.dispose();
-      dueDateController.dispose();
       noteController.dispose();
     }
   }
 
-  Future<void> _addOrEditAdvance(_PatientDetailData data, {Advance? initial}) async {
-    final Patient? patient = data.patient;
+  Future<void> _addAdvance(_PatientDetailData data) async {
+    final patient = data.patient;
     if (patient == null) return;
-    final TextEditingController drugController = TextEditingController(text: initial?.drugName ?? '');
-    final TextEditingController doctorController = TextEditingController(
-      text: initial?.doctorName ?? _fallbackDoctorFromHistory(data),
-    );
-    final TextEditingController noteController = TextEditingController(text: initial?.note ?? '');
-
-    final List<String> doctorCandidates = <String>{
-      ...data.settings.doctorsCatalog.map((String item) => item.trim()).where((String item) => item.isNotEmpty),
-      if (_fallbackDoctorFromHistory(data).trim().isNotEmpty && _fallbackDoctorFromHistory(data).trim() != '-')
-        _fallbackDoctorFromHistory(data).trim(),
-      if ((initial?.doctorName ?? '').trim().isNotEmpty) initial!.doctorName.trim(),
+    final drugController = TextEditingController();
+    final noteController = TextEditingController();
+    String selectedDoctor = data.resolvedDoctorName != '-' ? data.resolvedDoctorName : _fallbackDoctorFromHistory(data);
+    final doctorCandidates = <String>{
+      ...data.settings.doctorsCatalog.map((item) => item.trim()).where((item) => item.isNotEmpty),
+      if (selectedDoctor.trim().isNotEmpty && selectedDoctor.trim() != '-') selectedDoctor.trim(),
     }.toList()
       ..sort();
-
-    final bool? confirmed = await showDialog<bool>(
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (BuildContext context) {
+      builder: (context) {
         return StatefulBuilder(
-          builder: (BuildContext context, void Function(void Function()) setLocalState) {
+          builder: (context, setLocalState) {
             return AlertDialog(
               backgroundColor: AppColors.panel,
-              title: Text(initial == null ? 'Nuovo anticipo' : 'Modifica anticipo', style: const TextStyle(color: Colors.white)),
+              title: const Text('Nuovo anticipo', style: TextStyle(color: Colors.white)),
               content: SizedBox(
-                width: 520,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _dialogField(drugController, 'Farmaco / articolo'),
-                      const SizedBox(height: 12),
-                      _dialogField(doctorController, 'Medico'),
-                      if (doctorCandidates.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: doctorCandidates.map((String value) {
-                            final bool selected = doctorController.text.trim() == value;
-                            return ChoiceChip(
-                              selected: selected,
-                              label: Text(value),
-                              selectedColor: AppColors.yellow.withOpacity(0.22),
-                              backgroundColor: AppColors.panelSoft,
-                              labelStyle: TextStyle(color: selected ? AppColors.yellow : Colors.white70),
-                              onSelected: (_) {
-                                setLocalState(() {
-                                  doctorController.text = value;
-                                });
-                              },
-                            );
-                          }).toList(),
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _dialogField(drugController, 'Farmaco / articolo'),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: selectedDoctor == '-' || selectedDoctor.isEmpty ? null : selectedDoctor,
+                      dropdownColor: AppColors.panelSoft,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        labelText: 'Medico',
+                        hintText: 'Seleziona medico',
+                        hintStyle: const TextStyle(color: Colors.white54),
+                        labelStyle: const TextStyle(color: Colors.white70),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: const BorderSide(color: Colors.white24),
                         ),
-                      ],
-                      const SizedBox(height: 12),
-                      _dialogField(noteController, 'Nota', maxLines: 3),
-                    ],
-                  ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: const BorderSide(color: Colors.white70),
+                        ),
+                      ),
+                      items: doctorCandidates
+                          .map((item) => DropdownMenuItem<String>(value: item, child: Text(item)))
+                          .toList(),
+                      onChanged: (value) => setLocalState(() => selectedDoctor = value ?? ''),
+                    ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Data registrazione: ${_formatDate(DateTime.now())}', style: const TextStyle(color: Colors.white70)),
+                    ),
+                    const SizedBox(height: 12),
+                    _dialogField(noteController, 'Nota', maxLines: 3),
+                  ],
                 ),
               ),
               actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('Salva'),
-                ),
+                TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Annulla', style: TextStyle(color: Colors.white70))),
+                FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Salva')),
               ],
             );
           },
         );
       },
     );
-
-    if (confirmed != true) {
-      drugController.dispose();
-      doctorController.dispose();
-      noteController.dispose();
-      return;
-    }
-
+    if (confirmed != true) return;
     try {
-      final String drugName = drugController.text.trim();
-      final String doctor = doctorController.text.trim();
-      if (drugName.isEmpty || doctor.isEmpty || doctor == '-') {
+      final doctor = selectedDoctor.trim();
+      if (drugController.text.trim().isEmpty || doctor.isEmpty || doctor == '-') {
         throw Exception('Farmaco e medico sono obbligatori.');
       }
-      final DateTime now = DateTime.now();
-      final Advance advance = Advance(
-        id: initial?.id ?? _localId('advance'),
-        patientFiscalCode: patient.fiscalCode,
-        patientName: patient.fullName,
-        drugName: drugName,
-        doctorName: doctor,
-        note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
-        matchedTherapyFlag: initial?.matchedTherapyFlag ?? false,
-        matchedPrescriptionId: initial?.matchedPrescriptionId,
-        status: ((initial?.status ?? 'open').trim().isEmpty ? 'open' : (initial?.status ?? 'open')), 
-        createdAt: initial?.createdAt ?? now,
-        updatedAt: now,
+      final now = DateTime.now();
+      await _advancesRepository.saveAdvance(
+        Advance(
+          id: _localId('advance'),
+          patientFiscalCode: patient.fiscalCode,
+          patientName: patient.fullName,
+          drugName: drugController.text.trim(),
+          doctorName: doctor,
+          note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
+          createdAt: now,
+          updatedAt: now,
+        ),
       );
-      await _advancesRepository.saveAdvance(advance);
       await _doctorPatientLinksRepository.saveManualOverride(
         patientFiscalCode: patient.fiscalCode,
         patientFullName: patient.fullName,
         doctorFullName: doctor,
         city: patient.city,
       );
-      _refresh(initial == null ? 'Anticipo aggiunto.' : 'Anticipo aggiornato.');
+      _refresh('Anticipo aggiunto.');
     } catch (e) {
       setState(() => _message = 'Errore salvataggio anticipo: $e');
     } finally {
       drugController.dispose();
-      doctorController.dispose();
       noteController.dispose();
     }
   }
@@ -736,138 +561,73 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     if (data.resolvedDoctorName != '-' && data.resolvedDoctorName.trim().isNotEmpty) {
       return data.resolvedDoctorName.trim();
     }
-    for (final Advance advance in data.advances) {
+    for (final advance in data.advances) {
       if (advance.doctorName.trim().isNotEmpty) return advance.doctorName.trim();
     }
-    for (final Prescription prescription in data.prescriptions) {
-      if ((prescription.doctorName ?? '').trim().isNotEmpty) {
-        return prescription.doctorName!.trim();
-      }
+    for (final prescription in data.prescriptions) {
+      if ((prescription.doctorName ?? '').trim().isNotEmpty) return prescription.doctorName!.trim();
     }
     return '-';
   }
 
-  Future<void> _addOrEditBooking(Patient patient, {Booking? initial}) async {
-    final TextEditingController drugController = TextEditingController(text: initial?.drugName ?? '');
-    final TextEditingController quantityController = TextEditingController(text: '${initial?.quantity ?? 1}');
-    final TextEditingController expectedDateController = TextEditingController(text: _formatDate(initial?.expectedDate));
-    final TextEditingController noteController = TextEditingController(text: initial?.note ?? '');
-    final List<String> statuses = const <String>['open', 'ordered', 'ready', 'closed'];
-    String selectedStatus = statuses.contains(initial?.status) ? initial!.status : 'open';
-
-    final bool? confirmed = await showDialog<bool>(
+  Future<void> _addBooking(Patient patient) async {
+    final drugController = TextEditingController();
+    final quantityController = TextEditingController(text: '1');
+    final noteController = TextEditingController();
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (BuildContext context, void Function(void Function()) setLocalState) {
-            return AlertDialog(
-              backgroundColor: AppColors.panel,
-              title: Text(initial == null ? 'Nuova prenotazione' : 'Modifica prenotazione', style: const TextStyle(color: Colors.white)),
-              content: SizedBox(
-                width: 460,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _dialogField(drugController, 'Farmaco / articolo'),
-                      const SizedBox(height: 12),
-                      _dialogField(
-                        quantityController,
-                        'Quantità',
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      ),
-                      const SizedBox(height: 12),
-                      _dialogField(
-                        expectedDateController,
-                        'Data prevista (gg/mm/aaaa)',
-                        keyboardType: TextInputType.datetime,
-                        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9/]'))],
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: selectedStatus,
-                        dropdownColor: AppColors.panelSoft,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: InputDecoration(
-                          labelText: 'Stato',
-                          labelStyle: const TextStyle(color: Colors.white70),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(14),
-                            borderSide: const BorderSide(color: Colors.white24),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(14),
-                            borderSide: const BorderSide(color: Colors.white70),
-                          ),
-                        ),
-                        items: statuses
-                            .map((String item) => DropdownMenuItem<String>(
-                                  value: item,
-                                  child: Text(_humanBookingStatus(item)),
-                                ))
-                            .toList(),
-                        onChanged: (String? value) {
-                          setLocalState(() {
-                            selectedStatus = value ?? 'open';
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      _dialogField(noteController, 'Nota', maxLines: 3),
-                    ],
-                  ),
-                ),
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.panel,
+        title: const Text('Nuova prenotazione', style: TextStyle(color: Colors.white)),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _dialogField(drugController, 'Farmaco / articolo'),
+              const SizedBox(height: 12),
+              _dialogField(
+                quantityController,
+                'Quantità',
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('Salva'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Data prevista: ${_formatDate(DateTime.now())}', style: const TextStyle(color: Colors.white70)),
+              ),
+              const SizedBox(height: 12),
+              _dialogField(noteController, 'Nota', maxLines: 3),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Annulla', style: TextStyle(color: Colors.white70))),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Salva')),
+        ],
+      ),
     );
-
-    if (confirmed != true) {
-      drugController.dispose();
-      quantityController.dispose();
-      expectedDateController.dispose();
-      noteController.dispose();
-      return;
-    }
-
+    if (confirmed != true) return;
     try {
-      final int quantity = int.tryParse(quantityController.text.trim()) ?? 0;
-      if (drugController.text.trim().isEmpty || quantity <= 0) {
-        throw Exception('Farmaco e quantità sono obbligatori.');
-      }
       await _bookingsRepository.saveBooking(
         Booking(
-          id: initial?.id ?? _localId('booking'),
+          id: _localId('booking'),
           patientFiscalCode: patient.fiscalCode,
           patientName: patient.fullName,
           drugName: drugController.text.trim(),
-          quantity: quantity,
+          quantity: int.tryParse(quantityController.text.trim()) ?? 1,
+          createdAt: DateTime.now(),
+          expectedDate: DateTime.now(),
           note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
-          createdAt: initial?.createdAt ?? DateTime.now(),
-          expectedDate: _parseItalianDate(expectedDateController.text),
-          status: selectedStatus,
         ),
       );
-      _refresh(initial == null ? 'Prenotazione aggiunta.' : 'Prenotazione aggiornata.');
+      _refresh('Prenotazione aggiunta.');
     } catch (e) {
       setState(() => _message = 'Errore salvataggio prenotazione: $e');
     } finally {
       drugController.dispose();
       quantityController.dispose();
-      expectedDateController.dispose();
       noteController.dispose();
     }
   }
@@ -897,17 +657,14 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   }
 
   Future<bool> _confirmDelete(String text) async {
-    final bool? value = await showDialog<bool>(
+    final value = await showDialog<bool>(
       context: context,
-      builder: (BuildContext context) => AlertDialog(
+      builder: (context) => AlertDialog(
         backgroundColor: AppColors.panel,
         title: const Text('Conferma', style: TextStyle(color: Colors.white)),
         content: Text(text, style: const TextStyle(color: Colors.white70)),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
-          ),
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Annulla', style: TextStyle(color: Colors.white70))),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AppColors.red),
             onPressed: () => Navigator.of(context).pop(true),
@@ -919,23 +676,14 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     return value == true;
   }
 
-  void _openFamilyMember(_FamilyMemberData member) {
-    if (member.isCurrent) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(
-        builder: (_) => PatientDetailPage(fiscalCode: member.fiscalCode),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Stack(
       children: [
         FutureBuilder<_PatientDetailData>(
           future: _future,
-          builder: (BuildContext context, AsyncSnapshot<_PatientDetailData> snapshot) {
-            final _PatientDetailData? data = snapshot.data;
+          builder: (context, snapshot) {
+            final data = snapshot.data;
             return Scaffold(
               backgroundColor: AppColors.background,
               appBar: AppBar(
@@ -946,16 +694,9 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               body: snapshot.connectionState == ConnectionState.waiting
                   ? const Center(child: CircularProgressIndicator())
                   : snapshot.hasError
-                      ? Center(
-                          child: Text(
-                            'Errore caricamento: ${snapshot.error}',
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                        )
+                      ? Center(child: Text('Errore caricamento: ${snapshot.error}', style: const TextStyle(color: Colors.white)))
                       : data == null || data.patient == null
-                          ? const Center(
-                              child: Text('Assistito non trovato.', style: TextStyle(color: Colors.white)),
-                            )
+                          ? const Center(child: Text('Assistito non trovato.', style: TextStyle(color: Colors.white)))
                           : SingleChildScrollView(
                               padding: const EdgeInsets.all(20),
                               child: Column(
@@ -964,10 +705,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                   _buildHeader(data),
                                   if (_message.isNotEmpty) ...[
                                     const SizedBox(height: 12),
-                                    Text(
-                                      _message,
-                                      style: const TextStyle(color: AppColors.green, fontWeight: FontWeight.w700),
-                                    ),
+                                    Text(_message, style: const TextStyle(color: AppColors.green, fontWeight: FontWeight.w700)),
                                   ],
                                   const SizedBox(height: 18),
                                   Wrap(
@@ -977,14 +715,14 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                       _summaryCard(
                                         label: 'Ricette',
                                         value: '${data.totalRecipeCount}',
-                                        subtitle: data.recipeDocumentSubtitle,
+                                        subtitle: '${data.prescriptions.length} documenti',
                                         color: AppColors.green,
                                         onTap: () => _managePrescriptions(data),
                                       ),
                                       _summaryCard(
                                         label: 'DPC',
                                         value: data.hasDpc ? 'SI' : 'NO',
-                                        subtitle: 'flag archivio attivo',
+                                        subtitle: 'flag ricette',
                                         color: AppColors.coral,
                                         onTap: () => _managePrescriptions(data),
                                       ),
@@ -1012,19 +750,129 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                     ],
                                   ),
                                   const SizedBox(height: 18),
-                                  _buildRecipesSection(data),
+                                  _section(
+                                    title: 'Consigli terapeutici',
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        if ((data.therapeuticAdvice?.text.trim() ?? '').isEmpty)
+                                          const Text(
+                                            'Nessun consiglio terapeutico registrato.',
+                                            style: TextStyle(color: Colors.white70),
+                                          )
+                                        else
+                                          Container(
+                                            width: double.infinity,
+                                            padding: const EdgeInsets.all(16),
+                                            decoration: BoxDecoration(
+                                              color: AppColors.panelSoft,
+                                              borderRadius: BorderRadius.circular(16),
+                                              border: Border.all(color: Colors.white10),
+                                            ),
+                                            child: Text(
+                                              data.therapeuticAdvice!.text,
+                                              style: const TextStyle(color: Colors.white, height: 1.45),
+                                            ),
+                                          ),
+                                        const SizedBox(height: 14),
+                                        Wrap(
+                                          spacing: 10,
+                                          runSpacing: 10,
+                                          children: [
+                                            FilledButton.icon(
+                                              onPressed: () => _editTherapeuticAdvice(data),
+                                              icon: Icon(data.therapeuticAdvice == null ? Icons.add_comment_outlined : Icons.edit_outlined),
+                                              label: Text(data.therapeuticAdvice == null ? 'Aggiungi' : 'Modifica'),
+                                            ),
+                                            if (data.therapeuticAdvice != null)
+                                              TextButton.icon(
+                                                onPressed: () => _clearTherapeuticAdvice(data),
+                                                icon: const Icon(Icons.delete_outline, color: AppColors.red),
+                                                label: const Text('Svuota', style: TextStyle(color: AppColors.red)),
+                                              ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                   const SizedBox(height: 18),
-                                  _buildDebtsSection(data),
+                                  _section(
+                                    title: 'Terapie riepilogative',
+                                    child: data.therapiesSummary.isEmpty
+                                        ? const Text('Nessuna terapia disponibile.', style: TextStyle(color: Colors.white70))
+                                        : Wrap(
+                                            spacing: 10,
+                                            runSpacing: 10,
+                                            children: data.therapiesSummary
+                                                .map((item) => Container(
+                                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                                      decoration: BoxDecoration(
+                                                        color: AppColors.panelSoft,
+                                                        borderRadius: BorderRadius.circular(14),
+                                                      ),
+                                                      child: Text(item, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                                                    ))
+                                                .toList(),
+                                          ),
+                                  ),
                                   const SizedBox(height: 18),
-                                  _buildAdvancesSection(data),
-                                  const SizedBox(height: 18),
-                                  _buildBookingsSection(data),
-                                  const SizedBox(height: 18),
-                                  _buildFamilySection(data),
-                                  const SizedBox(height: 18),
-                                  _buildTherapeuticAdviceSection(data),
-                                  const SizedBox(height: 18),
-                                  _buildTherapiesSection(data),
+                                  _section(
+                                    title: 'Dettaglio ricette',
+                                    child: data.prescriptions.isEmpty
+                                        ? const Text('Nessuna ricetta registrata.', style: TextStyle(color: Colors.white70))
+                                        : Column(
+                                            children: data.prescriptions.map((prescription) {
+                                              final matchingImport = _findImportForPrescription(data.imports, prescription.id);
+                                              final expiryInfo = PrescriptionExpiryUtils.evaluate(prescription.expiryDate);
+                                              return Container(
+                                                width: double.infinity,
+                                                margin: const EdgeInsets.only(bottom: 12),
+                                                padding: const EdgeInsets.all(16),
+                                                decoration: BoxDecoration(
+                                                  color: AppColors.panelSoft,
+                                                  borderRadius: BorderRadius.circular(18),
+                                                  border: Border.all(color: Colors.white10),
+                                                ),
+                                                child: Column(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Row(
+                                                      children: [
+                                                        Expanded(
+                                                          child: Text(
+                                                            _prescriptionLabel(prescription),
+                                                            style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
+                                                          ),
+                                                        ),
+                                                        if (matchingImport != null)
+                                                          TextButton.icon(
+                                                            onPressed: () => _openPdf(matchingImport),
+                                                            icon: const Icon(Icons.open_in_new),
+                                                            label: const Text('PDF'),
+                                                          ),
+                                                      ],
+                                                    ),
+                                                    const SizedBox(height: 8),
+                                                    Wrap(
+                                                      spacing: 8,
+                                                      runSpacing: 8,
+                                                      children: [
+                                                        _pill(expiryInfo.label, expiryInfo.color),
+                                                        _pill(prescription.dpcFlag ? 'DPC' : 'NO DPC', prescription.dpcFlag ? AppColors.coral : AppColors.green),
+                                                        _pill('${prescription.prescriptionCount} ricetta/e', AppColors.yellow),
+                                                      ],
+                                                    ),
+                                                    const SizedBox(height: 10),
+                                                    _detailLine('Data', _formatDate(prescription.prescriptionDate)),
+                                                    _detailLine('Scadenza', _formatDate(prescription.expiryDate)),
+                                                    _detailLine('Medico', (prescription.doctorName ?? '-').trim().isEmpty ? '-' : prescription.doctorName!.trim()),
+                                                    _detailLine('Esenzione', (prescription.exemptionCode ?? '-').trim().isEmpty ? '-' : prescription.exemptionCode!.trim()),
+                                                  ],
+                                                ),
+                                              );
+                                            }).toList(),
+                                          ),
+                                  ),
                                 ],
                               ),
                             ),
@@ -1037,9 +885,9 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
           onBack: () => Navigator.of(context).maybePop(),
           pageIcon: Icons.badge_outlined,
           pageTooltip: 'Scheda assistito',
-          onSelected: (int index) {
+          onSelected: (index) {
             appNavigationIndex.value = index;
-            Navigator.of(context).popUntil((Route<dynamic> route) => route.isFirst);
+            Navigator.of(context).popUntil((route) => route.isFirst);
           },
         ),
       ],
@@ -1047,10 +895,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   }
 
   Widget _buildHeader(_PatientDetailData data) {
-    final Patient patient = data.patient!;
-    final List<String> extraExemptions = data.allExemptions.length > 1
-        ? data.allExemptions.skip(1).toList()
-        : const <String>[];
+    final patient = data.patient!;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -1076,416 +921,13 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
             children: [
               _metaBadge('CF', visiblePatientFiscalCode(patient.fiscalCode)),
               _metaBadge('Medico', data.resolvedDoctorName),
-              _metaBadge('Esenzione primaria', data.primaryExemption),
+              _metaBadge('Esenzione', data.primaryExemption),
               _metaBadge('Città', data.displayCity),
               _metaBadge('Ultima ricetta', _formatDate(data.lastPrescriptionDate)),
             ],
           ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _pill(data.hasDpc ? 'DPC' : 'NO DPC', data.hasDpc ? AppColors.coral : AppColors.green),
-              if (data.hasFamily)
-                _pill('Famiglia: ${data.family!.name}', data.familyColor)
-              else
-                _pill('Senza famiglia', Colors.white54),
-              ...extraExemptions.map((String value) => _pill('Esenzione $value', AppColors.yellow)),
-            ],
-          ),
         ],
       ),
-    );
-  }
-
-  Widget _buildRecipesSection(_PatientDetailData data) {
-    final String emptyText = data.allImports.isNotEmpty
-        ? 'Nessuna ricetta archivistica attiva: tutti i documenti del dominio archivistico risultano già nascosti, richiesti in delete o eliminati.'
-        : 'Nessuna ricetta archivistica attiva.';
-    return _section(
-      title: 'Ricette archivistiche',
-      action: Text(
-        '${data.totalRecipeCount} ricette · ${data.visibleRecipeDocumentsCount} documenti attivi',
-        style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
-      ),
-      child: data.prescriptions.isEmpty
-          ? Text(emptyText, style: const TextStyle(color: Colors.white70))
-          : Column(
-              children: data.prescriptions.map((Prescription prescription) {
-                final DrivePdfImport? matchingImport = _findImportForPrescription(data.imports, prescription.id);
-                return _buildPrescriptionCard(
-                  prescription: prescription,
-                  importItem: matchingImport,
-                  compact: false,
-                );
-              }).toList(),
-            ),
-    );
-  }
-
-  Widget _buildPrescriptionCard({
-    required Prescription prescription,
-    required DrivePdfImport? importItem,
-    required bool compact,
-  }) {
-    final PrescriptionExpiryInfo expiryInfo = PrescriptionExpiryUtils.evaluate(prescription.expiryDate);
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.panelSoft,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _prescriptionLabel(prescription),
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: compact ? 16 : 18,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              if (importItem != null)
-                TextButton.icon(
-                  onPressed: () => _openPdf(importItem),
-                  icon: const Icon(Icons.open_in_new),
-                  label: const Text('PDF'),
-                ),
-              if (importItem != null)
-                IconButton(
-                  tooltip: 'Elimina ricetta',
-                  onPressed: () => _requestPrescriptionDelete(importItem),
-                  icon: const Icon(Icons.delete_outline, color: AppColors.red),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _pill(expiryInfo.label, expiryInfo.color),
-              _pill(prescription.dpcFlag ? 'DPC' : 'NO DPC', prescription.dpcFlag ? AppColors.coral : AppColors.green),
-              _pill('${prescription.prescriptionCount} ricetta/e', AppColors.yellow),
-              _pill(importItem != null ? 'Archivio attivo' : 'Legacy', importItem != null ? Colors.white70 : Colors.white38),
-            ],
-          ),
-          const SizedBox(height: 10),
-          _detailLine('Data', _formatDate(prescription.prescriptionDate)),
-          _detailLine('Scadenza', _formatDate(prescription.expiryDate)),
-          _detailLine('Medico', (prescription.doctorName ?? '-').trim().isEmpty ? '-' : prescription.doctorName!.trim()),
-          _detailLine('Esenzione', (prescription.exemptionCode ?? '-').trim().isEmpty ? '-' : prescription.exemptionCode!.trim()),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDebtsSection(_PatientDetailData data) {
-    final Patient patient = data.patient!;
-    return _section(
-      title: 'Debiti',
-      action: Wrap(
-        spacing: 10,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          Text(
-            'Totale € ${data.totalDebt.toStringAsFixed(2)}',
-            style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
-          ),
-          FilledButton.icon(
-            onPressed: () => _addOrEditDebt(patient),
-            icon: const Icon(Icons.add),
-            label: const Text('Aggiungi'),
-          ),
-        ],
-      ),
-      child: data.debts.isEmpty
-          ? const Text('Nessun debito registrato.', style: TextStyle(color: Colors.white70))
-          : Column(
-              children: data.debts.map((Debt debt) {
-                return _operationCard(
-                  title: debt.description,
-                  badgeLabel: _humanDebtStatus(debt.status, debt.residualAmount),
-                  badgeColor: debt.residualAmount > 0 ? AppColors.wine : AppColors.green,
-                  lines: [
-                    _detailLine('Importo totale', '€ ${debt.amount.toStringAsFixed(2)}'),
-                    _detailLine('Pagato', '€ ${debt.paidAmount.toStringAsFixed(2)}'),
-                    _detailLine('Residuo', '€ ${debt.residualAmount.toStringAsFixed(2)}'),
-                    _detailLine('Scadenza', _formatDate(debt.dueDate)),
-                    if ((debt.note ?? '').trim().isNotEmpty) _detailLine('Nota', debt.note!.trim()),
-                  ],
-                  actions: [
-                    IconButton(
-                      tooltip: 'Modifica',
-                      onPressed: () => _addOrEditDebt(patient, initial: debt),
-                      icon: const Icon(Icons.edit_outlined, color: Colors.white70),
-                    ),
-                    IconButton(
-                      tooltip: 'Elimina',
-                      onPressed: () => _deleteDebt(patient, debt),
-                      icon: const Icon(Icons.delete_outline, color: AppColors.red),
-                    ),
-                  ],
-                );
-              }).toList(),
-            ),
-    );
-  }
-
-  Widget _buildAdvancesSection(_PatientDetailData data) {
-    return _section(
-      title: 'Anticipi',
-      action: Wrap(
-        spacing: 10,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          Text(
-            '${data.advances.length} voci',
-            style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
-          ),
-          FilledButton.icon(
-            onPressed: () => _addOrEditAdvance(data),
-            icon: const Icon(Icons.add),
-            label: const Text('Aggiungi'),
-          ),
-        ],
-      ),
-      child: data.advances.isEmpty
-          ? const Text('Nessun anticipo registrato.', style: TextStyle(color: Colors.white70))
-          : Column(
-              children: data.advances.map((Advance advance) {
-                return _operationCard(
-                  title: advance.drugName,
-                  badgeLabel: _humanAdvanceStatus(advance.status),
-                  badgeColor: advance.status == 'closed' ? AppColors.green : AppColors.amber,
-                  lines: [
-                    _detailLine('Medico', advance.doctorName.isEmpty ? '-' : advance.doctorName),
-                    _detailLine('Data', _formatDate(advance.createdAt)),
-                    if (advance.matchedTherapyFlag) _detailLine('Terapia', 'Collegato a terapia nota'),
-                    if ((advance.note ?? '').trim().isNotEmpty) _detailLine('Nota', advance.note!.trim()),
-                  ],
-                  actions: [
-                    IconButton(
-                      tooltip: 'Modifica',
-                      onPressed: () => _addOrEditAdvance(data, initial: advance),
-                      icon: const Icon(Icons.edit_outlined, color: Colors.white70),
-                    ),
-                    IconButton(
-                      tooltip: 'Elimina',
-                      onPressed: () => _deleteAdvance(data.patient!, advance),
-                      icon: const Icon(Icons.delete_outline, color: AppColors.red),
-                    ),
-                  ],
-                );
-              }).toList(),
-            ),
-    );
-  }
-
-  Widget _buildBookingsSection(_PatientDetailData data) {
-    final Patient patient = data.patient!;
-    return _section(
-      title: 'Prenotazioni',
-      action: Wrap(
-        spacing: 10,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          Text(
-            '${data.bookings.length} voci',
-            style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
-          ),
-          FilledButton.icon(
-            onPressed: () => _addOrEditBooking(patient),
-            icon: const Icon(Icons.add),
-            label: const Text('Aggiungi'),
-          ),
-        ],
-      ),
-      child: data.bookings.isEmpty
-          ? const Text('Nessuna prenotazione registrata.', style: TextStyle(color: Colors.white70))
-          : Column(
-              children: data.bookings.map((Booking booking) {
-                return _operationCard(
-                  title: '${booking.drugName} x${booking.quantity}',
-                  badgeLabel: _humanBookingStatus(booking.status),
-                  badgeColor: booking.status == 'closed' ? AppColors.green : AppColors.yellow,
-                  lines: [
-                    _detailLine('Data registrazione', _formatDate(booking.createdAt)),
-                    _detailLine('Data prevista', _formatDate(booking.expectedDate)),
-                    if ((booking.note ?? '').trim().isNotEmpty) _detailLine('Nota', booking.note!.trim()),
-                  ],
-                  actions: [
-                    IconButton(
-                      tooltip: 'Modifica',
-                      onPressed: () => _addOrEditBooking(patient, initial: booking),
-                      icon: const Icon(Icons.edit_outlined, color: Colors.white70),
-                    ),
-                    IconButton(
-                      tooltip: 'Elimina',
-                      onPressed: () => _deleteBooking(patient, booking),
-                      icon: const Icon(Icons.delete_outline, color: AppColors.red),
-                    ),
-                  ],
-                );
-              }).toList(),
-            ),
-    );
-  }
-
-  Widget _buildFamilySection(_PatientDetailData data) {
-    return _section(
-      title: 'Famiglia',
-      action: data.hasFamily
-          ? Text(
-              '${data.familyMembers.length} membri',
-              style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
-            )
-          : null,
-      child: !data.hasFamily
-          ? const Text(
-              'Questo assistito non appartiene a nessun gruppo famiglia.',
-              style: TextStyle(color: Colors.white70),
-            )
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 14,
-                      height: 14,
-                      decoration: BoxDecoration(
-                        color: data.familyColor,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        data.family!.name,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: data.familyMembers.map(( _FamilyMemberData member) {
-                    return InkWell(
-                      onTap: member.isCurrent ? null : () => _openFamilyMember(member),
-                      borderRadius: BorderRadius.circular(16),
-                      child: Container(
-                        width: 260,
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: AppColors.panelSoft,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: member.isCurrent ? data.familyColor : Colors.white10,
-                            width: member.isCurrent ? 1.4 : 1,
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              member.displayName,
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(member.fiscalCode, style: const TextStyle(color: Colors.white70)),
-                            const SizedBox(height: 8),
-                            Text(
-                              member.isCurrent ? 'Assistito corrente' : 'Apri scheda collegata',
-                              style: TextStyle(
-                                color: member.isCurrent ? data.familyColor : Colors.white60,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ],
-            ),
-    );
-  }
-
-  Widget _buildTherapeuticAdviceSection(_PatientDetailData data) {
-    return _section(
-      title: 'Consigli terapeutici',
-      action: Wrap(
-        spacing: 10,
-        children: [
-          FilledButton.icon(
-            onPressed: () => _editTherapeuticAdvice(data),
-            icon: Icon(data.therapeuticAdvice == null ? Icons.add_comment_outlined : Icons.edit_outlined),
-            label: Text(data.therapeuticAdvice == null ? 'Aggiungi' : 'Modifica'),
-          ),
-          if (data.therapeuticAdvice != null)
-            TextButton.icon(
-              onPressed: () => _clearTherapeuticAdvice(data),
-              icon: const Icon(Icons.delete_outline, color: AppColors.red),
-              label: const Text('Svuota', style: TextStyle(color: AppColors.red)),
-            ),
-        ],
-      ),
-      child: (data.therapeuticAdvice?.text.trim() ?? '').isEmpty
-          ? const Text(
-              'Nessun consiglio terapeutico registrato.',
-              style: TextStyle(color: Colors.white70),
-            )
-          : Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppColors.panelSoft,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white10),
-              ),
-              child: Text(
-                data.therapeuticAdvice!.text,
-                style: const TextStyle(color: Colors.white, height: 1.45),
-              ),
-            ),
-    );
-  }
-
-  Widget _buildTherapiesSection(_PatientDetailData data) {
-    return _section(
-      title: 'Terapie riepilogative',
-      child: data.therapiesSummary.isEmpty
-          ? const Text('Nessuna terapia disponibile.', style: TextStyle(color: Colors.white70))
-          : Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: data.therapiesSummary.map((String item) {
-                return Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: AppColors.panelSoft,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Text(
-                    item,
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
-                  ),
-                );
-              }).toList(),
-            ),
     );
   }
 
@@ -1521,11 +963,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     );
   }
 
-  Widget _section({
-    required String title,
-    required Widget child,
-    Widget? action,
-  }) {
+  Widget _section({required String title, required Widget child}) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -1537,18 +975,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900),
-                ),
-              ),
-              if (action != null) Flexible(child: action),
-            ],
-          ),
+          Text(title, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
           const SizedBox(height: 14),
           child,
         ],
@@ -1556,51 +983,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     );
   }
 
-  Widget _operationCard({
-    required String title,
-    required String badgeLabel,
-    required Color badgeColor,
-    required List<Widget> lines,
-    required List<Widget> actions,
-  }) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.panelSoft,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
-                ),
-              ),
-              _pill(badgeLabel, badgeColor),
-              const SizedBox(width: 8),
-              ...actions,
-            ],
-          ),
-          const SizedBox(height: 10),
-          ...lines,
-        ],
-      ),
-    );
-  }
-
-  Widget _managerCard({
-    required String title,
-    required String subtitle,
-    required List<Widget> actions,
-    List<Widget> extra = const <Widget>[],
-  }) {
+  Widget _managerCard({required String title, required String subtitle, required List<Widget> actions, List<Widget> extra = const []}) {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 10),
@@ -1615,12 +998,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         children: [
           Row(
             children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
-                ),
-              ),
+              Expanded(child: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16))),
               ...actions,
             ],
           ),
@@ -1646,10 +1024,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         text: TextSpan(
           style: const TextStyle(color: Colors.white),
           children: [
-            TextSpan(
-              text: '$label: ',
-              style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w800),
-            ),
+            TextSpan(text: '$label: ', style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w800)),
             TextSpan(text: value, style: const TextStyle(fontWeight: FontWeight.w700)),
           ],
         ),
@@ -1712,77 +1087,39 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     );
   }
 
+
   DrivePdfImport? _findImportForPrescription(List<DrivePdfImport> imports, String prescriptionId) {
-    for (final DrivePdfImport item in imports) {
+    for (final item in imports) {
       if (item.id == prescriptionId) return item;
     }
     return null;
   }
 
   String _prescriptionLabel(Prescription prescription) {
-    final String label = prescription.items
-        .map((PrescriptionItem item) => item.drugName.trim())
-        .where((String item) => item.isNotEmpty)
-        .join(', ');
+    final label = prescription.items.map((item) => item.drugName.trim()).where((item) => item.isNotEmpty).join(', ');
     return label.isEmpty ? 'Ricetta' : label;
-  }
-
-  String _humanDebtStatus(String status, double residualAmount) {
-    if (residualAmount <= 0) return 'Chiuso';
-    final String normalized = status.trim().toLowerCase();
-    if (normalized == 'closed') return 'Chiuso';
-    return 'Aperto';
-  }
-
-  String _humanAdvanceStatus(String status) {
-    final String normalized = status.trim().toLowerCase();
-    switch (normalized) {
-      case 'closed':
-        return 'Chiuso';
-      case 'matched':
-        return 'Coperto';
-      default:
-        return 'Aperto';
-    }
-  }
-
-  String _humanBookingStatus(String status) {
-    switch (status.trim().toLowerCase()) {
-      case 'ordered':
-        return 'Ordinata';
-      case 'ready':
-        return 'Pronta';
-      case 'closed':
-        return 'Chiusa';
-      default:
-        return 'Aperta';
-    }
   }
 
   String _localId(String prefix) => '${prefix}_${widget.fiscalCode}_${DateTime.now().microsecondsSinceEpoch}';
 
   double _parseEuro(String raw) {
-    final String normalized = raw.trim().replaceAll('.', '').replaceAll(',', '.');
+    final normalized = raw.trim().replaceAll('.', '').replaceAll(',', '.');
     return double.tryParse(normalized) ?? 0;
   }
 
   DateTime? _parseItalianDate(String raw) {
-    final String value = raw.trim();
+    final value = raw.trim();
     if (value.isEmpty) return null;
-    final RegExpMatch? match = RegExp(r'^(\d{1,2})\/(\d{1,2})\/(\d{4})$').firstMatch(value);
+    final match = RegExp(r'^(\d{1,2})\/(\d{1,2})\/(\d{4})$').firstMatch(value);
     if (match == null) return null;
-    return DateTime(
-      int.parse(match.group(3)!),
-      int.parse(match.group(2)!),
-      int.parse(match.group(1)!),
-    );
+    return DateTime(int.parse(match.group(3)!), int.parse(match.group(2)!), int.parse(match.group(1)!));
   }
 
   String _formatDate(DateTime? date) {
     if (date == null) return '-';
-    final String day = date.day.toString().padLeft(2, '0');
-    final String month = date.month.toString().padLeft(2, '0');
-    final String year = date.year.toString();
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final year = date.year.toString();
     return '$day/$month/$year';
   }
 }
@@ -1798,9 +1135,6 @@ class _PatientDetailData {
   final AppSettings settings;
   final String resolvedDoctorName;
   final TherapeuticAdviceNote? therapeuticAdvice;
-  final FamilyGroup? family;
-  final List<_FamilyMemberData> familyMembers;
-  final Color familyColor;
 
   const _PatientDetailData({
     required this.patient,
@@ -1813,9 +1147,6 @@ class _PatientDetailData {
     required this.settings,
     required this.resolvedDoctorName,
     required this.therapeuticAdvice,
-    required this.family,
-    required this.familyMembers,
-    required this.familyColor,
   });
 
   double get totalDebt => debts.fold<double>(0, (double sum, Debt item) => sum + item.residualAmount);
@@ -1849,7 +1180,9 @@ class _PatientDetailData {
 
   DateTime? get lastPrescriptionDate {
     final Patient? currentPatient = patient;
-    if (currentPatient == null) return null;
+    if (currentPatient == null) {
+      return null;
+    }
     return PhboxContractUtils.resolveLastPrescriptionDate(
       patient: currentPatient,
       allImports: allImports,
@@ -1860,7 +1193,9 @@ class _PatientDetailData {
 
   List<String> get therapiesSummary {
     final Patient? currentPatient = patient;
-    if (currentPatient == null) return const <String>[];
+    if (currentPatient == null) {
+      return const <String>[];
+    }
     return PhboxContractUtils.resolveTherapiesSummary(
       patient: currentPatient,
       allImports: allImports,
@@ -1871,89 +1206,25 @@ class _PatientDetailData {
 
   String get primaryExemption {
     final Patient? currentPatient = patient;
-    if (currentPatient == null) return '-';
+    if (currentPatient == null) {
+      return '-';
+    }
     return PhboxContractUtils.resolveExemption(
       patient: currentPatient,
       visibleImports: imports,
-      legacyPrescriptions: allImports.isNotEmpty ? const <Prescription>[] : prescriptions,
+      legacyPrescriptions: imports.isNotEmpty ? const <Prescription>[] : prescriptions,
     );
-  }
-
-  List<String> get allExemptions {
-    final Patient? currentPatient = patient;
-    if (currentPatient == null) return const <String>[];
-    final List<String> values = <String>[];
-    for (final String item in currentPatient.exemptions) {
-      final String normalized = item.trim();
-      if (normalized.isNotEmpty && !values.contains(normalized)) {
-        values.add(normalized);
-      }
-    }
-    if (values.isEmpty) {
-      final String fallback = primaryExemption.trim();
-      if (fallback.isNotEmpty && fallback != '-') {
-        values.add(fallback);
-      }
-    }
-    return values;
   }
 
   String get displayCity {
     final Patient? currentPatient = patient;
-    if (currentPatient == null) return '-';
+    if (currentPatient == null) {
+      return '-';
+    }
     return PhboxContractUtils.resolveCity(
       patient: currentPatient,
       visibleImports: imports,
-      legacyPrescriptions: allImports.isNotEmpty ? const <Prescription>[] : prescriptions,
+      legacyPrescriptions: imports.isNotEmpty ? const <Prescription>[] : prescriptions,
     );
-  }
-
-  bool get hasFamily => family != null;
-
-  int get visibleRecipeDocumentsCount => prescriptions.length;
-
-  String get recipeDocumentSubtitle {
-    if (allImports.isNotEmpty) {
-      return '$visibleRecipeDocumentsCount documenti attivi';
-    }
-    if (visibleRecipeDocumentsCount > 0) {
-      return '$visibleRecipeDocumentsCount documenti legacy';
-    }
-    return '0 documenti';
-  }
-}
-
-class _ResolvedFamily {
-  final FamilyGroup? group;
-  final List<_FamilyMemberData> members;
-  final Color color;
-
-  const _ResolvedFamily({
-    required this.group,
-    required this.members,
-    required this.color,
-  });
-
-  const _ResolvedFamily.empty()
-      : group = null,
-        members = const <_FamilyMemberData>[],
-        color = AppColors.yellow;
-}
-
-class _FamilyMemberData {
-  final String fiscalCode;
-  final String fullName;
-  final bool isCurrent;
-
-  const _FamilyMemberData({
-    required this.fiscalCode,
-    required this.fullName,
-    required this.isCurrent,
-  });
-
-  String get displayName {
-    final String normalized = fullName.trim();
-    if (normalized.isEmpty) return fiscalCode;
-    return normalized.toUpperCase();
   }
 }

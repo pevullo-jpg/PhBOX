@@ -1,7 +1,9 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'dart:math' as math;
 
 import 'package:url_launcher/url_launcher.dart';
 
@@ -37,7 +39,7 @@ class DashboardPage extends StatefulWidget {
   State<DashboardPage> createState() => _DashboardPageState();
 }
 
-class _DashboardPageState extends State<DashboardPage> {
+class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
   final TextEditingController _searchController = TextEditingController();
 
   late final PatientsRepository _patientsRepository;
@@ -53,10 +55,16 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<_DashboardData>? _future;
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
+  Timer? _autoRefreshTimer;
+  bool _isRefreshing = false;
+  bool _isAppInForeground = true;
+
+  static const Duration _autoRefreshInterval = Duration(seconds: 60);
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final datasource = FirestoreFirebaseDatasource(FirebaseFirestore.instance);
     _patientsRepository = PatientsRepository(datasource: datasource);
     _prescriptionsRepository = PrescriptionsRepository(datasource: datasource);
@@ -67,15 +75,31 @@ class _DashboardPageState extends State<DashboardPage> {
     _doctorPatientLinksRepository = DoctorPatientLinksRepository(datasource: datasource);
     _familyGroupsRepository = FamilyGroupsRepository(datasource: datasource);
     _settingsRepository = SettingsRepository(datasource: datasource);
-    _future = _load();
+    final initialFuture = _load();
+    _future = initialFuture;
+    _isRefreshing = true;
+    initialFuture.whenComplete(() {
+      if (!mounted) return;
+      setState(() {
+        _isRefreshing = false;
+      });
+    });
     _searchController.addListener(_handleSearchChanged);
+    _startAutoRefreshTimer();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _autoRefreshTimer?.cancel();
     _searchController.removeListener(_handleSearchChanged);
     _searchController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _isAppInForeground = state == AppLifecycleState.resumed;
   }
 
   void _handleSearchChanged() {
@@ -175,9 +199,37 @@ class _DashboardPageState extends State<DashboardPage> {
     return _activeCardFilters.isEmpty && query.isNotEmpty && query.length < 3;
   }
 
+  void _startAutoRefreshTimer() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (_) {
+      _handleAutoRefreshTick();
+    });
+  }
+
+  bool get _isDashboardRouteCurrent {
+    final route = ModalRoute.of(context);
+    return route?.isCurrent ?? true;
+  }
+
+  void _handleAutoRefreshTick() {
+    if (!mounted || !_isAppInForeground || !_isDashboardRouteCurrent || _isRefreshing) {
+      return;
+    }
+    _refresh();
+  }
+
   void _refresh() {
+    if (_isRefreshing) return;
+    final future = _load();
     setState(() {
-      _future = _load();
+      _isRefreshing = true;
+      _future = future;
+    });
+    future.whenComplete(() {
+      if (!mounted) return;
+      setState(() {
+        _isRefreshing = false;
+      });
     });
   }
 
@@ -1669,6 +1721,8 @@ class _DashboardPageState extends State<DashboardPage> {
         final familyState = data == null
             ? _DashboardFamilyState.empty()
             : _DashboardFamilyState.fromFamilies(data.summaries, data.families);
+        final bool showBlockingLoader = snapshot.connectionState == ConnectionState.waiting && data == null;
+        final bool showBlockingError = snapshot.hasError && data == null;
         return Scaffold(
           backgroundColor: AppColors.background,
           body: Padding(
@@ -1783,22 +1837,41 @@ class _DashboardPageState extends State<DashboardPage> {
                             ),
                           ),
                         const SizedBox(height: 10),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: FilledButton.icon(
-                            onPressed: _openAddPatientDialog,
-                            icon: const Icon(Icons.add),
-                            label: const Text('Nuovo assistito'),
-                          ),
+                        Row(
+                          children: [
+                            if (_isRefreshing && data != null)
+                              const Row(
+                                children: [
+                                  SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'Aggiornamento dati...',
+                                    style: TextStyle(color: Colors.white54, fontSize: 13, fontWeight: FontWeight.w600),
+                                  ),
+                                ],
+                              )
+                            else
+                              const SizedBox.shrink(),
+                            const Spacer(),
+                            FilledButton.icon(
+                              onPressed: _openAddPatientDialog,
+                              icon: const Icon(Icons.add),
+                              label: const Text('Nuovo assistito'),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 18),
                       ],
                     );
                   },
                 ),
-                if (snapshot.connectionState == ConnectionState.waiting)
+                if (showBlockingLoader)
                   const Expanded(child: Center(child: CircularProgressIndicator()))
-                else if (snapshot.hasError)
+                else if (showBlockingError)
                   Expanded(
                     child: Center(
                       child: Text('Errore dashboard: ${snapshot.error}', style: const TextStyle(color: Colors.white)),
@@ -1868,7 +1941,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                               onPressed: () => _openPatient(item),
                                               child: Row(
                                                 children: [
-                                                  if (item.familyId.isNotEmpty) ...[
+                                                  if (item.familyId.isNotEmpty && familyState.hasMultipleActive(item.familyId)) ...[
                                                     Container(
                                                       width: 14,
                                                       height: 14,
@@ -1986,7 +2059,7 @@ class _DashboardPageState extends State<DashboardPage> {
       );
     }
     if (item.dpcItems.isNotEmpty) {
-      widgets.add(_FlagChip(label: 'DPC ${item.dpcItems.length}', color: AppColors.coral));
+      widgets.add(_FlagChip(label: 'DPC ${item.dpcItems.length}', color: AppColors.coral, onTap: () => _handleFlagTap(item, 'dpc')));
     }
     if (item.totalDebt > 0) {
       widgets.add(_FlagChip(label: 'debiti € ${item.totalDebt.toStringAsFixed(2)}', color: AppColors.wine, onTap: () => _handleFlagTap(item, 'debiti')));
@@ -2428,28 +2501,26 @@ class _FilterToggle extends StatelessWidget {
 class _FlagChip extends StatelessWidget {
   final String label;
   final Color color;
-  final VoidCallback? onTap;
+  final VoidCallback onTap;
 
-  const _FlagChip({required this.label, required this.color, this.onTap});
+  const _FlagChip({required this.label, required this.color, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    final child = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5),
-      ),
-    );
-    if (onTap == null) return child;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(18),
-      child: child,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5),
+        ),
+      ),
     );
   }
 }
