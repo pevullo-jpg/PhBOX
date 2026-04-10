@@ -1868,7 +1868,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                               onPressed: () => _openPatient(item),
                                               child: Row(
                                                 children: [
-                                                  if (item.familyId.isNotEmpty && familyState.hasMultipleActive(item.familyId)) ...[
+                                                  if (item.familyId.isNotEmpty) ...[
                                                     Container(
                                                       width: 14,
                                                       height: 14,
@@ -1986,7 +1986,7 @@ class _DashboardPageState extends State<DashboardPage> {
       );
     }
     if (item.dpcItems.isNotEmpty) {
-      widgets.add(_FlagChip(label: 'DPC ${item.dpcItems.length}', color: AppColors.coral, onTap: () => _handleFlagTap(item, 'dpc')));
+      widgets.add(_FlagChip(label: 'DPC ${item.dpcItems.length}', color: AppColors.coral));
     }
     if (item.totalDebt > 0) {
       widgets.add(_FlagChip(label: 'debiti € ${item.totalDebt.toStringAsFixed(2)}', color: AppColors.wine, onTap: () => _handleFlagTap(item, 'debiti')));
@@ -2428,26 +2428,28 @@ class _FilterToggle extends StatelessWidget {
 class _FlagChip extends StatelessWidget {
   final String label;
   final Color color;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
-  const _FlagChip({required this.label, required this.color, required this.onTap});
+  const _FlagChip({required this.label, required this.color, this.onTap});
 
   @override
   Widget build(BuildContext context) {
+    final child = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5),
+      ),
+    );
+    if (onTap == null) return child;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(18),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: Text(
-          label,
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5),
-        ),
-      ),
+      child: child,
     );
   }
 }
