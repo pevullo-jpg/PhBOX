@@ -1005,6 +1005,19 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     }
   }
 
+
+  Future<void> _editCurrentPatientFromMenu() async {
+    try {
+      final _PatientDetailData data = await _load();
+      if (!mounted || data.patient == null) {
+        return;
+      }
+      await _editPatient(data);
+    } catch (e) {
+      _showTransientError('Errore apertura modifica assistito: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -1036,8 +1049,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                     const SizedBox(height: 12),
                                     Text(_message, style: const TextStyle(color: AppColors.green, fontWeight: FontWeight.w700)),
                                   ],
-                                  const SizedBox(height: 18),
-                                  _buildFamilySection(data),
                                   const SizedBox(height: 18),
                                   Wrap(
                                     spacing: 14,
@@ -1204,6 +1215,8 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                             }).toList(),
                                           ),
                                   ),
+                                  const SizedBox(height: 18),
+                                  _buildFamilySection(data),
                                 ],
                               ),
                             ),
@@ -1216,6 +1229,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
           onBack: () => Navigator.of(context).maybePop(),
           pageIcon: Icons.badge_outlined,
           pageTooltip: 'Scheda assistito',
+          onPageTap: _editCurrentPatientFromMenu,
           onSelected: (index) {
             appNavigationIndex.value = index;
             Navigator.of(context).popUntil((route) => route.isFirst);
@@ -1235,115 +1249,31 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: Colors.white10),
       ),
-      child: LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints constraints) {
-          final bool compact = constraints.maxWidth < 760;
-          final Widget actions = _buildHeaderQuickActions(data);
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (compact) ...[
-                Text(
-                  visiblePatientTitle(
-                    fullName: patient.fullName,
-                    patientKey: patient.fiscalCode,
-                  ),
-                  style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900),
-                ),
-                const SizedBox(height: 14),
-                actions,
-              ] else
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        visiblePatientTitle(
-                          fullName: patient.fullName,
-                          patientKey: patient.fiscalCode,
-                        ),
-                        style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    actions,
-                  ],
-                ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  _metaBadge('CF', visiblePatientFiscalCode(patient.fiscalCode)),
-                  _metaBadge('Medico', data.resolvedDoctorName),
-                  _metaBadge('Esenzione', data.primaryExemption),
-                  _metaBadge('Città', data.displayCity),
-                  _metaBadge('Ultima ricetta', _formatDate(data.lastPrescriptionDate)),
-                ],
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildHeaderQuickActions(_PatientDetailData data) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        _headerActionButton(
-          icon: Icons.space_dashboard_rounded,
-          tooltip: 'Dashboard',
-          onTap: () => _navigateToPrimaryPage(0),
-        ),
-        _headerActionButton(
-          icon: Icons.family_restroom_rounded,
-          tooltip: 'Famiglie',
-          onTap: () => _navigateToPrimaryPage(1),
-        ),
-        _headerActionButton(
-          icon: Icons.settings_rounded,
-          tooltip: 'Impostazioni',
-          onTap: () => _navigateToPrimaryPage(2),
-        ),
-        _headerActionButton(
-          icon: Icons.edit_outlined,
-          tooltip: 'Modifica assistito',
-          onTap: () => _editPatient(data),
-        ),
-      ],
-    );
-  }
-
-  Widget _headerActionButton({
-    required IconData icon,
-    required String tooltip,
-    required VoidCallback onTap,
-  }) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.06),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            visiblePatientTitle(
+              fullName: patient.fullName,
+              patientKey: patient.fiscalCode,
+            ),
+            style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900),
           ),
-          child: Icon(icon, color: Colors.white, size: 20),
-        ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _metaBadge('CF', visiblePatientFiscalCode(patient.fiscalCode)),
+              _metaBadge('Medico', data.resolvedDoctorName),
+              _metaBadge('Esenzione', data.primaryExemption),
+              _metaBadge('Città', data.displayCity),
+              _metaBadge('Ultima ricetta', _formatDate(data.lastPrescriptionDate)),
+            ],
+          ),
+        ],
       ),
     );
-  }
-
-  void _navigateToPrimaryPage(int index) {
-    appNavigationIndex.value = index;
-    Navigator.of(context).popUntil((Route<dynamic> route) => route.isFirst);
   }
 
 
