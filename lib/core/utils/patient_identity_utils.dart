@@ -1,10 +1,12 @@
+import 'patient_input_normalizer.dart';
+
 String buildManualPatientDocumentId({
   required String fiscalCode,
   required String name,
   required String surname,
   required DateTime now,
 }) {
-  final String normalizedFiscalCode = fiscalCode.trim().toUpperCase();
+  final String normalizedFiscalCode = PatientInputNormalizer.normalizeFiscalCode(fiscalCode);
   if (normalizedFiscalCode.isNotEmpty) {
     return normalizedFiscalCode;
   }
@@ -23,10 +25,7 @@ String buildManualPatientFullName({
   required String name,
   required String surname,
 }) {
-  return <String>[name.trim(), surname.trim()]
-      .where((item) => item.isNotEmpty)
-      .join(' ')
-      .trim();
+  return PatientInputNormalizer.buildFullName(name: name, surname: surname);
 }
 
 bool isTemporaryPatientKey(String value) {

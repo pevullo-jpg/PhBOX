@@ -25,6 +25,61 @@ class Debt {
     this.note,
   });
 
+
+
+  factory Debt.createNew({
+    required String id,
+    required String patientFiscalCode,
+    required String patientName,
+    required String description,
+    required double amount,
+    required double initialPaidAmountRaw,
+    required DateTime createdAt,
+    DateTime? dueDate,
+    String? note,
+  }) {
+    final double safeAmount = amount < 0 ? 0 : amount;
+    final double normalizedPaidAmount = normalizeInitialPaidAmount(
+      amount: safeAmount,
+      rawValue: initialPaidAmountRaw,
+    );
+    final double residualAmount = (safeAmount - normalizedPaidAmount) <= 0
+        ? 0
+        : safeAmount - normalizedPaidAmount;
+    return Debt(
+      id: id,
+      patientFiscalCode: patientFiscalCode,
+      patientName: patientName,
+      description: description,
+      amount: safeAmount,
+      paidAmount: normalizedPaidAmount,
+      residualAmount: residualAmount,
+      createdAt: createdAt,
+      dueDate: dueDate,
+      status: resolveStatus(residualAmount),
+      note: note,
+    );
+  }
+
+  static double normalizeInitialPaidAmount({
+    required double amount,
+    required double rawValue,
+  }) {
+    final double safeAmount = amount < 0 ? 0 : amount;
+    final double normalizedValue = rawValue.abs();
+    if (normalizedValue <= 0) {
+      return 0;
+    }
+    if (normalizedValue >= safeAmount) {
+      return safeAmount;
+    }
+    return normalizedValue;
+  }
+
+  static String resolveStatus(double residualAmount) {
+    return residualAmount <= 0 ? 'closed' : 'open';
+  }
+
   Map<String, dynamic> toMap() {
     return <String, dynamic>{
       'id': id,
