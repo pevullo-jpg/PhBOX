@@ -1399,7 +1399,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               if (!mounted) {
                 return;
               }
-              _refresh('Famiglia creata e collegata all'assistito.');
+              _refresh("Famiglia creata e collegata all'assistito.");
             } on FamilyMutationException catch (e) {
               if (dialogContext.mounted) {
                 setLocalState(() {
@@ -1450,7 +1450,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                           nameController,
                           'Nome gruppo famiglia',
                           helperText:
-                              'L'assistito corrente viene incluso automaticamente nel nucleo.',
+                              "L'assistito corrente viene incluso automaticamente nel nucleo.",
                         ),
                         const SizedBox(height: 14),
                         Text(
@@ -1624,7 +1624,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     }
     final List<FamilyGroup> families = await _familyGroupsRepository.getAllFamilies();
     if (families.isEmpty) {
-      _showTransientError('Non esistono famiglie a cui aggiungere l'assistito.');
+      _showTransientError("Non esistono famiglie a cui aggiungere l'assistito.");
       return;
     }
     final List<Patient> patients = await _patientsRepository.getAllPatients();
@@ -2130,7 +2130,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
           ? 'Uscire dal nucleo familiare?'
           : 'Rimuovere membro dal nucleo?',
       message: member.isCurrentPatient
-          ? 'L'assistito corrente verrà scollegato dal nucleo ${familyContext.displayLabel}.'
+          ? "L'assistito corrente verrà scollegato dal nucleo ${familyContext.displayLabel}."
           : '$memberTitle verrà rimosso dal nucleo ${familyContext.displayLabel}.',
     );
     if (!confirmed) {
