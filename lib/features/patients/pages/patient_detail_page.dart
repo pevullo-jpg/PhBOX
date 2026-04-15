@@ -825,39 +825,36 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   }
 
   Future<void> _deleteDebt(Patient patient, Debt debt) async {
-    if (!await _confirmDelete('Eliminare questo debito?')) return;
+    if (!await _confirmDelete(message: 'Eliminare questo debito?')) return;
     await _debtsRepository.deleteDebt(patient.fiscalCode, debt.id);
     _refresh('Debito eliminato.');
   }
 
   Future<void> _deleteAdvance(Patient patient, Advance advance) async {
-    if (!await _confirmDelete('Eliminare questo anticipo?')) return;
+    if (!await _confirmDelete(message: 'Eliminare questo anticipo?')) return;
     await _advancesRepository.deleteAdvance(patient.fiscalCode, advance.id);
     _refresh('Anticipo eliminato.');
   }
 
   Future<void> _deleteBooking(Patient patient, Booking booking) async {
-    if (!await _confirmDelete('Eliminare questa prenotazione?')) return;
+    if (!await _confirmDelete(message: 'Eliminare questa prenotazione?')) return;
     await _bookingsRepository.deleteBooking(patient.fiscalCode, booking.id);
     _refresh('Prenotazione eliminata.');
   }
 
   Future<void> _requestPrescriptionDelete(DrivePdfImport item) async {
-    if (!await _confirmDelete('Eliminare questa ricetta?')) return;
+    if (!await _confirmDelete(message: 'Eliminare questa ricetta?')) return;
     await _drivePdfImportsRepository.requestPdfDelete(item.id);
     _refresh('Richiesta delete PDF registrata.');
   }
 
-  Future<bool> _confirmDelete(
-    [
-    String? text,
-  ], {
+  Future<bool> _confirmDelete({
     String title = 'Conferma',
-    String? message,
+    required String message,
   }) async {
-    final String effectiveMessage = (message ?? text ?? '').trim().isEmpty
+    final String effectiveMessage = message.trim().isEmpty
         ? 'Confermare eliminazione?'
-        : (message ?? text!).trim();
+        : message.trim();
     final value = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
