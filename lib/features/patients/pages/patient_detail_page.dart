@@ -848,15 +848,33 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     _refresh('Richiesta delete PDF registrata.');
   }
 
-  Future<bool> _confirmDelete(String text) async {
+  Future<bool> _confirmDelete(
+    [
+    String? text,
+  ], {
+    String title = 'Conferma',
+    String? message,
+  }) async {
+    final String effectiveMessage = (message ?? text ?? '').trim().isEmpty
+        ? 'Confermare eliminazione?'
+        : (message ?? text!).trim();
     final value = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppColors.panel,
-        title: const Text('Conferma', style: TextStyle(color: Colors.white)),
-        content: Text(text, style: const TextStyle(color: Colors.white70)),
+        title: Text(title, style: const TextStyle(color: Colors.white)),
+        content: Text(
+          effectiveMessage,
+          style: const TextStyle(color: Colors.white70),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Annulla', style: TextStyle(color: Colors.white70))),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text(
+              'Annulla',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AppColors.red),
             onPressed: () => Navigator.of(context).pop(true),
