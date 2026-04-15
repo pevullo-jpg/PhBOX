@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/utils/prescription_expiry_utils.dart';
 import '../../../core/utils/patient_identity_utils.dart';
+import '../../../core/utils/family_group_color_utils.dart';
 import '../../../core/utils/patient_input_normalizer.dart';
 import '../../../core/utils/phbox_contract_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
@@ -2475,22 +2476,12 @@ class _DashboardFamilyState {
   factory _DashboardFamilyState.empty() => const _DashboardFamilyState(activeCounts: <String, int>{}, colors: <String, Color>{});
 
   factory _DashboardFamilyState.fromFamilies(List<_PatientDashboardSummary> summaries, List<FamilyGroup> families) {
-    const palette = <Color>[
-      Color(0xFF2563EB),
-      Color(0xFF059669),
-      Color(0xFFD97706),
-      Color(0xFFDC2626),
-      Color(0xFF7C3AED),
-      Color(0xFF0891B2),
-      Color(0xFF65A30D),
-      Color(0xFFEA580C),
-    ];
     final counts = <String, int>{};
     final colors = <String, Color>{};
     for (final family in families) {
       final activeCount = summaries.where((item) => item.familyId == family.id && item.hasActiveContent).length;
       counts[family.id] = activeCount;
-      colors[family.id] = palette[family.colorIndex % palette.length];
+      colors[family.id] = FamilyGroupColorUtils.colorForIndex(family.colorIndex);
     }
     return _DashboardFamilyState(activeCounts: counts, colors: colors);
   }

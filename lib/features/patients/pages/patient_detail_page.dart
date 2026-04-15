@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/utils/prescription_expiry_utils.dart';
+import '../../../core/utils/family_group_color_utils.dart';
 import '../../../core/utils/patient_identity_utils.dart';
 import '../../../core/utils/patient_input_normalizer.dart';
 import '../../../core/utils/phbox_contract_utils.dart';
@@ -14,6 +15,7 @@ import '../../../data/models/booking.dart';
 import '../../../data/models/debt.dart';
 import '../../../data/models/doctor_patient_link.dart';
 import '../../../data/models/drive_pdf_import.dart';
+import '../../../data/models/family_group.dart';
 import '../../../data/models/patient.dart';
 import '../../../data/models/prescription.dart';
 import '../../../data/models/therapeutic_advice_note.dart';
@@ -22,6 +24,7 @@ import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
 import '../../../data/repositories/doctor_patient_links_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
+import '../../../data/repositories/family_groups_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
@@ -46,6 +49,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   late final BookingsRepository _bookingsRepository;
   late final PrescriptionsRepository _prescriptionsRepository;
   late final DrivePdfImportsRepository _drivePdfImportsRepository;
+  late final FamilyGroupsRepository _familyGroupsRepository;
   late final SettingsRepository _settingsRepository;
   late final DoctorPatientLinksRepository _doctorPatientLinksRepository;
   late final TherapeuticAdviceRepository _therapeuticAdviceRepository;
@@ -64,6 +68,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     _bookingsRepository = BookingsRepository(datasource: datasource);
     _prescriptionsRepository = PrescriptionsRepository(datasource: datasource);
     _drivePdfImportsRepository = DrivePdfImportsRepository(datasource: datasource);
+    _familyGroupsRepository = FamilyGroupsRepository(datasource: datasource);
     _settingsRepository = SettingsRepository(datasource: datasource);
     _doctorPatientLinksRepository = DoctorPatientLinksRepository(datasource: datasource);
     _therapeuticAdviceRepository = TherapeuticAdviceRepository(datasource: datasource);
@@ -98,6 +103,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     final doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
     final settings = await _settingsRepository.getSettings();
     final therapeuticAdvice = await _therapeuticAdviceRepository.getByFiscalCode(_currentFiscalCode);
+    final familyContext = await _loadFamilyContext(patient);
     final doctorName = _resolveDoctor(
       patient: patient,
       doctorLinks: doctorLinks,
@@ -115,6 +121,74 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       settings: settings,
       resolvedDoctorName: doctorName,
       therapeuticAdvice: therapeuticAdvice,
+      familyContext: familyContext,
+    );
+  }
+
+
+  Future<_PatientFamilyContext?> _loadFamilyContext(Patient? patient) async {
+    if (patient == null) {
+      return null;
+    }
+    final List<FamilyGroup> families = await _familyGroupsRepository.getAllFamilies();
+    final String normalizedCurrentCode =
+        PatientInputNormalizer.normalizeFiscalCode(patient.fiscalCode);
+    FamilyGroup? currentFamily;
+    for (final FamilyGroup family in families) {
+      final bool containsPatient = family.memberFiscalCodes.any(
+        (String item) =>
+            PatientInputNormalizer.normalizeFiscalCode(item) ==
+            normalizedCurrentCode,
+      );
+      if (containsPatient) {
+        currentFamily = family;
+        break;
+      }
+    }
+    if (currentFamily == null) {
+      return null;
+    }
+
+    final List<String> orderedCodes = <String>[];
+    final Set<String> seenCodes = <String>{};
+    for (final String rawCode in currentFamily.memberFiscalCodes) {
+      final String normalized =
+          PatientInputNormalizer.normalizeFiscalCode(rawCode);
+      if (normalized.isEmpty || !seenCodes.add(normalized)) {
+        continue;
+      }
+      orderedCodes.add(normalized);
+    }
+
+    final bool needsOtherPatients =
+        orderedCodes.any((String code) => code != normalizedCurrentCode);
+    final Map<String, Patient> patientsByCode = <String, Patient>{};
+    if (needsOtherPatients) {
+      final List<Patient> allPatients = await _patientsRepository.getAllPatients();
+      for (final Patient item in allPatients) {
+        patientsByCode[
+          PatientInputNormalizer.normalizeFiscalCode(item.fiscalCode)
+        ] = item;
+      }
+    }
+
+    final List<_PatientFamilyMember> members = orderedCodes
+        .map((String fiscalCode) {
+          final bool isCurrentPatient = fiscalCode == normalizedCurrentCode;
+          final Patient? resolvedPatient = isCurrentPatient
+              ? patient
+              : patientsByCode[fiscalCode];
+          return _PatientFamilyMember(
+            fiscalCode: fiscalCode,
+            patient: resolvedPatient,
+            isCurrentPatient: isCurrentPatient,
+          );
+        })
+        .toList();
+
+    return _PatientFamilyContext(
+      family: currentFamily,
+      members: members,
     );
   }
 
@@ -930,14 +1004,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                 backgroundColor: AppColors.background,
                 foregroundColor: Colors.white,
                 title: const Text('Scheda assistito'),
-                actions: [
-                  if (data?.patient != null)
-                    IconButton(
-                      tooltip: 'Modifica assistito',
-                      onPressed: () => _editPatient(data!),
-                      icon: const Icon(Icons.edit_outlined),
-                    ),
-                ],
               ),
               body: snapshot.connectionState == ConnectionState.waiting
                   ? const Center(child: CircularProgressIndicator())
@@ -955,6 +1021,8 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                     const SizedBox(height: 12),
                                     Text(_message, style: const TextStyle(color: AppColors.green, fontWeight: FontWeight.w700)),
                                   ],
+                                  const SizedBox(height: 18),
+                                  _buildFamilySection(data),
                                   const SizedBox(height: 18),
                                   Wrap(
                                     spacing: 14,
@@ -1152,31 +1220,1220 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: Colors.white10),
       ),
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final bool compact = constraints.maxWidth < 760;
+          final Widget actions = _buildHeaderQuickActions(data);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (compact) ...[
+                Text(
+                  visiblePatientTitle(
+                    fullName: patient.fullName,
+                    patientKey: patient.fiscalCode,
+                  ),
+                  style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 14),
+                actions,
+              ] else
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        visiblePatientTitle(
+                          fullName: patient.fullName,
+                          patientKey: patient.fiscalCode,
+                        ),
+                        style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    actions,
+                  ],
+                ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  _metaBadge('CF', visiblePatientFiscalCode(patient.fiscalCode)),
+                  _metaBadge('Medico', data.resolvedDoctorName),
+                  _metaBadge('Esenzione', data.primaryExemption),
+                  _metaBadge('Città', data.displayCity),
+                  _metaBadge('Ultima ricetta', _formatDate(data.lastPrescriptionDate)),
+                ],
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildHeaderQuickActions(_PatientDetailData data) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        _headerActionButton(
+          icon: Icons.space_dashboard_rounded,
+          tooltip: 'Dashboard',
+          onTap: () => _navigateToPrimaryPage(0),
+        ),
+        _headerActionButton(
+          icon: Icons.family_restroom_rounded,
+          tooltip: 'Famiglie',
+          onTap: () => _navigateToPrimaryPage(1),
+        ),
+        _headerActionButton(
+          icon: Icons.settings_rounded,
+          tooltip: 'Impostazioni',
+          onTap: () => _navigateToPrimaryPage(2),
+        ),
+        _headerActionButton(
+          icon: Icons.edit_outlined,
+          tooltip: 'Modifica assistito',
+          onTap: () => _editPatient(data),
+        ),
+      ],
+    );
+  }
+
+  Widget _headerActionButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: Icon(icon, color: Colors.white, size: 20),
+        ),
+      ),
+    );
+  }
+
+  void _navigateToPrimaryPage(int index) {
+    appNavigationIndex.value = index;
+    Navigator.of(context).popUntil((Route<dynamic> route) => route.isFirst);
+  }
+
+
+  void _showTransientError(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.red,
+        content: Text(message),
+      ),
+    );
+  }
+
+
+  Patient? _findPatientByFiscalCode(List<Patient> patients, String fiscalCode) {
+    final String normalizedFiscalCode =
+        PatientInputNormalizer.normalizeFiscalCode(fiscalCode);
+    for (final Patient patient in patients) {
+      if (PatientInputNormalizer.normalizeFiscalCode(patient.fiscalCode) ==
+          normalizedFiscalCode) {
+        return patient;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _openCreateFamilyFromPatientDialog(_PatientDetailData data) async {
+    final Patient? currentPatient = data.patient;
+    if (currentPatient == null) {
+      return;
+    }
+    final String currentCode =
+        PatientInputNormalizer.normalizeFiscalCode(currentPatient.fiscalCode);
+    final List<Patient> allPatients = await _patientsRepository.getAllPatients();
+    final List<Patient> availablePatients = allPatients
+        .where(
+          (Patient item) =>
+              PatientInputNormalizer.normalizeFiscalCode(item.fiscalCode) !=
+              currentCode,
+        )
+        .toList();
+    final TextEditingController nameController = TextEditingController();
+    final TextEditingController searchController = TextEditingController();
+    final Set<String> selectedCodes = <String>{};
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (BuildContext dialogContext) {
+          String localError = '';
+          bool busy = false;
+
+          Future<void> submit(StateSetter setLocalState) async {
+            setLocalState(() {
+              busy = true;
+              localError = '';
+            });
+            try {
+              await _familyGroupsRepository.createFamily(
+                name: nameController.text,
+                memberFiscalCodes: <String>[currentCode, ...selectedCodes],
+              );
+              if (dialogContext.mounted) {
+                Navigator.of(dialogContext).pop();
+              }
+              if (!mounted) {
+                return;
+              }
+              _refresh('Famiglia creata e collegata all'assistito.');
+            } on FamilyMutationException catch (e) {
+              if (dialogContext.mounted) {
+                setLocalState(() {
+                  busy = false;
+                  localError = e.message;
+                });
+              }
+            } catch (e) {
+              if (dialogContext.mounted) {
+                setLocalState(() {
+                  busy = false;
+                  localError = 'Errore creazione famiglia: $e';
+                });
+              }
+            }
+          }
+
+          return StatefulBuilder(
+            builder: (BuildContext context, StateSetter setLocalState) {
+              final String query = searchController.text.trim().toUpperCase();
+              final List<Patient> suggestions = availablePatients.where((Patient patient) {
+                final String fiscalCode =
+                    PatientInputNormalizer.normalizeFiscalCode(patient.fiscalCode);
+                if (selectedCodes.contains(fiscalCode)) {
+                  return false;
+                }
+                if (query.isEmpty) {
+                  return false;
+                }
+                final String fullName = patient.fullName.trim().toUpperCase();
+                return fiscalCode.contains(query) || fullName.contains(query);
+              }).take(8).toList();
+
+              return AlertDialog(
+                backgroundColor: AppColors.panel,
+                title: const Text(
+                  'Nuova famiglia da assistito',
+                  style: TextStyle(color: Colors.white),
+                ),
+                content: SizedBox(
+                  width: 560,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _dialogField(
+                          nameController,
+                          'Nome gruppo famiglia',
+                          helperText:
+                              'L'assistito corrente viene incluso automaticamente nel nucleo.',
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          'Assistito corrente',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        _familySelectionChip(
+                          label: visiblePatientTitle(
+                            fullName: currentPatient.fullName,
+                            patientKey: currentPatient.fiscalCode,
+                          ),
+                          sublabel: visiblePatientFiscalCode(currentPatient.fiscalCode),
+                          color: AppColors.green,
+                        ),
+                        const SizedBox(height: 18),
+                        _dialogField(
+                          searchController,
+                          'Aggiungi altri membri per nome o CF',
+                          helperText:
+                              'I pazienti già assegnati ad altri nuclei verranno bloccati in salvataggio.',
+                          onChanged: (_) => setLocalState(() {}),
+                        ),
+                        if (suggestions.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: AppColors.panelSoft,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: Colors.white10),
+                            ),
+                            child: Column(
+                              children: suggestions.map((Patient patient) {
+                                final String fiscalCode =
+                                    PatientInputNormalizer.normalizeFiscalCode(patient.fiscalCode);
+                                return ListTile(
+                                  dense: true,
+                                  title: Text(
+                                    visiblePatientTitle(
+                                      fullName: patient.fullName,
+                                      patientKey: patient.fiscalCode,
+                                    ),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    visiblePatientFiscalCode(patient.fiscalCode),
+                                    style: const TextStyle(color: Colors.white70),
+                                  ),
+                                  trailing: const Icon(
+                                    Icons.add_circle_outline,
+                                    color: Colors.white70,
+                                  ),
+                                  onTap: () {
+                                    setLocalState(() {
+                                      selectedCodes.add(fiscalCode);
+                                      searchController.clear();
+                                      localError = '';
+                                    });
+                                  },
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        Text(
+                          'Membri aggiuntivi',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        if (selectedCodes.isEmpty)
+                          const Text(
+                            'Nessun altro membro selezionato.',
+                            style: TextStyle(color: Colors.white60),
+                          )
+                        else
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: selectedCodes.map((String fiscalCode) {
+                              final Patient? patient = _findPatientByFiscalCode(
+                                availablePatients,
+                                fiscalCode,
+                              );
+                              return InputChip(
+                                backgroundColor: AppColors.panelSoft,
+                                label: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      visiblePatientTitle(
+                                        fullName: patient?.fullName ?? '',
+                                        patientKey: fiscalCode,
+                                      ),
+                                      style: const TextStyle(color: Colors.white),
+                                    ),
+                                    Text(
+                                      visiblePatientFiscalCode(fiscalCode),
+                                      style: const TextStyle(color: Colors.white60),
+                                    ),
+                                  ],
+                                ),
+                                onDeleted: busy
+                                    ? null
+                                    : () {
+                                        setLocalState(() {
+                                          selectedCodes.remove(fiscalCode);
+                                        });
+                                      },
+                              );
+                            }).toList(),
+                          ),
+                        if (localError.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            localError,
+                            style: const TextStyle(
+                              color: AppColors.red,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: busy ? null : () => Navigator.of(dialogContext).pop(),
+                    child: const Text(
+                      'Annulla',
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                  ),
+                  FilledButton(
+                    onPressed: busy ? null : () => submit(setLocalState),
+                    child: busy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Crea famiglia'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      nameController.dispose();
+      searchController.dispose();
+    }
+  }
+
+  Future<void> _openJoinExistingFamilyDialog(_PatientDetailData data) async {
+    final Patient? currentPatient = data.patient;
+    if (currentPatient == null) {
+      return;
+    }
+    final List<FamilyGroup> families = await _familyGroupsRepository.getAllFamilies();
+    if (families.isEmpty) {
+      _showTransientError('Non esistono famiglie a cui aggiungere l'assistito.');
+      return;
+    }
+    final List<Patient> patients = await _patientsRepository.getAllPatients();
+    final Map<String, Patient> patientsByCode = <String, Patient>{
+      for (final Patient patient in patients)
+        PatientInputNormalizer.normalizeFiscalCode(patient.fiscalCode): patient,
+    };
+    final String currentCode =
+        PatientInputNormalizer.normalizeFiscalCode(currentPatient.fiscalCode);
+    final TextEditingController searchController = TextEditingController();
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (BuildContext dialogContext) {
+          String localError = '';
+          bool busy = false;
+          String? selectedFamilyId;
+
+          Future<void> submit(StateSetter setLocalState) async {
+            if (selectedFamilyId == null || selectedFamilyId!.trim().isEmpty) {
+              setLocalState(() {
+                localError = 'Seleziona una famiglia esistente.';
+              });
+              return;
+            }
+            setLocalState(() {
+              busy = true;
+              localError = '';
+            });
+            try {
+              await _familyGroupsRepository.addMembersToFamily(
+                familyId: selectedFamilyId!,
+                memberFiscalCodes: <String>[currentCode],
+              );
+              if (dialogContext.mounted) {
+                Navigator.of(dialogContext).pop();
+              }
+              if (!mounted) {
+                return;
+              }
+              _refresh('Assistito aggiunto al nucleo familiare.');
+            } on FamilyMutationException catch (e) {
+              if (dialogContext.mounted) {
+                setLocalState(() {
+                  busy = false;
+                  localError = e.message;
+                });
+              }
+            } catch (e) {
+              if (dialogContext.mounted) {
+                setLocalState(() {
+                  busy = false;
+                  localError = 'Errore collegamento famiglia: $e';
+                });
+              }
+            }
+          }
+
+          return StatefulBuilder(
+            builder: (BuildContext context, StateSetter setLocalState) {
+              final String query = searchController.text.trim().toUpperCase();
+              final List<FamilyGroup> filteredFamilies = families.where((FamilyGroup family) {
+                if (query.isEmpty) {
+                  return true;
+                }
+                final String familyName = family.name.trim().toUpperCase();
+                final String familyId = family.id.trim().toUpperCase();
+                if (familyName.contains(query) || familyId.contains(query)) {
+                  return true;
+                }
+                for (final String code in family.memberFiscalCodes) {
+                  if (code.toUpperCase().contains(query)) {
+                    return true;
+                  }
+                  final Patient? patient = patientsByCode[
+                    PatientInputNormalizer.normalizeFiscalCode(code)
+                  ];
+                  if ((patient?.fullName ?? '').trim().toUpperCase().contains(query)) {
+                    return true;
+                  }
+                }
+                return false;
+              }).toList();
+
+              return AlertDialog(
+                backgroundColor: AppColors.panel,
+                title: const Text(
+                  'Aggiungi a famiglia esistente',
+                  style: TextStyle(color: Colors.white),
+                ),
+                content: SizedBox(
+                  width: 620,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          visiblePatientTitle(
+                            fullName: currentPatient.fullName,
+                            patientKey: currentPatient.fiscalCode,
+                          ),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          visiblePatientFiscalCode(currentPatient.fiscalCode),
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                        const SizedBox(height: 16),
+                        _dialogField(
+                          searchController,
+                          'Cerca famiglia per nome, ID, nome assistito o CF',
+                          onChanged: (_) => setLocalState(() {}),
+                        ),
+                        const SizedBox(height: 12),
+                        if (filteredFamilies.isEmpty)
+                          const Text(
+                            'Nessuna famiglia trovata.',
+                            style: TextStyle(color: Colors.white60),
+                          )
+                        else
+                          Container(
+                            decoration: BoxDecoration(
+                              color: AppColors.panelSoft,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: Colors.white10),
+                            ),
+                            child: Column(
+                              children: filteredFamilies.map((FamilyGroup family) {
+                                final bool selected = family.id == selectedFamilyId;
+                                final String label = family.name.trim().isNotEmpty
+                                    ? family.name.trim()
+                                    : family.id.trim();
+                                final List<String> members = family.memberFiscalCodes.map((String code) {
+                                  final Patient? patient = patientsByCode[
+                                    PatientInputNormalizer.normalizeFiscalCode(code)
+                                  ];
+                                  final String title = visiblePatientTitle(
+                                    fullName: patient?.fullName ?? '',
+                                    patientKey: code,
+                                  );
+                                  return '$title · ${visiblePatientFiscalCode(code)}';
+                                }).toList();
+                                return RadioListTile<String>(
+                                  value: family.id,
+                                  groupValue: selectedFamilyId,
+                                  activeColor: FamilyGroupColorUtils.colorForIndex(family.colorIndex),
+                                  onChanged: busy
+                                      ? null
+                                      : (String? value) {
+                                          setLocalState(() {
+                                            selectedFamilyId = value;
+                                            localError = '';
+                                          });
+                                        },
+                                  title: Row(
+                                    children: [
+                                      Container(
+                                        width: 12,
+                                        height: 12,
+                                        decoration: BoxDecoration(
+                                          color: FamilyGroupColorUtils.colorForIndex(family.colorIndex),
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          label.toUpperCase(),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  subtitle: Padding(
+                                    padding: const EdgeInsets.only(top: 6),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Family ID: ${family.id}',
+                                          style: const TextStyle(color: Colors.white60),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          members.join('\n'),
+                                          style: const TextStyle(color: Colors.white70),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  selected: selected,
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                        if (localError.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            localError,
+                            style: const TextStyle(
+                              color: AppColors.red,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: busy ? null : () => Navigator.of(dialogContext).pop(),
+                    child: const Text(
+                      'Annulla',
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                  ),
+                  FilledButton(
+                    onPressed: busy ? null : () => submit(setLocalState),
+                    child: busy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Collega'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      searchController.dispose();
+    }
+  }
+
+  Future<void> _openAddFamilyMembersDialog({
+    required _PatientFamilyContext familyContext,
+  }) async {
+    final List<Patient> allPatients = await _patientsRepository.getAllPatients();
+    final Set<String> existingMembers = familyContext.members
+        .map((_PatientFamilyMember item) =>
+            PatientInputNormalizer.normalizeFiscalCode(item.fiscalCode))
+        .where((String item) => item.isNotEmpty)
+        .toSet();
+    final List<Patient> availablePatients = allPatients.where((Patient patient) {
+      final String fiscalCode =
+          PatientInputNormalizer.normalizeFiscalCode(patient.fiscalCode);
+      return !existingMembers.contains(fiscalCode);
+    }).toList();
+    final TextEditingController searchController = TextEditingController();
+    final Set<String> selectedCodes = <String>{};
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (BuildContext dialogContext) {
+          String localError = '';
+          bool busy = false;
+
+          Future<void> submit(StateSetter setLocalState) async {
+            setLocalState(() {
+              busy = true;
+              localError = '';
+            });
+            try {
+              await _familyGroupsRepository.addMembersToFamily(
+                familyId: familyContext.family.id,
+                memberFiscalCodes: selectedCodes,
+              );
+              if (dialogContext.mounted) {
+                Navigator.of(dialogContext).pop();
+              }
+              if (!mounted) {
+                return;
+              }
+              _refresh('Membri famiglia aggiornati.');
+            } on FamilyMutationException catch (e) {
+              if (dialogContext.mounted) {
+                setLocalState(() {
+                  busy = false;
+                  localError = e.message;
+                });
+              }
+            } catch (e) {
+              if (dialogContext.mounted) {
+                setLocalState(() {
+                  busy = false;
+                  localError = 'Errore aggiunta membri: $e';
+                });
+              }
+            }
+          }
+
+          return StatefulBuilder(
+            builder: (BuildContext context, StateSetter setLocalState) {
+              final String query = searchController.text.trim().toUpperCase();
+              final List<Patient> suggestions = availablePatients.where((Patient patient) {
+                final String fiscalCode =
+                    PatientInputNormalizer.normalizeFiscalCode(patient.fiscalCode);
+                if (selectedCodes.contains(fiscalCode)) {
+                  return false;
+                }
+                if (query.isEmpty) {
+                  return false;
+                }
+                final String fullName = patient.fullName.trim().toUpperCase();
+                return fiscalCode.contains(query) || fullName.contains(query);
+              }).take(8).toList();
+
+              return AlertDialog(
+                backgroundColor: AppColors.panel,
+                title: const Text(
+                  'Aggiungi membri al nucleo',
+                  style: TextStyle(color: Colors.white),
+                ),
+                content: SizedBox(
+                  width: 560,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          familyContext.displayLabel.toUpperCase(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Family ID: ${familyContext.family.id}',
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                        const SizedBox(height: 16),
+                        _dialogField(
+                          searchController,
+                          'Cerca assistito per nome o CF',
+                          helperText:
+                              'Sono esclusi i membri già presenti nel nucleo. Se il paziente appartiene a un altro nucleo il salvataggio verrà bloccato.',
+                          onChanged: (_) => setLocalState(() {}),
+                        ),
+                        if (suggestions.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: AppColors.panelSoft,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: Colors.white10),
+                            ),
+                            child: Column(
+                              children: suggestions.map((Patient patient) {
+                                final String fiscalCode =
+                                    PatientInputNormalizer.normalizeFiscalCode(patient.fiscalCode);
+                                return ListTile(
+                                  dense: true,
+                                  title: Text(
+                                    visiblePatientTitle(
+                                      fullName: patient.fullName,
+                                      patientKey: patient.fiscalCode,
+                                    ),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    visiblePatientFiscalCode(patient.fiscalCode),
+                                    style: const TextStyle(color: Colors.white70),
+                                  ),
+                                  trailing: const Icon(
+                                    Icons.add_circle_outline,
+                                    color: Colors.white70,
+                                  ),
+                                  onTap: () {
+                                    setLocalState(() {
+                                      selectedCodes.add(fiscalCode);
+                                      searchController.clear();
+                                      localError = '';
+                                    });
+                                  },
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        Text(
+                          'Nuovi membri selezionati',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        if (selectedCodes.isEmpty)
+                          const Text(
+                            'Nessun nuovo membro selezionato.',
+                            style: TextStyle(color: Colors.white60),
+                          )
+                        else
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: selectedCodes.map((String fiscalCode) {
+                              final Patient? patient = _findPatientByFiscalCode(
+                                availablePatients,
+                                fiscalCode,
+                              );
+                              return InputChip(
+                                backgroundColor: AppColors.panelSoft,
+                                label: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      visiblePatientTitle(
+                                        fullName: patient?.fullName ?? '',
+                                        patientKey: fiscalCode,
+                                      ),
+                                      style: const TextStyle(color: Colors.white),
+                                    ),
+                                    Text(
+                                      visiblePatientFiscalCode(fiscalCode),
+                                      style: const TextStyle(color: Colors.white60),
+                                    ),
+                                  ],
+                                ),
+                                onDeleted: busy
+                                    ? null
+                                    : () {
+                                        setLocalState(() {
+                                          selectedCodes.remove(fiscalCode);
+                                        });
+                                      },
+                              );
+                            }).toList(),
+                          ),
+                        if (localError.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            localError,
+                            style: const TextStyle(
+                              color: AppColors.red,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: busy ? null : () => Navigator.of(dialogContext).pop(),
+                    child: const Text(
+                      'Annulla',
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                  ),
+                  FilledButton(
+                    onPressed: busy ? null : () => submit(setLocalState),
+                    child: busy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Aggiungi'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      searchController.dispose();
+    }
+  }
+
+  Future<void> _removeFamilyMember({
+    required _PatientFamilyContext familyContext,
+    required _PatientFamilyMember member,
+  }) async {
+    final String memberTitle = visiblePatientTitle(
+      fullName: member.patient?.fullName ?? '',
+      patientKey: member.fiscalCode,
+    );
+    final bool confirmed = await _confirmDelete(
+      title: member.isCurrentPatient
+          ? 'Uscire dal nucleo familiare?'
+          : 'Rimuovere membro dal nucleo?',
+      message: member.isCurrentPatient
+          ? 'L'assistito corrente verrà scollegato dal nucleo ${familyContext.displayLabel}.'
+          : '$memberTitle verrà rimosso dal nucleo ${familyContext.displayLabel}.',
+    );
+    if (!confirmed) {
+      return;
+    }
+    try {
+      final FamilyRemovalResult result =
+          await _familyGroupsRepository.removeMemberFromFamily(
+        familyId: familyContext.family.id,
+        memberFiscalCode: member.fiscalCode,
+      );
+      if (!mounted) {
+        return;
+      }
+      _refresh(
+        result.deletedFamily
+            ? 'Famiglia eliminata: nessun membro residuo.'
+            : member.isCurrentPatient
+                ? 'Assistito rimosso dal nucleo familiare.'
+                : 'Membro rimosso dal nucleo familiare.',
+      );
+    } on FamilyMutationException catch (e) {
+      _showTransientError(e.message);
+    } catch (e) {
+      _showTransientError('Errore aggiornamento famiglia: $e');
+    }
+  }
+
+  Widget _familySelectionChip({
+    required String label,
+    required String sublabel,
+    required Color color,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.panelSoft,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.8)),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            visiblePatientTitle(
-              fullName: patient.fullName,
-              patientKey: patient.fiscalCode,
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
             ),
-            style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900),
           ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              _metaBadge('CF', visiblePatientFiscalCode(patient.fiscalCode)),
-              _metaBadge('Medico', data.resolvedDoctorName),
-              _metaBadge('Esenzione', data.primaryExemption),
-              _metaBadge('Città', data.displayCity),
-              _metaBadge('Ultima ricetta', _formatDate(data.lastPrescriptionDate)),
-            ],
+          const SizedBox(height: 4),
+          Text(
+            sublabel,
+            style: const TextStyle(color: Colors.white70),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _openFamilyMemberDetail(String fiscalCode) async {
+    if (PatientInputNormalizer.normalizeFiscalCode(fiscalCode) ==
+        PatientInputNormalizer.normalizeFiscalCode(_currentFiscalCode)) {
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PatientDetailPage(fiscalCode: fiscalCode),
+      ),
+    );
+    if (!mounted) {
+      return;
+    }
+    _refresh();
+  }
+
+
+  Widget _buildFamilySection(_PatientDetailData data) {
+    final _PatientFamilyContext? familyContext = data.familyContext;
+    if (familyContext == null) {
+      return _section(
+        title: 'Nucleo familiare',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Nessuna famiglia associata.',
+              style: TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                _familyActionButton(
+                  icon: Icons.group_work_outlined,
+                  label: 'Nuova famiglia',
+                  onPressed: () => _openCreateFamilyFromPatientDialog(data),
+                ),
+                _familyActionButton(
+                  icon: Icons.group_add_outlined,
+                  label: 'Aggiungi a famiglia',
+                  onPressed: () => _openJoinExistingFamilyDialog(data),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    final Color familyColor = familyContext.color;
+    final String familyLabel = familyContext.displayLabel;
+    return _section(
+      title: 'Nucleo familiare',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 18,
+                height: 18,
+                margin: const EdgeInsets.only(top: 2),
+                decoration: BoxDecoration(
+                  color: familyColor,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      familyLabel.toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Family ID: ${familyContext.family.id}',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _familyActionButton(
+                icon: Icons.person_add_alt_1_rounded,
+                label: 'Aggiungi membro',
+                onPressed: () => _openAddFamilyMembersDialog(
+                  familyContext: familyContext,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ...familyContext.members.map(
+            (_PatientFamilyMember member) => _buildFamilyMemberCard(
+              familyContext: familyContext,
+              member: member,
+              familyColor: familyColor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFamilyMemberCard({
+    required _PatientFamilyContext familyContext,
+    required _PatientFamilyMember member,
+    required Color familyColor,
+  }) {
+    final Patient? relatedPatient = member.patient;
+    final String fullName = relatedPatient?.fullName ?? '';
+    final String title = visiblePatientTitle(
+      fullName: fullName,
+      patientKey: member.fiscalCode,
+    );
+    final List<Widget> statusPills = <Widget>[
+      if (member.isCurrentPatient) _pill('ASSISTITO CORRENTE', familyColor),
+      ..._familyMemberStatusPills(relatedPatient),
+    ];
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: member.isCurrentPatient
+          ? null
+          : () => _openFamilyMemberDetail(member.fiscalCode),
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.panelSoft,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: member.isCurrentPatient ? familyColor : Colors.white10,
+            width: member.isCurrentPatient ? 1.4 : 1,
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    visiblePatientFiscalCode(member.fiscalCode),
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  if (statusPills.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: statusPills,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Column(
+              children: [
+                Tooltip(
+                  message: member.isCurrentPatient
+                      ? 'Rimuovi assistito dal nucleo'
+                      : 'Rimuovi membro dal nucleo',
+                  child: IconButton(
+                    onPressed: () => _removeFamilyMember(
+                      familyContext: familyContext,
+                      member: member,
+                    ),
+                    icon: const Icon(
+                      Icons.person_remove_alt_1_outlined,
+                      color: AppColors.red,
+                    ),
+                  ),
+                ),
+                if (!member.isCurrentPatient)
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: Colors.white70,
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _familyActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: Colors.white,
+        side: const BorderSide(color: Colors.white24),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+      icon: Icon(icon, size: 18),
+      label: Text(label),
+    );
+  }
+
+  List<Widget> _familyMemberStatusPills(Patient? patient) {
+    if (patient == null) {
+      return const <Widget>[];
+    }
+    return <Widget>[
+      if (patient.hasDpc) _pill('DPC', AppColors.coral),
+      if (patient.hasDebt) _pill('DEBITI', AppColors.wine),
+      if (patient.hasAdvance) _pill('ANTICIPI', AppColors.amber),
+      if (patient.hasBooking) _pill('PRENOTAZIONI', AppColors.yellow),
+    ];
   }
 
   Widget _summaryCard({
@@ -1300,6 +2557,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     int maxLines = 1,
     String? helperText,
     bool readOnly = false,
+    ValueChanged<String>? onChanged,
   }) {
     return TextField(
       controller: controller,
@@ -1307,6 +2565,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       inputFormatters: inputFormatters,
       maxLines: maxLines,
       readOnly: readOnly,
+      onChanged: onChanged,
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         labelText: label,
@@ -1404,6 +2663,7 @@ class _PatientDetailData {
   final AppSettings settings;
   final String resolvedDoctorName;
   final TherapeuticAdviceNote? therapeuticAdvice;
+  final _PatientFamilyContext? familyContext;
 
   const _PatientDetailData({
     required this.patient,
@@ -1416,6 +2676,7 @@ class _PatientDetailData {
     required this.settings,
     required this.resolvedDoctorName,
     required this.therapeuticAdvice,
+    required this.familyContext,
   });
 
   double get totalDebt => debts.fold<double>(0, (double sum, Debt item) => sum + item.residualAmount);
@@ -1496,4 +2757,37 @@ class _PatientDetailData {
       legacyPrescriptions: imports.isNotEmpty ? const <Prescription>[] : prescriptions,
     );
   }
+}
+
+
+class _PatientFamilyContext {
+  final FamilyGroup family;
+  final List<_PatientFamilyMember> members;
+
+  const _PatientFamilyContext({
+    required this.family,
+    required this.members,
+  });
+
+  Color get color => FamilyGroupColorUtils.colorForIndex(family.colorIndex);
+
+  String get displayLabel {
+    final String normalizedName = family.name.trim();
+    if (normalizedName.isNotEmpty) {
+      return normalizedName;
+    }
+    return family.id.trim();
+  }
+}
+
+class _PatientFamilyMember {
+  final String fiscalCode;
+  final Patient? patient;
+  final bool isCurrentPatient;
+
+  const _PatientFamilyMember({
+    required this.fiscalCode,
+    required this.patient,
+    required this.isCurrentPatient,
+  });
 }

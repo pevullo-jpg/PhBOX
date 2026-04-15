@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/utils/family_group_color_utils.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/family_group.dart';
 import '../../../data/models/patient.dart';
@@ -31,16 +32,6 @@ class _FamiliesPageState extends State<FamiliesPage> {
   Future<_FamiliesData>? _future;
   String _message = '';
 
-  static const List<Color> _familyColors = <Color>[
-    Color(0xFF2563EB),
-    Color(0xFF059669),
-    Color(0xFFD97706),
-    Color(0xFFDC2626),
-    Color(0xFF7C3AED),
-    Color(0xFF0891B2),
-    Color(0xFF65A30D),
-    Color(0xFFEA580C),
-  ];
 
   @override
   void initState() {
@@ -240,7 +231,7 @@ class _FamiliesPageState extends State<FamiliesPage> {
                       id: initial?.id ?? 'family_${DateTime.now().millisecondsSinceEpoch}',
                       name: name,
                       memberFiscalCodes: selected.toList()..sort(),
-                      colorIndex: initial?.colorIndex ?? ((DateTime.now().millisecondsSinceEpoch ~/ 1000) % _familyColors.length),
+                      colorIndex: initial?.colorIndex ?? ((DateTime.now().millisecondsSinceEpoch ~/ 1000) % FamilyGroupColorUtils.palette.length),
                       createdAt: initial?.createdAt ?? DateTime.now(),
                       updatedAt: DateTime.now(),
                     );
@@ -263,7 +254,7 @@ class _FamiliesPageState extends State<FamiliesPage> {
     _refresh('Famiglia eliminata.');
   }
 
-  Color _familyColor(int index) => _familyColors[index % _familyColors.length];
+  Color _familyColor(int index) => FamilyGroupColorUtils.colorForIndex(index);
 
   @override
   Widget build(BuildContext context) {
