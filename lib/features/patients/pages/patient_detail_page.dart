@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -29,6 +31,7 @@ import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../data/repositories/therapeutic_advice_repository.dart';
+import '../../../shared/mixins/page_auto_refresh_mixin.dart';
 import '../../../shared/navigation/app_navigation.dart';
 import '../../../shared/widgets/floating_page_menu.dart';
 import '../../../theme/app_theme.dart';
@@ -42,7 +45,7 @@ class PatientDetailPage extends StatefulWidget {
   State<PatientDetailPage> createState() => _PatientDetailPageState();
 }
 
-class _PatientDetailPageState extends State<PatientDetailPage> {
+class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefreshMixin<PatientDetailPage> {
   late final PatientsRepository _patientsRepository;
   late final AdvancesRepository _advancesRepository;
   late final DebtsRepository _debtsRepository;
@@ -74,6 +77,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     _therapeuticAdviceRepository = TherapeuticAdviceRepository(datasource: datasource);
     _currentFiscalCode = PatientInputNormalizer.normalizeFiscalCode(widget.fiscalCode);
     _future = _load();
+    startPageAutoRefresh();
   }
 
   @override
@@ -87,6 +91,29 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       _currentFiscalCode = nextFiscalCode;
       _future = _load();
     }
+  }
+
+
+  @override
+  void onAutoRefreshTick() {
+    _refresh();
+  }
+
+  Future<void> _copyToClipboard(String value, {String message = 'CF copiato negli appunti.'}) async {
+    final String normalized = value.trim();
+    if (normalized.isEmpty || normalized == '-') {
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: normalized));
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.green,
+        content: Text(message),
+      ),
+    );
   }
 
   Future<_PatientDetailData> _load() async {
@@ -1264,7 +1291,13 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
             spacing: 10,
             runSpacing: 10,
             children: [
-              _metaBadge('CF', visiblePatientFiscalCode(patient.fiscalCode)),
+              _metaBadge(
+                'CF',
+                visiblePatientFiscalCode(patient.fiscalCode),
+                tooltip: 'Copia CF',
+                icon: Icons.copy_rounded,
+                onTap: () => _copyToClipboard(visiblePatientFiscalCode(patient.fiscalCode)),
+              ),
               _metaBadge('Medico', data.resolvedDoctorName),
               _metaBadge('Esenzione', data.primaryExemption),
               _metaBadge('Città', data.displayCity),
@@ -2463,21 +2496,46 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     );
   }
 
-  Widget _metaBadge(String label, String value) {
+  Widget _metaBadge(
+    String label,
+    String value, {
+    IconData? icon,
+    String? tooltip,
+    VoidCallback? onTap,
+  }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: AppColors.panelSoft,
         borderRadius: BorderRadius.circular(14),
       ),
-      child: RichText(
-        text: TextSpan(
-          style: const TextStyle(color: Colors.white),
-          children: [
-            TextSpan(text: '$label: ', style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w800)),
-            TextSpan(text: value, style: const TextStyle(fontWeight: FontWeight.w700)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          RichText(
+            text: TextSpan(
+              style: const TextStyle(color: Colors.white),
+              children: [
+                TextSpan(text: '$label: ', style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w800)),
+                TextSpan(text: value, style: const TextStyle(fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ),
+          if (icon != null && onTap != null) ...[
+            const SizedBox(width: 8),
+            Tooltip(
+              message: tooltip ?? '',
+              child: InkWell(
+                borderRadius: BorderRadius.circular(999),
+                onTap: onTap,
+                child: Padding(
+                  padding: const EdgeInsets.all(2),
+                  child: Icon(icon, size: 16, color: Colors.white70),
+                ),
+              ),
+            ),
           ],
-        ),
+        ],
       ),
     );
   }

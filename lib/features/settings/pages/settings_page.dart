@@ -1,9 +1,20 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/services/backup_export_service.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/app_settings.dart';
+import '../../../data/repositories/advances_repository.dart';
+import '../../../data/repositories/bookings_repository.dart';
+import '../../../data/repositories/debts_repository.dart';
+import '../../../data/repositories/doctor_patient_links_repository.dart';
+import '../../../data/repositories/drive_pdf_imports_repository.dart';
+import '../../../data/repositories/family_groups_repository.dart';
+import '../../../data/repositories/patients_repository.dart';
+import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
+import '../../../data/repositories/therapeutic_advice_repository.dart';
+import '../../../shared/mixins/page_auto_refresh_mixin.dart';
 import '../../../shared/navigation/app_navigation.dart';
 import '../../../shared/widgets/floating_page_menu.dart';
 import '../../../shared/widgets/settings_field_card.dart';
@@ -16,13 +27,17 @@ class SettingsPage extends StatefulWidget {
   State<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _SettingsPageState extends State<SettingsPage> {
+class _SettingsPageState extends State<SettingsPage>
+    with PageAutoRefreshMixin<SettingsPage> {
   late final SettingsRepository repository;
+  late final BackupExportService _backupExportService;
+
   final TextEditingController expiryWarningController = TextEditingController();
   final TextEditingController doctorsCatalogController = TextEditingController();
 
   bool isSaving = false;
   bool isLoading = true;
+  bool isExportingBackup = false;
   String message = '';
   bool isErrorMessage = false;
 
@@ -34,7 +49,23 @@ class _SettingsPageState extends State<SettingsPage> {
     final FirestoreFirebaseDatasource datasource =
         FirestoreFirebaseDatasource(FirebaseFirestore.instance);
     repository = SettingsRepository(datasource: datasource);
+    _backupExportService = BackupExportService(
+      settingsRepository: repository,
+      patientsRepository: PatientsRepository(datasource: datasource),
+      familyGroupsRepository: FamilyGroupsRepository(datasource: datasource),
+      doctorPatientLinksRepository:
+          DoctorPatientLinksRepository(datasource: datasource),
+      prescriptionsRepository: PrescriptionsRepository(datasource: datasource),
+      drivePdfImportsRepository:
+          DrivePdfImportsRepository(datasource: datasource),
+      debtsRepository: DebtsRepository(datasource: datasource),
+      advancesRepository: AdvancesRepository(datasource: datasource),
+      bookingsRepository: BookingsRepository(datasource: datasource),
+      therapeuticAdviceRepository:
+          TherapeuticAdviceRepository(datasource: datasource),
+    );
     _load();
+    startPageAutoRefresh();
   }
 
   @override
@@ -44,10 +75,42 @@ class _SettingsPageState extends State<SettingsPage> {
     super.dispose();
   }
 
+  @override
+  bool get shouldAutoRefresh =>
+      appNavigationIndex.value == 2 && !_hasUnsavedChanges && !isExportingBackup;
+
+  @override
+  void onAutoRefreshTick() {
+    _load();
+  }
+
+  bool get _hasUnsavedChanges {
+    final String currentExpiry = currentSettings.expiryWarningDays.toString();
+    final String typedExpiry = expiryWarningController.text.trim();
+    if (typedExpiry != currentExpiry) {
+      return true;
+    }
+
+    final List<String> typedDoctors = doctorsCatalogController.text
+        .split(RegExp(r'[\n,;]+'))
+        .map((String item) => item.trim())
+        .where((String item) => item.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    final List<String> currentDoctors = <String>[
+      ...currentSettings.doctorsCatalog,
+    ]..sort();
+    return typedDoctors.join('|') != currentDoctors.join('|');
+  }
+
   Future<void> _load() async {
     setState(() {
       isLoading = true;
-      message = '';
+      if (message == 'Impostazioni salvate.' || message.startsWith('Backup creato: ')) {
+        message = '';
+        isErrorMessage = false;
+      }
     });
 
     try {
@@ -80,7 +143,8 @@ class _SettingsPageState extends State<SettingsPage> {
     });
 
     try {
-      final int expiryWarningDays = int.tryParse(expiryWarningController.text.trim()) ?? 7;
+      final int expiryWarningDays =
+          int.tryParse(expiryWarningController.text.trim()) ?? 7;
       final List<String> doctorsCatalog = doctorsCatalogController.text
           .split(RegExp(r'[\n,;]+'))
           .map((String item) => item.trim())
@@ -109,6 +173,33 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) return;
       setState(() {
         isSaving = false;
+      });
+    }
+  }
+
+  Future<void> _exportBackup() async {
+    setState(() {
+      isExportingBackup = true;
+      message = '';
+      isErrorMessage = false;
+    });
+
+    try {
+      final String filename = await _backupExportService.exportCurrentSnapshot();
+      if (!mounted) return;
+      setState(() {
+        message = 'Backup creato: $filename';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        message = 'Errore backup: $e';
+        isErrorMessage = true;
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        isExportingBackup = false;
       });
     }
   }
@@ -146,7 +237,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   const SizedBox(height: 20),
                   SettingsFieldCard(
                     title: 'Scadenze',
-                    subtitle: 'Numero di giorni di preavviso per evidenziare le ricette in prossimità di scadenza.',
+                    subtitle:
+                        'Numero di giorni di preavviso per evidenziare le ricette in prossimità di scadenza.',
                     child: Column(
                       children: <Widget>[
                         TextField(
@@ -163,7 +255,8 @@ class _SettingsPageState extends State<SettingsPage> {
                           alignment: Alignment.centerRight,
                           child: FilledButton(
                             onPressed: isSaving ? null : _save,
-                            child: Text(isSaving ? 'Salvataggio...' : 'Salva'),
+                            child:
+                                Text(isSaving ? 'Salvataggio...' : 'Salva'),
                           ),
                         ),
                       ],
@@ -172,7 +265,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   const SizedBox(height: 20),
                   SettingsFieldCard(
                     title: 'Medici disponibili',
-                    subtitle: 'Elenco usato nel menu a tendina degli anticipi. Un medico per riga oppure separati da virgola.',
+                    subtitle:
+                        'Elenco usato nel menu a tendina degli anticipi. Un medico per riga oppure separati da virgola.',
                     child: Column(
                       children: <Widget>[
                         TextField(
@@ -189,12 +283,31 @@ class _SettingsPageState extends State<SettingsPage> {
                       ],
                     ),
                   ),
+                  const SizedBox(height: 20),
+                  SettingsFieldCard(
+                    title: 'Backup',
+                    subtitle:
+                        'Esporta uno snapshot JSON completo dei dati visibili al frontend.',
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton.icon(
+                        onPressed: isExportingBackup ? null : _exportBackup,
+                        icon: const Icon(Icons.download_rounded),
+                        label: Text(
+                          isExportingBackup
+                              ? 'Esportazione...'
+                              : 'Scarica backup',
+                        ),
+                      ),
+                    ),
+                  ),
                   if (message.isNotEmpty) ...<Widget>[
                     const SizedBox(height: 16),
                     Text(
                       message,
                       style: TextStyle(
-                        color: isErrorMessage ? AppColors.red : AppColors.green,
+                        color:
+                            isErrorMessage ? AppColors.red : AppColors.green,
                         fontWeight: FontWeight.w700,
                       ),
                     ),

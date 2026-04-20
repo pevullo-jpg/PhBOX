@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -30,6 +32,8 @@ import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../features/patients/pages/patient_detail_page.dart';
+import '../../../shared/navigation/app_navigation.dart';
+import '../../../shared/mixins/page_auto_refresh_mixin.dart';
 import '../../../theme/app_theme.dart';
 
 class DashboardPage extends StatefulWidget {
@@ -39,7 +43,7 @@ class DashboardPage extends StatefulWidget {
   State<DashboardPage> createState() => _DashboardPageState();
 }
 
-class _DashboardPageState extends State<DashboardPage> {
+class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin<DashboardPage> {
   final TextEditingController _searchController = TextEditingController();
 
   late final PatientsRepository _patientsRepository;
@@ -55,6 +59,8 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<_DashboardData>? _future;
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
+  bool _searchInFlags = false;
+  DateTime? _lastRefreshAt;
 
   @override
   void initState() {
@@ -69,8 +75,9 @@ class _DashboardPageState extends State<DashboardPage> {
     _doctorPatientLinksRepository = DoctorPatientLinksRepository(datasource: datasource);
     _familyGroupsRepository = FamilyGroupsRepository(datasource: datasource);
     _settingsRepository = SettingsRepository(datasource: datasource);
-    _future = _load();
+    _issueLoad();
     _searchController.addListener(_handleSearchChanged);
+    startPageAutoRefresh();
   }
 
   @override
@@ -82,6 +89,64 @@ class _DashboardPageState extends State<DashboardPage> {
 
   void _handleSearchChanged() {
     setState(() {});
+  }
+
+
+  @override
+  bool get shouldAutoRefresh => appNavigationIndex.value == 0;
+
+  @override
+  void onAutoRefreshTick() {
+    _refresh();
+  }
+
+  void _trackRefreshCompletion(Future<_DashboardData> future) {
+    future.then((_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _lastRefreshAt = DateTime.now();
+      });
+    }).catchError((_) {});
+  }
+
+  void _issueLoad() {
+    final Future<_DashboardData> nextFuture = _load();
+    _trackRefreshCompletion(nextFuture);
+    setState(() {
+      _future = nextFuture;
+    });
+  }
+
+  Future<void> _copyToClipboard(String value, {String? message}) async {
+    final String normalized = value.trim();
+    if (normalized.isEmpty || normalized == '-') {
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: normalized));
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.green,
+        content: Text(message ?? 'CF copiato.'),
+      ),
+    );
+  }
+
+  String _formatVintageClock(DateTime? value) {
+    if (value == null) {
+      return '--/--/---- --:--:--';
+    }
+    final String day = value.day.toString().padLeft(2, '0');
+    final String month = value.month.toString().padLeft(2, '0');
+    final String year = value.year.toString().padLeft(4, '0');
+    final String hour = value.hour.toString().padLeft(2, '0');
+    final String minute = value.minute.toString().padLeft(2, '0');
+    final String second = value.second.toString().padLeft(2, '0');
+    return '$day/$month/$year $hour:$minute:$second';
   }
 
   Future<_DashboardData> _load() async {
@@ -178,9 +243,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   void _refresh() {
-    setState(() {
-      _future = _load();
-    });
+    _issueLoad();
   }
 
   List<_PatientDashboardSummary> _applyFilters(List<_PatientDashboardSummary> input, List<FamilyGroup> families) {
@@ -221,11 +284,19 @@ class _DashboardPageState extends State<DashboardPage> {
 
     bool matchesSearch(_PatientDashboardSummary item) {
       if (!hasSearchThreshold) return true;
-      return item.displayName.toLowerCase().contains(query) ||
+      final bool baseMatch = item.displayName.toLowerCase().contains(query) ||
           item.patient.fiscalCode.toLowerCase().contains(query) ||
           item.doctorName.toLowerCase().contains(query) ||
           item.exemptionCode.toLowerCase().contains(query) ||
-          item.city.toLowerCase().contains(query);
+          item.city.toLowerCase().contains(query) ||
+          item.familyName.toLowerCase().contains(query);
+      if (baseMatch) {
+        return true;
+      }
+      if (_searchInFlags) {
+        return item.flagSearchIndex.contains(query);
+      }
+      return false;
     }
 
     final filtered = input.where(matchesCardFilters).toList();
@@ -1905,20 +1976,80 @@ class _DashboardPageState extends State<DashboardPage> {
                         Center(
                           child: SizedBox(
                             width: cardsBlockWidth,
-                            child: TextField(
-                              controller: _searchController,
-                              style: const TextStyle(color: Colors.white, fontSize: 16),
-                              decoration: InputDecoration(
-                                isDense: true,
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                                hintText: 'Cerca assistito (min 3 lettere)',
-                                hintStyle: const TextStyle(color: Colors.white54),
-                                prefixIcon: const Icon(Icons.search, size: 20),
-                                filled: true,
-                                fillColor: AppColors.panel,
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
-                              ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: _searchController,
+                                    style: const TextStyle(color: Colors.white, fontSize: 16),
+                                    decoration: InputDecoration(
+                                      isDense: true,
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                      hintText: _searchInFlags
+                                          ? 'Cerca in assistiti, nuclei e flag (min 3 lettere)'
+                                          : 'Cerca assistito o nucleo (min 3 lettere)',
+                                      hintStyle: const TextStyle(color: Colors.white54),
+                                      prefixIcon: const Icon(Icons.search, size: 20),
+                                      filled: true,
+                                      fillColor: AppColors.panel,
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Tooltip(
+                                  message: _searchInFlags
+                                      ? 'Ricerca nei flag attiva'
+                                      : 'Attiva ricerca nei flag',
+                                  child: Material(
+                                    color: _searchInFlags ? AppColors.yellow : AppColors.panel,
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(16),
+                                      onTap: () {
+                                        setState(() {
+                                          _searchInFlags = !_searchInFlags;
+                                        });
+                                      },
+                                      child: SizedBox(
+                                        width: 52,
+                                        height: 48,
+                                        child: Icon(
+                                          Icons.outlined_flag,
+                                          color: _searchInFlags ? Colors.black : Colors.white70,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: cardsBlockWidth,
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF283018),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: const Color(0xFF97A96B)),
+                                ),
+                                child: Text(
+                                  _formatVintageClock(_lastRefreshAt),
+                                  style: const TextStyle(
+                                    color: Color(0xFFD7F1A2),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 1.4,
+                                    fontFamily: 'Courier',
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                         const SizedBox(height: 8),
@@ -2045,16 +2176,30 @@ class _DashboardPageState extends State<DashboardPage> {
                                           ),
                                           SizedBox(
                                             width: 220,
-                                            child: TextButton(
-                                              style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
-                                              onPressed: () => _openPatient(item),
-                                              child: Text(
-                                                visiblePatientFiscalCode(item.patient.fiscalCode),
-                                                textAlign: TextAlign.left,
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: const TextStyle(color: AppColors.yellow, fontSize: 18.2, fontWeight: FontWeight.w800),
-                                              ),
+                                            child: Row(
+                                              children: [
+                                                Expanded(
+                                                  child: TextButton(
+                                                    style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
+                                                    onPressed: () => _openPatient(item),
+                                                    child: Text(
+                                                      visiblePatientFiscalCode(item.patient.fiscalCode),
+                                                      textAlign: TextAlign.left,
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                      style: const TextStyle(color: AppColors.yellow, fontSize: 18.2, fontWeight: FontWeight.w800),
+                                                    ),
+                                                  ),
+                                                ),
+                                                IconButton(
+                                                  tooltip: 'Copia CF',
+                                                  onPressed: () => _copyToClipboard(
+                                                    visiblePatientFiscalCode(item.patient.fiscalCode),
+                                                    message: 'CF copiato negli appunti.',
+                                                  ),
+                                                  icon: const Icon(Icons.copy_rounded, color: Colors.white70, size: 18),
+                                                ),
+                                              ],
                                             ),
                                           ),
                                           SizedBox(
@@ -2291,6 +2436,7 @@ class _PatientDashboardSummary {
   final int recipeCount;
   final bool hasExpiryAlert;
   final String familyId;
+  final String familyName;
 
   const _PatientDashboardSummary({
     required this.patient,
@@ -2306,6 +2452,7 @@ class _PatientDashboardSummary {
     required this.recipeCount,
     required this.hasExpiryAlert,
     required this.familyId,
+    required this.familyName,
   });
 
   String get displayName => patient.fullName.trim().isEmpty ? patient.fiscalCode : patient.fullName.trim();
@@ -2321,6 +2468,35 @@ class _PatientDashboardSummary {
   }
 
   bool get hasActiveContent => recipeCount > 0 || hasDpc || debts.isNotEmpty || advances.isNotEmpty || bookings.isNotEmpty;
+  String get flagSearchIndex {
+    final Iterable<String> tokens = <String>[
+      ...prescriptions.expand((Prescription item) sync* {
+        yield item.extractedText ?? '';
+        yield item.doctorName ?? '';
+        yield item.exemptionCode ?? '';
+        yield item.city ?? '';
+        for (final prescriptionItem in item.items) {
+          yield prescriptionItem.drugName;
+        }
+      }),
+      ...imports.expand((DrivePdfImport item) sync* {
+        yield item.fileName;
+        yield item.doctorFullName;
+        yield item.city;
+        for (final therapy in item.therapy) {
+          yield therapy;
+        }
+      }),
+      ...debts.expand((Debt item) => <String>[item.description, item.note ?? '']),
+      ...advances.expand((Advance item) => <String>[item.drugName, item.doctorName, item.note ?? '']),
+      ...bookings.expand((Booking item) => <String>[item.drugName, item.note ?? '']),
+      if (hasDpc) 'dpc',
+    ];
+    return tokens
+        .map((String item) => item.trim().toLowerCase())
+        .where((String item) => item.isNotEmpty)
+        .join(' ');
+  }
 
   List<_FlagItem> get dpcItems {
     final fromPrescriptions = prescriptions.where((item) => item.dpcFlag).map((item) {
@@ -2416,16 +2592,18 @@ class _PatientDashboardSummary {
     ];
 
     final bool hasExpiryAlert = expiryCandidates.any(hasExpiringDate);
-    final String familyId = (() {
-      for (final FamilyGroup family in families) {
-        if (family.memberFiscalCodes
-            .map((String e) => e.trim().toUpperCase())
-            .contains(normalizedFiscalCode)) {
-          return family.id;
-        }
+    String familyId = '';
+    String familyName = '';
+    for (final FamilyGroup family in families) {
+      final bool isMember = family.memberFiscalCodes
+          .map((String e) => e.trim().toUpperCase())
+          .contains(normalizedFiscalCode);
+      if (isMember) {
+        familyId = family.id;
+        familyName = family.name.trim();
+        break;
       }
-      return '';
-    })();
+    }
     return _PatientDashboardSummary(
       patient: patient,
       doctorName: doctorName.isEmpty ? '-' : doctorName,
@@ -2440,6 +2618,7 @@ class _PatientDashboardSummary {
       recipeCount: recipeCount,
       hasExpiryAlert: hasExpiryAlert,
       familyId: familyId,
+      familyName: familyName,
     );
   }
 }

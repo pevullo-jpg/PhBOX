@@ -16,6 +16,19 @@ class TherapeuticAdviceRepository {
     return TherapeuticAdviceNote.fromMap(map);
   }
 
+
+
+  Future<List<TherapeuticAdviceNote>> getAllNotes() async {
+    final List<Map<String, dynamic>> rows = await datasource.getCollection(
+      collectionPath: AppCollections.patientTherapeuticAdvice,
+      orderBy: 'updatedAt',
+      descending: true,
+    );
+    return rows
+        .map((Map<String, dynamic> row) => TherapeuticAdviceNote.fromMap(row))
+        .toList();
+  }
+
   Future<void> save({
     required String fiscalCode,
     required String text,
