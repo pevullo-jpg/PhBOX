@@ -1,6 +1,7 @@
 class Patient {
   final String fiscalCode;
   final String fullName;
+  final String? alias;
   final String? city;
   final String? exemptionCode;
   final List<String> exemptions;
@@ -25,6 +26,7 @@ class Patient {
   const Patient({
     required this.fiscalCode,
     required this.fullName,
+    this.alias,
     this.city,
     this.exemptionCode,
     this.exemptions = const <String>[],
@@ -50,6 +52,7 @@ class Patient {
   Patient copyWith({
     String? fiscalCode,
     String? fullName,
+    String? alias,
     String? city,
     String? exemptionCode,
     List<String>? exemptions,
@@ -74,6 +77,7 @@ class Patient {
     return Patient(
       fiscalCode: fiscalCode ?? this.fiscalCode,
       fullName: fullName ?? this.fullName,
+      alias: alias ?? this.alias,
       city: city ?? this.city,
       exemptionCode: exemptionCode ?? this.exemptionCode,
       exemptions: exemptions ?? this.exemptions,
@@ -117,6 +121,7 @@ class Patient {
     return <String, dynamic>{
       'fiscalCode': fiscalCode,
       'fullName': fullName,
+      'alias': alias,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
@@ -132,6 +137,7 @@ class Patient {
     return Patient(
       fiscalCode: _readString(map['fiscalCode'] ?? map['patientFiscalCode']),
       fullName: _readString(map['fullName'] ?? map['patientFullName']),
+      alias: _readNullableString(map['alias'] ?? map['nickname'] ?? map['nomignolo']),
       city: _readNullableString(map['city']),
       exemptionCode: canonicalExemptions.isNotEmpty
           ? canonicalExemptions.first

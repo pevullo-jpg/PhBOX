@@ -920,6 +920,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     final bool temporaryKey = isTemporaryPatientKey(patient.fiscalCode);
     final nameController = TextEditingController(text: nameParts.first);
     final surnameController = TextEditingController(text: nameParts.last);
+    final aliasController = TextEditingController(text: patient.alias?.trim() ?? '');
     final fiscalCodeController = TextEditingController(
       text: temporaryKey ? '' : PatientInputNormalizer.normalizeFiscalCode(patient.fiscalCode),
     );
@@ -943,6 +944,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                 name: nameController.text,
                 surname: surnameController.text,
                 fiscalCodeInput: fiscalCodeController.text,
+                alias: aliasController.text,
               );
               if (dialogContext.mounted) {
                 Navigator.of(dialogContext).pop();
@@ -987,6 +989,8 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                     const SizedBox(height: 12),
                     _dialogField(surnameController, 'Cognome'),
                     const SizedBox(height: 12),
+                    _dialogField(aliasController, 'Alias / nomignolo'),
+                    const SizedBox(height: 12),
                     _dialogField(
                       fiscalCodeController,
                       'Codice fiscale',
@@ -1028,6 +1032,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     } finally {
       nameController.dispose();
       surnameController.dispose();
+      aliasController.dispose();
       fiscalCodeController.dispose();
     }
   }
@@ -1298,6 +1303,8 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                 icon: Icons.copy_rounded,
                 onTap: () => _copyToClipboard(visiblePatientFiscalCode(patient.fiscalCode)),
               ),
+              if ((patient.alias ?? '').trim().isNotEmpty)
+                _metaBadge('Alias', patient.alias!.trim()),
               _metaBadge('Medico', data.resolvedDoctorName),
               _metaBadge('Esenzione', data.primaryExemption),
               _metaBadge('Città', data.displayCity),
@@ -1408,7 +1415,8 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                   return false;
                 }
                 final String fullName = patient.fullName.trim().toUpperCase();
-                return fiscalCode.contains(query) || fullName.contains(query);
+                final String alias = (patient.alias ?? '').trim().toUpperCase();
+                return fiscalCode.contains(query) || fullName.contains(query) || alias.contains(query);
               }).take(8).toList();
 
               return AlertDialog(
@@ -1450,7 +1458,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                         const SizedBox(height: 18),
                         _dialogField(
                           searchController,
-                          'Aggiungi altri membri per nome o CF',
+                          'Aggiungi altri membri per nome, alias o CF',
                           helperText:
                               'I pazienti già assegnati ad altri nuclei verranno bloccati in salvataggio.',
                           onChanged: (_) => setLocalState(() {}),
@@ -1683,6 +1691,9 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                   if ((patient?.fullName ?? '').trim().toUpperCase().contains(query)) {
                     return true;
                   }
+                  if ((patient?.alias ?? '').trim().toUpperCase().contains(query)) {
+                    return true;
+                  }
                 }
                 return false;
               }).toList();
@@ -1718,7 +1729,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                         const SizedBox(height: 16),
                         _dialogField(
                           searchController,
-                          'Cerca famiglia per nome, ID, nome assistito o CF',
+                          'Cerca famiglia per nome, ID, nome assistito, alias o CF',
                           onChanged: (_) => setLocalState(() {}),
                         ),
                         const SizedBox(height: 12),
@@ -1920,7 +1931,8 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                   return false;
                 }
                 final String fullName = patient.fullName.trim().toUpperCase();
-                return fiscalCode.contains(query) || fullName.contains(query);
+                final String alias = (patient.alias ?? '').trim().toUpperCase();
+                return fiscalCode.contains(query) || fullName.contains(query) || alias.contains(query);
               }).take(8).toList();
 
               return AlertDialog(
@@ -1951,7 +1963,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                         const SizedBox(height: 16),
                         _dialogField(
                           searchController,
-                          'Cerca assistito per nome o CF',
+                          'Cerca assistito per nome, alias o CF',
                           helperText:
                               'Sono esclusi i membri già presenti nel nucleo. Se il paziente appartiene a un altro nucleo il salvataggio verrà bloccato.',
                           onChanged: (_) => setLocalState(() {}),

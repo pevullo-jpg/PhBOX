@@ -114,6 +114,7 @@ class BackupExportService {
     return <String, dynamic>{
       'fiscalCode': item.fiscalCode,
       'fullName': item.fullName,
+      'alias': item.alias,
       'city': item.city,
       'exemptionCode': item.exemptionCode,
       'exemptions': item.exemptions,

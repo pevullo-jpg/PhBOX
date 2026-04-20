@@ -18,12 +18,24 @@ class PatientsRepository {
     final Patient normalizedPatient = patient.copyWith(
       fiscalCode: normalizedDocumentId,
       fullName: PatientInputNormalizer.normalizeFullName(patient.fullName),
+      alias: _normalizeAlias(patient.alias),
     );
     final Map<String, dynamic>? existing = await datasource.getDocument(
       collectionPath: AppCollections.patients,
       documentId: normalizedDocumentId,
     );
     if (existing != null) {
+      final String? normalizedAlias = _normalizeAlias(normalizedPatient.alias);
+      if (normalizedAlias != null) {
+        await datasource.patchDocument(
+          collectionPath: AppCollections.patients,
+          documentId: normalizedDocumentId,
+          data: <String, dynamic>{
+            'alias': normalizedAlias,
+            'updatedAt': DateTime.now().toIso8601String(),
+          },
+        );
+      }
       return;
     }
     await datasource.setDocument(
@@ -37,6 +49,7 @@ class PatientsRepository {
     required String documentId,
     required String fullName,
     required String storedFiscalCode,
+    String? alias,
   }) {
     return datasource.patchDocument(
       collectionPath: AppCollections.patients,
@@ -44,6 +57,7 @@ class PatientsRepository {
       data: <String, dynamic>{
         'fullName': PatientInputNormalizer.normalizeFullName(fullName),
         'fiscalCode': PatientInputNormalizer.normalizeFiscalCode(storedFiscalCode),
+        'alias': _normalizeAlias(alias),
         'updatedAt': DateTime.now().toIso8601String(),
       },
     );
@@ -54,6 +68,7 @@ class PatientsRepository {
     required String name,
     required String surname,
     required String fiscalCodeInput,
+    String? alias,
   }) async {
     final String normalizedCurrentDocumentId =
         PatientInputNormalizer.normalizeFiscalCode(currentDocumentId);
@@ -72,6 +87,7 @@ class PatientsRepository {
 
     final String normalizedFiscalCode =
         PatientInputNormalizer.normalizeFiscalCode(fiscalCodeInput);
+    final String? normalizedAlias = _normalizeAlias(alias);
     final bool isTemporaryKey =
         isTemporaryPatientKey(normalizedCurrentDocumentId);
 
@@ -81,6 +97,7 @@ class PatientsRepository {
         name: normalizedName,
         surname: normalizedSurname,
         fiscalCode: normalizedFiscalCode,
+        alias: normalizedAlias,
       );
     }
 
@@ -101,6 +118,7 @@ class PatientsRepository {
       documentId: normalizedCurrentDocumentId,
       storedFiscalCode: normalizedCurrentDocumentId,
       fullName: fullName,
+      alias: normalizedAlias,
     );
 
     return PatientProfileUpdateResult(
@@ -116,6 +134,7 @@ class PatientsRepository {
     required String name,
     required String surname,
     required String fiscalCode,
+    String? alias,
   }) async {
     final String normalizedTemporaryDocumentId =
         PatientInputNormalizer.normalizeFiscalCode(temporaryDocumentId);
@@ -125,6 +144,7 @@ class PatientsRepository {
       name: name,
       surname: surname,
     );
+    final String? normalizedAlias = _normalizeAlias(alias);
 
     if (!isTemporaryPatientKey(normalizedTemporaryDocumentId)) {
       throw const PatientProfileUpdateException(
@@ -176,6 +196,7 @@ class PatientsRepository {
         _cleanMapForWrite(currentPatientMap);
     nextPatientMap['fiscalCode'] = normalizedFiscalCode;
     nextPatientMap['fullName'] = fullName;
+    nextPatientMap['alias'] = normalizedAlias;
     nextPatientMap['updatedAt'] = isoNow;
     nextPatientMap['createdAt'] =
         nextPatientMap['createdAt'] ?? currentPatientMap['createdAt'] ?? isoNow;
@@ -226,6 +247,7 @@ class PatientsRepository {
     required String documentId,
     required String storedFiscalCode,
     required String fullName,
+    required String? alias,
   }) async {
     final Map<String, dynamic>? currentPatientMap = await datasource.getDocument(
       collectionPath: AppCollections.patients,
@@ -246,6 +268,7 @@ class PatientsRepository {
       <String, dynamic>{
         'fullName': fullName,
         'fiscalCode': storedFiscalCode,
+        'alias': alias,
         'updatedAt': isoNow,
       },
       SetOptions(merge: true),
@@ -522,6 +545,11 @@ class PatientsRepository {
     throw UnsupportedError(
       'Operazione disponibile solo con datasource Firebase reale.',
     );
+  }
+
+  String? _normalizeAlias(String? value) {
+    final String normalized = value?.trim() ?? '';
+    return normalized.isEmpty ? null : normalized;
   }
 
   Map<String, dynamic> _cleanMapForWrite(Map<String, dynamic> source) {

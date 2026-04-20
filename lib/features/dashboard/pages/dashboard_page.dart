@@ -289,7 +289,8 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
           item.doctorName.toLowerCase().contains(query) ||
           item.exemptionCode.toLowerCase().contains(query) ||
           item.city.toLowerCase().contains(query) ||
-          item.familyName.toLowerCase().contains(query);
+          item.familyName.toLowerCase().contains(query) ||
+          item.patientAlias.toLowerCase().contains(query);
       if (baseMatch) {
         return true;
       }
@@ -1412,6 +1413,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
     final fiscalCodeFocusNode = FocusNode();
     final nameController = TextEditingController();
     final surnameController = TextEditingController();
+    final aliasController = TextEditingController();
     final advanceController = TextEditingController();
     final bookingController = TextEditingController();
     final debtController = TextEditingController();
@@ -1467,6 +1469,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
         if (nameParts.last.isNotEmpty) {
           surnameController.text = nameParts.last;
         }
+        aliasController.text = summary.patient.alias?.trim() ?? '';
         if (doctorFromMemory.isNotEmpty && doctorFromMemory != '-' && doctorCandidates.contains(doctorFromMemory)) {
           selectedDoctor = doctorFromMemory;
         }
@@ -1500,6 +1503,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
             final String name = PatientInputNormalizer.normalizeNamePart(nameController.text);
             final String surname = PatientInputNormalizer.normalizeNamePart(surnameController.text);
             final String fullName = PatientInputNormalizer.buildFullName(name: name, surname: surname);
+            final String alias = aliasController.text.trim();
             final String advanceText = advanceController.text.trim();
             final String bookingText = bookingController.text.trim();
             final double debtValue = _parseEuro(debtController.text);
@@ -1542,6 +1546,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                 Patient(
                   fiscalCode: patientDocumentId,
                   fullName: fullName,
+                  alias: alias,
                   createdAt: now,
                   updatedAt: now,
                 ),
@@ -1678,6 +1683,13 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                                               Text(normalizedCf, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
                                               const SizedBox(height: 2),
                                               Text(displayName, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                                              if ((option.patient.alias ?? '').trim().isNotEmpty) ...[
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  'Alias: ${(option.patient.alias ?? '').trim()}',
+                                                  style: const TextStyle(color: Colors.white54, fontSize: 11),
+                                                ),
+                                              ],
                                             ],
                                           ),
                                         ),
@@ -1693,6 +1705,8 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                         _dialogField(nameController, 'Nome'),
                         const SizedBox(height: 12),
                         _dialogField(surnameController, 'Cognome'),
+                        const SizedBox(height: 12),
+                        _dialogField(aliasController, 'Alias / nomignolo'),
                         const SizedBox(height: 8),
                         const Align(
                           alignment: Alignment.centerLeft,
@@ -1803,6 +1817,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
       fiscalCodeFocusNode.dispose();
       nameController.dispose();
       surnameController.dispose();
+      aliasController.dispose();
       advanceController.dispose();
       bookingController.dispose();
       debtController.dispose();
@@ -2456,6 +2471,7 @@ class _PatientDashboardSummary {
   });
 
   String get displayName => patient.fullName.trim().isEmpty ? patient.fiscalCode : patient.fullName.trim();
+  String get patientAlias => (patient.alias ?? '').trim();
 
   double get totalDebt => debts.fold<double>(0, (sum, item) => sum + item.residualAmount);
 
@@ -2490,6 +2506,7 @@ class _PatientDashboardSummary {
       ...debts.expand((Debt item) => <String>[item.description, item.note ?? '']),
       ...advances.expand((Advance item) => <String>[item.drugName, item.doctorName, item.note ?? '']),
       ...bookings.expand((Booking item) => <String>[item.drugName, item.note ?? '']),
+      patient.alias ?? '',
       if (hasDpc) 'dpc',
     ];
     return tokens
