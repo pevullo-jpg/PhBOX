@@ -1,38 +1,60 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
-
-  <!-- iOS meta tags & icons -->
+  <meta name="description" content="PhBOX">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="click_counter">
+  <meta name="apple-mobile-web-app-title" content="PhBOX">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
-
-  <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>click_counter</title>
-  <link rel="manifest" href="manifest.json">
+  <title>PhBOX</title>
+  <script>
+    (function () {
+      const savedClientId = window.localStorage.getItem('phbox_google_client_id') || '';
+      const meta = document.createElement('meta');
+      meta.name = 'google-signin-client_id';
+      meta.content = savedClientId || 'INSERISCI_QUI_IL_CLIENT_ID_WEB.apps.googleusercontent.com';
+      document.head.appendChild(meta);
+    })();
+  </script>
+
 </head>
 <body>
-  <script src="flutter_bootstrap.js" async></script>
+  <script>
+    const PHBOX_APP_VERSION = '__APP_VERSION__';
+
+    async function bootstrapPhbox() {
+      if ('serviceWorker' in navigator) {
+        try {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          for (const registration of registrations) {
+            await registration.unregister();
+          }
+        } catch (_) {}
+      }
+
+      if ('caches' in window) {
+        try {
+          const cacheKeys = await caches.keys();
+          await Promise.all(cacheKeys.map((key) => caches.delete(key)));
+        } catch (_) {}
+      }
+
+      const script = document.createElement('script');
+      script.src = `flutter_bootstrap.js?v=${encodeURIComponent(PHBOX_APP_VERSION)}`;
+      script.async = true;
+      document.body.appendChild(script);
+    }
+
+    bootstrapPhbox();
+  </script>
 </body>
 </html>
