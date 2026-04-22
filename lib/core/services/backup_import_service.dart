@@ -234,7 +234,7 @@ class BackupImportService {
         continue;
       }
       writer.setDoc(
-        firestore.collection(AppCollections.patients).doc(patientDocumentId),
+        firestore.collection(AppCollections.patients).doc(patientId),
         patient,
         merge: merge,
       );
@@ -359,7 +359,7 @@ class BackupImportService {
       writer.setDoc(
         firestore
             .collection(AppCollections.patients)
-            .doc(patientDocumentId)
+            .doc(patientId)
             .collection(collectionName)
             .doc(id),
         doc,

@@ -108,7 +108,7 @@ class GoogleAuthPrepService {
       throw Exception(
         interactive
             ? 'Login Google annullato.'
-            : 'Sessione Google assente o scaduta. Esegui di nuovo l'autorizzazione Google.',
+            : "Sessione Google assente o scaduta. Esegui di nuovo l'autorizzazione Google.",
       );
     }
 
@@ -190,7 +190,7 @@ class GoogleAuthPrepService {
 
       if (!canAccess) {
         if (!interactive) {
-          throw Exception('Permessi Google Drive/Gmail non ancora concessi. Avvia di nuovo l'autorizzazione Google.');
+          throw Exception("Permessi Google Drive/Gmail non ancora concessi. Avvia di nuovo l'autorizzazione Google.");
         }
 
         final bool granted = await googleSignIn.requestScopes(scopes);
