@@ -519,7 +519,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
             final double amount = _parseEuro(amountController.text);
             const double initialPaidAmount = 0;
             if (description.isEmpty || amount == 0) {
-              setLocalState(() => localError = 'Causale e importo sono obbligatori. L'importo non può essere 0.');
+              setLocalState(() => localError = "Causale e importo sono obbligatori. L'importo non può essere 0.");
               return;
             }
             setLocalState(() {
