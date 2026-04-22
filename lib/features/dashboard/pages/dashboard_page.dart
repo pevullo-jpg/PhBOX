@@ -474,7 +474,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
   Future<bool> _addDebtFromDashboard(_PatientDashboardSummary summary) async {
     final descriptionController = TextEditingController();
     final amountController = TextEditingController();
-    final partialPaidController = TextEditingController();
     final noteController = TextEditingController();
     bool saved = false;
 
@@ -488,9 +487,9 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
           Future<void> submit(StateSetter setLocalState) async {
             final String description = descriptionController.text.trim();
             final double amount = _parseEuro(amountController.text);
-            final double initialPaidAmount = _parseEuro(partialPaidController.text);
-            if (description.isEmpty || amount <= 0) {
-              setLocalState(() => localError = 'Causale e importo sono obbligatori.');
+            const double initialPaidAmount = 0;
+            if (description.isEmpty || amount == 0) {
+              setLocalState(() => localError = 'Causale e importo sono obbligatori. L'importo non può essere 0.');
               return;
             }
             setLocalState(() {
@@ -544,14 +543,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                       amountController,
                       'Importo debito (€)',
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
-                    ),
-                    const SizedBox(height: 12),
-                    _dialogField(
-                      partialPaidController,
-                      'Saldo parziale (€)',
-                      keyboardType: TextInputType.text,
-                      helperText: 'Quota già saldata, facoltativa.',
+                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[-0-9,\.]'))],
                     ),
                     const SizedBox(height: 12),
                     Align(
@@ -594,7 +586,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
     } finally {
       descriptionController.dispose();
       amountController.dispose();
-      partialPaidController.dispose();
       noteController.dispose();
     }
   }
@@ -860,7 +851,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
 
     final debtDescriptionController = TextEditingController();
     final debtAmountController = TextEditingController();
-    final debtPartialPaidController = TextEditingController();
     final debtNoteController = TextEditingController();
 
     final advanceDrugController = TextEditingController();
@@ -904,7 +894,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
             debtDescriptionController.clear();
             debtAmountController.clear();
             debtNoteController.clear();
-            debtPartialPaidController.clear();
             advanceDrugController.clear();
             advanceNoteController.clear();
             bookingDrugController.clear();
@@ -923,9 +912,9 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
               if (key == 'debiti') {
                 final String description = debtDescriptionController.text.trim();
                 final double amount = _parseEuro(debtAmountController.text);
-                final double initialPaidAmount = _parseEuro(debtPartialPaidController.text);
-                if (description.isEmpty || amount <= 0) {
-                  setLocalState(() => formError = 'Inserisci causale e importo validi.');
+                const double initialPaidAmount = 0;
+                if (description.isEmpty || amount == 0) {
+                  setLocalState(() => formError = 'Inserisci causale e un importo diverso da 0.');
                   return;
                 }
                 await _debtsRepository.saveDebt(
@@ -1070,14 +1059,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                       debtAmountController,
                       'Importo debito (€)',
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
-                    ),
-                    const SizedBox(height: 12),
-                    _dialogField(
-                      debtPartialPaidController,
-                      'Saldo parziale (€)',
-                      keyboardType: TextInputType.text,
-                      helperText: 'Quota già saldata, facoltativa.',
+                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[-0-9,\.]'))],
                     ),
                     const SizedBox(height: 12),
                     Align(
@@ -1242,7 +1224,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
     } finally {
       debtDescriptionController.dispose();
       debtAmountController.dispose();
-      debtPartialPaidController.dispose();
       debtNoteController.dispose();
       advanceDrugController.dispose();
       advanceNoteController.dispose();
@@ -1417,7 +1398,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
     final advanceController = TextEditingController();
     final bookingController = TextEditingController();
     final debtController = TextEditingController();
-    final debtPartialPaidController = TextEditingController();
     final debtDescriptionController = TextEditingController();
     String selectedDoctor = '';
     final doctorCandidates = data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList()..sort();
@@ -1507,7 +1487,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
             final String advanceText = advanceController.text.trim();
             final String bookingText = bookingController.text.trim();
             final double debtValue = _parseEuro(debtController.text);
-            final double debtPartialPaid = _parseEuro(debtPartialPaidController.text);
+            const double debtPartialPaid = 0;
             final String debtDescription = debtDescriptionController.text.trim();
 
             if (fiscalCode.isEmpty && name.isEmpty && surname.isEmpty) {
@@ -1518,7 +1498,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
               setLocalState(() => localError = "Per l'anticipo devi selezionare il medico.");
               return;
             }
-            if (debtValue > 0 && debtDescription.isEmpty) {
+            if (debtValue != 0 && debtDescription.isEmpty) {
               setLocalState(() => localError = 'Per il debito devi indicare la causale.');
               return;
             }
@@ -1584,7 +1564,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                 );
               }
 
-              if (debtValue > 0) {
+              if (debtValue != 0) {
                 await _debtsRepository.saveDebt(
                   Debt.createNew(
                     id: 'debt_${now.microsecondsSinceEpoch}',
@@ -1760,18 +1740,10 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                           debtController,
                           'Eventuale debito (€)',
                           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
+                          inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[-0-9,\.]'))],
                           onChanged: (_) => setLocalState(() {}),
                         ),
-                        if (_parseEuro(debtController.text) > 0) ...[
-                          const SizedBox(height: 12),
-                          _dialogField(
-                            debtPartialPaidController,
-                            'Saldo parziale debito (€)',
-                            keyboardType: TextInputType.text,
-                            helperText: 'Quota già saldata, facoltativa.',
-                            onChanged: (_) => setLocalState(() {}),
-                          ),
+                        if (_parseEuro(debtController.text) != 0) ...[
                           const SizedBox(height: 12),
                           _dialogField(debtDescriptionController, 'Causale debito'),
                           const SizedBox(height: 8),
@@ -1821,7 +1793,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
       advanceController.dispose();
       bookingController.dispose();
       debtController.dispose();
-      debtPartialPaidController.dispose();
       debtDescriptionController.dispose();
     }
   }

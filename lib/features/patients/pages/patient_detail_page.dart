@@ -506,7 +506,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
   Future<void> _addDebt(Patient patient) async {
     final descriptionController = TextEditingController();
     final amountController = TextEditingController();
-    final partialPaidController = TextEditingController();
     final noteController = TextEditingController();
     try {
       await showDialog<void>(
@@ -518,9 +517,9 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
           Future<void> submit(StateSetter setLocalState) async {
             final String description = descriptionController.text.trim();
             final double amount = _parseEuro(amountController.text);
-            final double initialPaidAmount = _parseEuro(partialPaidController.text);
-            if (description.isEmpty || amount <= 0) {
-              setLocalState(() => localError = 'Causale e importo sono obbligatori.');
+            const double initialPaidAmount = 0;
+            if (description.isEmpty || amount == 0) {
+              setLocalState(() => localError = 'Causale e importo sono obbligatori. L'importo non può essere 0.');
               return;
             }
             setLocalState(() {
@@ -573,14 +572,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                       amountController,
                       'Importo debito (€)',
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
-                    ),
-                    const SizedBox(height: 12),
-                    _dialogField(
-                      partialPaidController,
-                      'Saldo parziale (€)',
-                      keyboardType: TextInputType.text,
-                      helperText: 'Quota già saldata, facoltativa.',
+                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[-0-9,\.]'))],
                     ),
                     const SizedBox(height: 12),
                     Align(
@@ -622,7 +614,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     } finally {
       descriptionController.dispose();
       amountController.dispose();
-      partialPaidController.dispose();
       noteController.dispose();
     }
   }

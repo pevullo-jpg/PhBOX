@@ -38,20 +38,20 @@ class Debt {
     DateTime? dueDate,
     String? note,
   }) {
-    final double safeAmount = amount < 0 ? 0 : amount;
-    final double normalizedPaidAmount = normalizeInitialPaidAmount(
-      amount: safeAmount,
-      rawValue: initialPaidAmountRaw,
-    );
-    final double residualAmount = (safeAmount - normalizedPaidAmount) <= 0
-        ? 0
-        : safeAmount - normalizedPaidAmount;
+    final bool allowsPartialPaid = amount > 0;
+    final double normalizedPaidAmount = allowsPartialPaid
+        ? normalizeInitialPaidAmount(
+            amount: amount,
+            rawValue: initialPaidAmountRaw,
+          )
+        : 0;
+    final double residualAmount = allowsPartialPaid ? amount - normalizedPaidAmount : amount;
     return Debt(
       id: id,
       patientFiscalCode: patientFiscalCode,
       patientName: patientName,
       description: description,
-      amount: safeAmount,
+      amount: amount,
       paidAmount: normalizedPaidAmount,
       residualAmount: residualAmount,
       createdAt: createdAt,
