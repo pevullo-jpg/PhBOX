@@ -74,7 +74,7 @@ class GoogleAuthPrepService {
     GoogleSignInAccount? account = googleSignIn.currentUser;
     account ??= await googleSignIn.signInSilently();
 
-    if (account == null && interactive && !kIsWeb) {
+    if (account == null && interactive) {
       account = await googleSignIn.signIn();
     }
 
@@ -108,14 +108,14 @@ class GoogleAuthPrepService {
       throw Exception(
         interactive
             ? 'Login Google annullato.'
-            : 'Sessione Google assente o scaduta. Su web usa il pulsante ufficiale Google e poi premi Verifica sessione.',
+            : 'Sessione Google assente o scaduta. Esegui di nuovo l'autorizzazione Google.',
       );
     }
 
     final Map<String, String> authHeaders = await account.authHeaders;
     final String? token = _tokenFromAuthHeaders(authHeaders);
     if (token == null) {
-      throw Exception("Token Google non disponibile. Su web autentica di nuovo l'account Google e poi ripeti la scansione.");
+      throw Exception("Token Google non disponibile. Autentica di nuovo l'account Google e ripeti l'operazione.");
     }
 
     return <String, String>{
@@ -131,15 +131,12 @@ class GoogleAuthPrepService {
     final GoogleSignInAccount? account = googleSignIn.currentUser ?? await googleSignIn.signInSilently();
 
     if (account == null) {
-      if (kIsWeb) {
-        throw Exception('Su web usa il pulsante ufficiale Google qui sotto, poi premi Verifica sessione.');
-      }
       throw Exception('Login Google annullato.');
     }
 
     final Map<String, String> headers = await getAuthHeaders(
       clientId: clientId,
-      interactive: !kIsWeb,
+      interactive: true,
     );
 
     return GoogleAuthPrepResult(
@@ -193,7 +190,7 @@ class GoogleAuthPrepService {
 
       if (!canAccess) {
         if (!interactive) {
-          throw Exception('Permessi Google Drive/Gmail non ancora concessi. Premi il pulsante della scansione per autorizzarli.');
+          throw Exception('Permessi Google Drive/Gmail non ancora concessi. Avvia di nuovo l'autorizzazione Google.');
         }
 
         final bool granted = await googleSignIn.requestScopes(scopes);

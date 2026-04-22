@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+
 import 'package:http/http.dart' as http;
 
 class GoogleDriveFile {
@@ -36,7 +37,9 @@ class GoogleDriveService {
   Future<Map<String, String>> _headers() async {
     if (authHeadersLoader != null) {
       final Map<String, String> headers = await authHeadersLoader!.call();
-      if ((headers['Authorization'] ?? headers['authorization'] ?? '').trim().isNotEmpty) {
+      if ((headers['Authorization'] ?? headers['authorization'] ?? '')
+          .trim()
+          .isNotEmpty) {
         return headers;
       }
     }
@@ -78,7 +81,8 @@ class GoogleDriveService {
 
     final Map<String, dynamic> data =
         jsonDecode(response.body) as Map<String, dynamic>;
-    final List<dynamic> rawFiles = data['files'] as List<dynamic>? ?? <dynamic>[];
+    final List<dynamic> rawFiles =
+        data['files'] as List<dynamic>? ?? <dynamic>[];
 
     return rawFiles
         .map(
@@ -94,9 +98,8 @@ class GoogleDriveService {
   }
 
   Future<Uint8List> downloadPdfBytes(String fileId) async {
-    final Uri url = Uri.parse(
-      'https://www.googleapis.com/drive/v3/files/$fileId?alt=media',
-    );
+    final Uri url =
+        Uri.parse('https://www.googleapis.com/drive/v3/files/$fileId?alt=media');
 
     final http.Response response = await http.get(
       url,
@@ -112,11 +115,24 @@ class GoogleDriveService {
     return response.bodyBytes;
   }
 
-
   Future<String> uploadPdfBytes({
     required String fileName,
     required Uint8List bytes,
     required String parentFolderId,
+  }) {
+    return uploadFileBytes(
+      fileName: fileName,
+      bytes: bytes,
+      parentFolderId: parentFolderId,
+      mimeType: 'application/pdf',
+    );
+  }
+
+  Future<String> uploadFileBytes({
+    required String fileName,
+    required Uint8List bytes,
+    required String parentFolderId,
+    required String mimeType,
   }) async {
     final String boundary = 'phbox_upload_boundary';
     final Uri url = Uri.parse(
@@ -126,15 +142,17 @@ class GoogleDriveService {
     final Map<String, dynamic> metadata = <String, dynamic>{
       'name': fileName,
       'parents': <String>[parentFolderId],
-      'mimeType': 'application/pdf',
+      'mimeType': mimeType,
     };
 
     final List<int> body = <int>[]
       ..addAll(utf8.encode('--$boundary\r\n'))
-      ..addAll(utf8.encode('Content-Type: application/json; charset=UTF-8\r\n\r\n'))
+      ..addAll(
+        utf8.encode('Content-Type: application/json; charset=UTF-8\r\n\r\n'),
+      )
       ..addAll(utf8.encode(jsonEncode(metadata)))
       ..addAll(utf8.encode('\r\n--$boundary\r\n'))
-      ..addAll(utf8.encode('Content-Type: application/pdf\r\n\r\n'))
+      ..addAll(utf8.encode('Content-Type: $mimeType\r\n\r\n'))
       ..addAll(bytes)
       ..addAll(utf8.encode('\r\n--$boundary--'));
 
@@ -150,7 +168,7 @@ class GoogleDriveService {
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(
-        'Errore upload PDF Drive: ${response.statusCode} ${response.body}',
+        'Errore upload file Drive: ${response.statusCode} ${response.body}',
       );
     }
 
@@ -162,5 +180,4 @@ class GoogleDriveService {
     }
     return fileId;
   }
-
 }

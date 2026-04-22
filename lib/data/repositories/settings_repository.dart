@@ -27,4 +27,23 @@ class SettingsRepository {
       data: settings.toFrontendPatchMap(),
     );
   }
+
+  Future<void> patchFields(Map<String, dynamic> fields) {
+    return datasource.patchDocument(
+      collectionPath: AppCollections.appSettings,
+      documentId: 'main',
+      data: fields,
+    );
+  }
+
+  Future<void> recordBackupRun({
+    required DateTime at,
+    required String status,
+  }) {
+    return patchFields(<String, dynamic>{
+      'backupLastRunAt': at.toIso8601String(),
+      'backupLastRunStatus': status,
+      'updatedAt': DateTime.now().toIso8601String(),
+    });
+  }
 }

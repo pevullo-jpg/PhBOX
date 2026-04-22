@@ -1,22 +1,57 @@
 class AppSettings {
   final int expiryWarningDays;
   final List<String> doctorsCatalog;
+  final bool backupAutoEnabled;
+  final int backupAutoIntervalMinutes;
+  final String backupAutoDestination;
+  final String? backupDriveFolderId;
+  final DateTime? backupLastRunAt;
+  final String? backupLastRunStatus;
   final DateTime updatedAt;
 
   const AppSettings({
     this.expiryWarningDays = 7,
     this.doctorsCatalog = const <String>[],
+    this.backupAutoEnabled = false,
+    this.backupAutoIntervalMinutes = 720,
+    this.backupAutoDestination = 'download',
+    this.backupDriveFolderId,
+    this.backupLastRunAt,
+    this.backupLastRunStatus,
     required this.updatedAt,
   });
 
   AppSettings copyWith({
     int? expiryWarningDays,
     List<String>? doctorsCatalog,
+    bool? backupAutoEnabled,
+    int? backupAutoIntervalMinutes,
+    String? backupAutoDestination,
+    String? backupDriveFolderId,
+    bool clearBackupDriveFolderId = false,
+    DateTime? backupLastRunAt,
+    bool clearBackupLastRunAt = false,
+    String? backupLastRunStatus,
+    bool clearBackupLastRunStatus = false,
     DateTime? updatedAt,
   }) {
     return AppSettings(
       expiryWarningDays: expiryWarningDays ?? this.expiryWarningDays,
       doctorsCatalog: doctorsCatalog ?? this.doctorsCatalog,
+      backupAutoEnabled: backupAutoEnabled ?? this.backupAutoEnabled,
+      backupAutoIntervalMinutes:
+          backupAutoIntervalMinutes ?? this.backupAutoIntervalMinutes,
+      backupAutoDestination:
+          backupAutoDestination ?? this.backupAutoDestination,
+      backupDriveFolderId: clearBackupDriveFolderId
+          ? null
+          : (backupDriveFolderId ?? this.backupDriveFolderId),
+      backupLastRunAt: clearBackupLastRunAt
+          ? null
+          : (backupLastRunAt ?? this.backupLastRunAt),
+      backupLastRunStatus: clearBackupLastRunStatus
+          ? null
+          : (backupLastRunStatus ?? this.backupLastRunStatus),
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -25,6 +60,12 @@ class AppSettings {
     return <String, dynamic>{
       'expiryWarningDays': expiryWarningDays,
       'doctorsCatalog': doctorsCatalog,
+      'backupAutoEnabled': backupAutoEnabled,
+      'backupAutoIntervalMinutes': backupAutoIntervalMinutes,
+      'backupAutoDestination': backupAutoDestination,
+      'backupDriveFolderId': backupDriveFolderId,
+      'backupLastRunAt': backupLastRunAt?.toIso8601String(),
+      'backupLastRunStatus': backupLastRunStatus,
       'updatedAt': updatedAt.toIso8601String(),
     };
   }
@@ -33,6 +74,17 @@ class AppSettings {
     return AppSettings(
       expiryWarningDays: _readInt(map['expiryWarningDays']) ?? 7,
       doctorsCatalog: _readStringList(map['doctorsCatalog']),
+      backupAutoEnabled: _readBool(map['backupAutoEnabled']),
+      backupAutoIntervalMinutes:
+          _readInt(map['backupAutoIntervalMinutes']) ?? 720,
+      backupAutoDestination: _readString(map['backupAutoDestination'])
+              .trim()
+              .isEmpty
+          ? 'download'
+          : _readString(map['backupAutoDestination']).trim(),
+      backupDriveFolderId: _readNullableString(map['backupDriveFolderId']),
+      backupLastRunAt: _readDate(map['backupLastRunAt']),
+      backupLastRunStatus: _readNullableString(map['backupLastRunStatus']),
       updatedAt: _readDate(map['updatedAt']) ?? DateTime.now(),
     );
   }
@@ -63,6 +115,26 @@ class AppSettings {
     return int.tryParse(value?.toString() ?? '');
   }
 
+  static bool _readBool(dynamic value) {
+    if (value is bool) return value;
+    final String normalized = value?.toString().trim().toLowerCase() ?? '';
+    return normalized == 'true' ||
+        normalized == '1' ||
+        normalized == 'yes' ||
+        normalized == 'si' ||
+        normalized == 'sì';
+  }
+
+  static String _readString(dynamic value) {
+    if (value == null) return '';
+    return value.toString();
+  }
+
+  static String? _readNullableString(dynamic value) {
+    final String normalized = _readString(value).trim();
+    return normalized.isEmpty ? null : normalized;
+  }
+
   static DateTime? _readDate(dynamic value) {
     if (value == null) return null;
     if (value is DateTime) return value;
@@ -74,9 +146,7 @@ class AppSettings {
     } catch (_) {}
     try {
       final dynamic seconds = (value as dynamic).seconds;
-      if (seconds is int) {
-        return DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
-      }
+      if (seconds is int) return DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
     } catch (_) {}
     return null;
   }
