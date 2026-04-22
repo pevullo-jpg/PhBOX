@@ -550,8 +550,8 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                     _dialogField(
                       partialPaidController,
                       'Saldo parziale (€)',
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
+                      keyboardType: TextInputType.text,
+                      helperText: 'Quota già saldata, facoltativa.',
                     ),
                     const SizedBox(height: 12),
                     Align(
@@ -1076,8 +1076,8 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                     _dialogField(
                       debtPartialPaidController,
                       'Saldo parziale (€)',
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
+                      keyboardType: TextInputType.text,
+                      helperText: 'Quota già saldata, facoltativa.',
                     ),
                     const SizedBox(height: 12),
                     Align(
@@ -1768,8 +1768,8 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                           _dialogField(
                             debtPartialPaidController,
                             'Saldo parziale debito (€)',
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
+                            keyboardType: TextInputType.text,
+                            helperText: 'Quota già saldata, facoltativa.',
                             onChanged: (_) => setLocalState(() {}),
                           ),
                           const SizedBox(height: 12),
@@ -2363,6 +2363,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
     TextInputType? keyboardType,
     List<TextInputFormatter>? inputFormatters,
     int maxLines = 1,
+    String? helperText,
     ValueChanged<String>? onChanged,
   }) {
     return TextField(
@@ -2375,6 +2376,8 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         labelText: label,
+        helperText: helperText,
+        helperStyle: const TextStyle(color: Colors.white54),
         labelStyle: const TextStyle(color: Colors.white70),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
