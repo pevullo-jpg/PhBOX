@@ -579,8 +579,8 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                     _dialogField(
                       partialPaidController,
                       'Saldo parziale (€)',
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[-0-9,\.]'))],
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
                     ),
                     const SizedBox(height: 12),
                     Align(

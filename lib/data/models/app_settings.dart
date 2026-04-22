@@ -14,7 +14,7 @@ class AppSettings {
     this.doctorsCatalog = const <String>[],
     this.backupAutoEnabled = false,
     this.backupAutoIntervalMinutes = 720,
-    this.backupAutoDestination = 'download',
+    this.backupAutoDestination = 'drive',
     this.backupDriveFolderId,
     this.backupLastRunAt,
     this.backupLastRunStatus,
@@ -80,7 +80,7 @@ class AppSettings {
       backupAutoDestination: _readString(map['backupAutoDestination'])
               .trim()
               .isEmpty
-          ? 'download'
+          ? 'drive'
           : _readString(map['backupAutoDestination']).trim(),
       backupDriveFolderId: _readNullableString(map['backupDriveFolderId']),
       backupLastRunAt: _readDate(map['backupLastRunAt']),

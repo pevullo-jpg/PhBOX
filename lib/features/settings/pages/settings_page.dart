@@ -1,26 +1,21 @@
-import 'dart:typed_data';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
-import '../../../core/services/backup_export_service.dart';
-import '../../../core/services/backup_import_service.dart';
-import '../../../core/services/google_auth_prep_service.dart';
-import '../../../core/services/google_drive_service.dart';
-import '../../../core/utils/web_client_id_storage.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/app_settings.dart';
-import '../../../data/repositories/advances_repository.dart';
-import '../../../data/repositories/bookings_repository.dart';
-import '../../../data/repositories/debts_repository.dart';
-import '../../../data/repositories/patients_repository.dart';
+import '../../../data/models/backup_job.dart';
+import '../../../data/repositories/backup_jobs_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../shared/mixins/page_auto_refresh_mixin.dart';
 import '../../../shared/navigation/app_navigation.dart';
 import '../../../shared/widgets/floating_page_menu.dart';
 import '../../../shared/widgets/settings_field_card.dart';
 import '../../../theme/app_theme.dart';
+
+enum BackupRequestImportMode {
+  merge,
+  overwrite,
+}
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -32,30 +27,26 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage>
     with PageAutoRefreshMixin<SettingsPage> {
   late final SettingsRepository repository;
-  late final BackupExportService _backupExportService;
-  late final BackupImportService _backupImportService;
-  final GoogleAuthPrepService _googleAuthPrepService = GoogleAuthPrepService();
+  late final BackupJobsRepository backupJobsRepository;
 
   final TextEditingController expiryWarningController = TextEditingController();
   final TextEditingController doctorsCatalogController = TextEditingController();
   final TextEditingController backupIntervalController = TextEditingController();
   final TextEditingController backupDriveFolderController =
       TextEditingController();
-  final TextEditingController googleClientIdController =
+  final TextEditingController backupImportFileIdController =
       TextEditingController();
 
   bool isSaving = false;
   bool isLoading = true;
-  bool isExportingBackup = false;
-  bool isImportingBackup = false;
-  bool isAuthorizingDrive = false;
+  bool isQueueingExport = false;
+  bool isQueueingImport = false;
   String message = '';
   bool isErrorMessage = false;
   bool backupAutoEnabled = false;
-  String backupAutoDestination = 'download';
-  String _savedGoogleClientId = '';
 
   AppSettings currentSettings = AppSettings.empty();
+  List<BackupJob> recentBackupJobs = <BackupJob>[];
 
   @override
   void initState() {
@@ -63,18 +54,8 @@ class _SettingsPageState extends State<SettingsPage>
     final FirestoreFirebaseDatasource datasource =
         FirestoreFirebaseDatasource(FirebaseFirestore.instance);
     repository = SettingsRepository(datasource: datasource);
-    _backupExportService = BackupExportService(
-      firestore: FirebaseFirestore.instance,
-      settingsRepository: repository,
-      patientsRepository: PatientsRepository(datasource: datasource),
-      debtsRepository: DebtsRepository(datasource: datasource),
-      advancesRepository: AdvancesRepository(datasource: datasource),
-      bookingsRepository: BookingsRepository(datasource: datasource),
-    );
-    _backupImportService =
-        BackupImportService(firestore: FirebaseFirestore.instance);
-    _savedGoogleClientId = loadSavedGoogleWebClientId();
-    googleClientIdController.text = _savedGoogleClientId;
+    backupJobsRepository =
+        BackupJobsRepository(firestore: FirebaseFirestore.instance);
     _load();
     startPageAutoRefresh();
   }
@@ -85,7 +66,7 @@ class _SettingsPageState extends State<SettingsPage>
     doctorsCatalogController.dispose();
     backupIntervalController.dispose();
     backupDriveFolderController.dispose();
-    googleClientIdController.dispose();
+    backupImportFileIdController.dispose();
     super.dispose();
   }
 
@@ -98,8 +79,7 @@ class _SettingsPageState extends State<SettingsPage>
     _load();
   }
 
-  bool get _isBusy =>
-      isSaving || isExportingBackup || isImportingBackup || isAuthorizingDrive;
+  bool get _isBusy => isSaving || isQueueingExport || isQueueingImport;
 
   bool get _hasUnsavedChanges {
     final String currentExpiry = currentSettings.expiryWarningDays.toString();
@@ -122,8 +102,9 @@ class _SettingsPageState extends State<SettingsPage>
       return true;
     }
 
-    final int typedInterval = int.tryParse(backupIntervalController.text.trim()) ??
-        currentSettings.backupAutoIntervalMinutes;
+    final int typedInterval =
+        int.tryParse(backupIntervalController.text.trim()) ??
+            currentSettings.backupAutoIntervalMinutes;
     if (typedInterval != currentSettings.backupAutoIntervalMinutes) {
       return true;
     }
@@ -131,14 +112,8 @@ class _SettingsPageState extends State<SettingsPage>
     if (backupAutoEnabled != currentSettings.backupAutoEnabled) {
       return true;
     }
-    if (backupAutoDestination != currentSettings.backupAutoDestination) {
-      return true;
-    }
     if (backupDriveFolderController.text.trim() !=
         (currentSettings.backupDriveFolderId ?? '').trim()) {
-      return true;
-    }
-    if (googleClientIdController.text.trim() != _savedGoogleClientId.trim()) {
       return true;
     }
 
@@ -155,22 +130,22 @@ class _SettingsPageState extends State<SettingsPage>
     });
 
     try {
-      final AppSettings settings = await repository.getSettings();
+      final List<dynamic> results = await Future.wait<dynamic>(<Future<dynamic>>[
+        repository.getSettings(),
+        backupJobsRepository.getRecentJobs(),
+      ]);
       if (!mounted) return;
+      final AppSettings settings = results[0] as AppSettings;
+      final List<BackupJob> jobs = results[1] as List<BackupJob>;
       setState(() {
         currentSettings = settings;
+        recentBackupJobs = jobs;
         expiryWarningController.text = settings.expiryWarningDays.toString();
         doctorsCatalogController.text = settings.doctorsCatalog.join('\n');
         backupIntervalController.text =
             settings.backupAutoIntervalMinutes.toString();
         backupDriveFolderController.text = settings.backupDriveFolderId ?? '';
         backupAutoEnabled = settings.backupAutoEnabled;
-        backupAutoDestination =
-            settings.backupAutoDestination == 'drive' ? 'drive' : 'download';
-        _savedGoogleClientId = loadSavedGoogleWebClientId();
-        if (googleClientIdController.text.trim().isEmpty || !_hasUnsavedChanges) {
-          googleClientIdController.text = _savedGoogleClientId;
-        }
       });
     } catch (e) {
       if (!mounted) return;
@@ -211,7 +186,7 @@ class _SettingsPageState extends State<SettingsPage>
         backupAutoEnabled: backupAutoEnabled,
         backupAutoIntervalMinutes:
             backupIntervalMinutes < 5 ? 5 : backupIntervalMinutes,
-        backupAutoDestination: backupAutoDestination,
+        backupAutoDestination: 'drive',
         backupDriveFolderId: backupDriveFolderController.text.trim().isEmpty
             ? null
             : backupDriveFolderController.text.trim(),
@@ -220,11 +195,9 @@ class _SettingsPageState extends State<SettingsPage>
         updatedAt: DateTime.now(),
       );
       await repository.saveSettings(updated);
-      await saveGoogleWebClientId(googleClientIdController.text.trim());
       if (!mounted) return;
       setState(() {
         currentSettings = updated;
-        _savedGoogleClientId = googleClientIdController.text.trim();
         message = 'Impostazioni salvate.';
       });
     } catch (e) {
@@ -241,154 +214,96 @@ class _SettingsPageState extends State<SettingsPage>
     }
   }
 
-  Future<void> _exportBackupDownload() async {
+  Future<void> _requestBackupExport() async {
+    final String folderId = backupDriveFolderController.text.trim();
+    if (folderId.isEmpty) {
+      setState(() {
+        message = 'Inserisci l\'ID della cartella Drive di backup.';
+        isErrorMessage = true;
+      });
+      return;
+    }
+
     setState(() {
-      isExportingBackup = true;
+      isQueueingExport = true;
       message = '';
       isErrorMessage = false;
     });
 
     try {
-      final BackupExportResult result =
-          await _backupExportService.exportCurrentSnapshot(
-        destination: BackupExportDestination.download,
-        trigger: 'manual',
-      );
+      final String jobId =
+          await backupJobsRepository.enqueueExport(targetFolderId: folderId);
       if (!mounted) return;
       setState(() {
         message =
-            'Backup completato: ${result.jsonFilename} + ${result.reportPdfFilename}';
+            'Richiesta export accodata. Job: ${_shortJobId(jobId)}. Il backend la eseguirà al prossimo trigger backup.';
       });
       await _load();
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        message = 'Errore backup: $e';
+        message = 'Errore richiesta export: $e';
         isErrorMessage = true;
       });
     } finally {
       if (!mounted) return;
       setState(() {
-        isExportingBackup = false;
+        isQueueingExport = false;
       });
     }
   }
 
-  Future<void> _exportBackupDrive() async {
-    setState(() {
-      isExportingBackup = true;
-      message = '';
-      isErrorMessage = false;
-    });
-
-    try {
-      final String clientId = googleClientIdController.text.trim();
-      final String folderId = backupDriveFolderController.text.trim();
-      if (clientId.isEmpty) {
-        throw Exception('Inserisci il Web Client ID Google.');
-      }
-      if (folderId.isEmpty) {
-        throw Exception('Inserisci l\'ID della cartella Drive di backup.');
-      }
-      await saveGoogleWebClientId(clientId);
-      final GoogleAuthPrepResult? session =
-          await _googleAuthPrepService.ensureDriveSession(
-        clientId: clientId,
-        interactive: true,
-      );
-      if (session == null || !session.isConnected) {
-        throw Exception('Connessione Drive non disponibile.');
-      }
-      final GoogleDriveService driveService = GoogleDriveService(
-        authHeadersLoader: () => _googleAuthPrepService.getAuthHeaders(
-          clientId: clientId,
-          interactive: false,
-        ),
-      );
-      final BackupExportResult result =
-          await _backupExportService.exportCurrentSnapshot(
-        destination: BackupExportDestination.drive,
-        googleDriveService: driveService,
-        driveFolderId: folderId,
-        trigger: 'manual',
-      );
-      if (!mounted) return;
-      setState(() {
-        _savedGoogleClientId = clientId;
-        message =
-            'Backup completato: ${result.jsonFilename} + ${result.reportPdfFilename} su Drive';
-      });
-      await _load();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        message = 'Errore backup Drive: $e';
-        isErrorMessage = true;
-      });
-    } finally {
-      if (!mounted) return;
-      setState(() {
-        isExportingBackup = false;
-      });
-    }
-  }
-
-  Future<void> _importBackup(BackupImportMode mode) async {
-    if (mode == BackupImportMode.overwrite) {
+  Future<void> _requestBackupImport(BackupRequestImportMode mode) async {
+    if (mode == BackupRequestImportMode.overwrite) {
       final bool confirmed = await _confirmOverwriteImport();
       if (!confirmed) {
         return;
       }
     }
 
+    final String folderId = backupDriveFolderController.text.trim();
+    final String sourceFileId = backupImportFileIdController.text.trim();
+    if (folderId.isEmpty && sourceFileId.isEmpty) {
+      setState(() {
+        message =
+            'Per l\'import indica almeno la cartella backup oppure il file ID JSON.';
+        isErrorMessage = true;
+      });
+      return;
+    }
+
     setState(() {
-      isImportingBackup = true;
+      isQueueingImport = true;
       message = '';
       isErrorMessage = false;
     });
 
     try {
-      final Uint8List bytes = await _pickJsonBackupBytes();
-      final BackupImportResult result = await _backupImportService.importJsonBytes(
-        bytes: bytes,
-        mode: mode,
+      final String jobId = await backupJobsRepository.enqueueImport(
+        importMode:
+            mode == BackupRequestImportMode.merge ? 'merge' : 'overwrite',
+        sourceBackupFileId: sourceFileId,
+        targetFolderId: folderId,
       );
       if (!mounted) return;
       setState(() {
         message =
-            'Import completato: ${result.writtenDocuments} scritture, ${result.deletedDocuments} eliminazioni.';
+            'Richiesta import accodata. Job: ${_shortJobId(jobId)}. Il backend userà '
+            '${sourceFileId.isEmpty ? 'l\'ultimo backup disponibile' : 'il file indicato'}.';
       });
       await _load();
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        message = 'Errore import: $e';
+        message = 'Errore richiesta import: $e';
         isErrorMessage = true;
       });
     } finally {
       if (!mounted) return;
       setState(() {
-        isImportingBackup = false;
+        isQueueingImport = false;
       });
     }
-  }
-
-  Future<Uint8List> _pickJsonBackupBytes() async {
-    final FilePickerResult? result = await FilePicker.platform.pickFiles(
-      allowMultiple: false,
-      withData: true,
-      type: FileType.custom,
-      allowedExtensions: const <String>['json'],
-    );
-    if (result == null || result.files.isEmpty) {
-      throw Exception('Import annullato.');
-    }
-    final PlatformFile file = result.files.single;
-    final Uint8List? bytes = file.bytes;
-    if (bytes == null || bytes.isEmpty) {
-      throw Exception('File JSON vuoto o non leggibile.');
-    }
-    return bytes;
   }
 
   Future<bool> _confirmOverwriteImport() async {
@@ -398,11 +313,11 @@ class _SettingsPageState extends State<SettingsPage>
         return AlertDialog(
           backgroundColor: AppColors.panel,
           title: const Text(
-            'Sovrascrivere il database?',
+            'Accodare import in sovrascrittura?',
             style: TextStyle(color: Colors.white),
           ),
           content: const Text(
-            'La modalità sovrascrittura rimuove i documenti attuali non presenti nel backup importato.',
+            'Il backend eliminerà i documenti attuali non presenti nel backup selezionato.',
             style: TextStyle(color: Colors.white70),
           ),
           actions: <Widget>[
@@ -413,53 +328,13 @@ class _SettingsPageState extends State<SettingsPage>
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
               style: FilledButton.styleFrom(backgroundColor: AppColors.red),
-              child: const Text('Sovrascrivi'),
+              child: const Text('Accoda'),
             ),
           ],
         );
       },
     );
     return confirmed ?? false;
-  }
-
-  Future<void> _authorizeDriveSession() async {
-    setState(() {
-      isAuthorizingDrive = true;
-      message = '';
-      isErrorMessage = false;
-    });
-
-    try {
-      final String clientId = googleClientIdController.text.trim();
-      if (clientId.isEmpty) {
-        throw Exception('Inserisci il Web Client ID Google.');
-      }
-      await saveGoogleWebClientId(clientId);
-      final GoogleAuthPrepResult? session =
-          await _googleAuthPrepService.ensureDriveSession(
-        clientId: clientId,
-        interactive: true,
-      );
-      if (session == null || !session.isConnected) {
-        throw Exception('Autorizzazione Drive non completata.');
-      }
-      if (!mounted) return;
-      setState(() {
-        _savedGoogleClientId = clientId;
-        message = 'Sessione Drive pronta.';
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        message = 'Errore autorizzazione Drive: $e';
-        isErrorMessage = true;
-      });
-    } finally {
-      if (!mounted) return;
-      setState(() {
-        isAuthorizingDrive = false;
-      });
-    }
   }
 
   String _formatDateTime(DateTime value) {
@@ -471,21 +346,154 @@ class _SettingsPageState extends State<SettingsPage>
     return '$d/$m/$y $hh:$mm';
   }
 
+  String _shortJobId(String value) {
+    final String normalized = value.trim();
+    if (normalized.length <= 8) {
+      return normalized;
+    }
+    return normalized.substring(0, 8);
+  }
+
   String get _backupStatusLabel {
     final DateTime? lastRunAt = currentSettings.backupLastRunAt;
     final String status = (currentSettings.backupLastRunStatus ?? '').trim();
     if (lastRunAt == null && status.isEmpty) {
-      return 'Nessun backup registrato.';
+      return 'Nessun esito backend registrato.';
     }
     final String when = lastRunAt == null ? '-' : _formatDateTime(lastRunAt);
     final String label = status.isEmpty ? '-' : status;
-    return 'Ultimo esito: $when • $label';
+    return 'Ultimo esito backend: $when • $label';
+  }
+
+  Color _jobStatusColor(BackupJob job) {
+    if (job.isFailed) {
+      return AppColors.red;
+    }
+    if (job.isCompleted) {
+      return AppColors.green;
+    }
+    if (job.isRunning) {
+      return AppColors.amber;
+    }
+    return AppColors.yellow;
+  }
+
+  String _jobTitle(BackupJob job) {
+    if (job.normalizedJobType == 'import') {
+      final String mode = job.importMode.trim().toLowerCase();
+      if (mode == 'overwrite') {
+        return 'Import sovrascrittura';
+      }
+      return 'Import integrazione';
+    }
+    return 'Export backup';
+  }
+
+  String _jobSubtitle(BackupJob job) {
+    final List<String> parts = <String>[
+      'Stato: ${job.status.trim().isEmpty ? 'pending' : job.status.trim()}',
+      'Richiesto: ${_formatDateTime(job.requestedAt)}',
+    ];
+    if (job.targetFolderId.trim().isNotEmpty) {
+      parts.add('Cartella: ${job.targetFolderId.trim()}');
+    }
+    if (job.sourceBackupFileId.trim().isNotEmpty) {
+      parts.add('JSON: ${job.sourceBackupFileId.trim()}');
+    }
+    if (job.resultMessage.trim().isNotEmpty) {
+      parts.add(job.resultMessage.trim());
+    } else if (job.errorMessage.trim().isNotEmpty) {
+      parts.add(job.errorMessage.trim());
+    }
+    return parts.join(' • ');
+  }
+
+  Widget _buildRecentJobsSection() {
+    return SettingsFieldCard(
+      title: 'Coda backup backend',
+      subtitle:
+          'Richieste manuali ed esiti recenti letti da Firestore. Il backend consumerà i job pendenti con trigger separato.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            _backupStatusLabel,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (recentBackupJobs.isEmpty)
+            const Text(
+              'Nessun job backup presente.',
+              style: TextStyle(color: Colors.white70),
+            )
+          else
+            Column(
+              children: recentBackupJobs.map((BackupJob job) {
+                return Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.panelSoft,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: _jobStatusColor(job), width: 1.2),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          Expanded(
+                            child: Text(
+                              _jobTitle(job),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _jobStatusColor(job),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              job.status.toUpperCase(),
+                              style: const TextStyle(
+                                color: Colors.black,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _jobSubtitle(job),
+                        style: const TextStyle(color: Colors.white70, height: 1.4),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Stack(
-      children: [
+      children: <Widget>[
         if (isLoading)
           const Scaffold(
             backgroundColor: AppColors.background,
@@ -509,7 +517,7 @@ class _SettingsPageState extends State<SettingsPage>
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Nel front restano solo i parametri utili alla consultazione operativa e al salvataggio amministrativo.',
+                    'Il front non accede più a Drive per il backup. Qui configuri solo i parametri e accodi i job che il backend eseguirà con trigger separato.',
                     style: TextStyle(color: Colors.white70, height: 1.5),
                   ),
                   const SizedBox(height: 20),
@@ -564,23 +572,19 @@ class _SettingsPageState extends State<SettingsPage>
                   SettingsFieldCard(
                     title: 'Backup manuale',
                     subtitle:
-                        'Esporta JSON completo e PDF riepilogativo di debiti, prenotazioni e anticipi.',
+                        'Accoda un export backend. Il backend genererà JSON completo e PDF riepilogativi nella cartella Drive configurata.',
                     child: Wrap(
                       spacing: 12,
                       runSpacing: 12,
                       children: <Widget>[
                         FilledButton.icon(
-                          onPressed:
-                              isExportingBackup ? null : _exportBackupDownload,
-                          icon: const Icon(Icons.download_rounded),
+                          onPressed: isQueueingExport ? null : _requestBackupExport,
+                          icon: const Icon(Icons.archive_rounded),
                           label: Text(
-                            isExportingBackup ? 'Esportazione...' : 'Scarica backup',
+                            isQueueingExport
+                                ? 'Accodamento...'
+                                : 'Richiedi export ora',
                           ),
-                        ),
-                        FilledButton.icon(
-                          onPressed: isExportingBackup ? null : _exportBackupDrive,
-                          icon: const Icon(Icons.cloud_upload_rounded),
-                          label: const Text('Invia su Drive'),
                         ),
                       ],
                     ),
@@ -589,38 +593,61 @@ class _SettingsPageState extends State<SettingsPage>
                   SettingsFieldCard(
                     title: 'Import backup',
                     subtitle:
-                        'Importa un backup JSON completo. Integrazione mantiene i dati extra già presenti. Sovrascrittura elimina i documenti non inclusi nel backup.',
-                    child: Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
+                        'Il front non carica file. Accoda un import backend in integrazione o sovrascrittura. Se il file ID è vuoto, il backend userà l\'ultimo backup disponibile nella cartella configurata.',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        FilledButton.icon(
-                          onPressed: isImportingBackup
-                              ? null
-                              : () => _importBackup(BackupImportMode.merge),
-                          icon: const Icon(Icons.merge_rounded),
-                          label: Text(
-                            isImportingBackup ? 'Import...' : 'Importa integrazione',
+                        TextField(
+                          controller: backupImportFileIdController,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: const InputDecoration(
+                            labelText: 'File ID JSON da importare (opzionale)',
+                            helperText:
+                                'Lascia vuoto per usare l\'ultimo backup disponibile nella cartella backup.',
+                            labelStyle: TextStyle(color: Colors.white70),
+                            helperStyle: TextStyle(color: Colors.white54),
                           ),
                         ),
-                        FilledButton.icon(
-                          onPressed: isImportingBackup
-                              ? null
-                              : () => _importBackup(BackupImportMode.overwrite),
-                          icon: const Icon(Icons.warning_amber_rounded),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: AppColors.red,
-                          ),
-                          label: const Text('Importa sovrascrittura'),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 12,
+                          children: <Widget>[
+                            FilledButton.icon(
+                              onPressed: isQueueingImport
+                                  ? null
+                                  : () => _requestBackupImport(
+                                        BackupRequestImportMode.merge,
+                                      ),
+                              icon: const Icon(Icons.merge_rounded),
+                              label: Text(
+                                isQueueingImport
+                                    ? 'Accodamento...'
+                                    : 'Richiedi integrazione',
+                              ),
+                            ),
+                            FilledButton.icon(
+                              onPressed: isQueueingImport
+                                  ? null
+                                  : () => _requestBackupImport(
+                                        BackupRequestImportMode.overwrite,
+                                      ),
+                              icon: const Icon(Icons.warning_amber_rounded),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: AppColors.red,
+                              ),
+                              label: const Text('Richiedi sovrascrittura'),
+                            ),
+                          ],
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 20),
                   SettingsFieldCard(
-                    title: 'Automazione backup',
+                    title: 'Automazione backup backend',
                     subtitle:
-                        'Pianificazione frontend. Funziona mentre l\'app resta aperta. In download usa la cartella predefinita del browser; in Drive carica i file nella cartella indicata.',
+                        'Questi parametri verranno letti dal backend dedicato. Nessun terminale frontend deve restare aperto.',
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
@@ -633,7 +660,7 @@ class _SettingsPageState extends State<SettingsPage>
                             style: TextStyle(color: Colors.white),
                           ),
                           subtitle: const Text(
-                            'Il controllo parte ogni minuto e l\'export scatta solo alla scadenza prevista.',
+                            'Il backend userà questa impostazione per il trigger separato backup.',
                             style: TextStyle(color: Colors.white70),
                           ),
                           onChanged: _isBusy
@@ -657,89 +684,32 @@ class _SettingsPageState extends State<SettingsPage>
                           ),
                         ),
                         const SizedBox(height: 12),
-                        DropdownButtonFormField<String>(
-                          value: backupAutoDestination,
-                          dropdownColor: AppColors.panelSoft,
-                          decoration: const InputDecoration(
-                            labelText: 'Destinazione automatica',
-                            labelStyle: TextStyle(color: Colors.white70),
-                          ),
-                          style: const TextStyle(color: Colors.white),
-                          items: const <DropdownMenuItem<String>>[
-                            DropdownMenuItem<String>(
-                              value: 'download',
-                              child: Text('Download browser'),
-                            ),
-                            DropdownMenuItem<String>(
-                              value: 'drive',
-                              child: Text('Google Drive'),
-                            ),
-                          ],
-                          onChanged: _isBusy
-                              ? null
-                              : (String? value) {
-                                  if (value == null) return;
-                                  setState(() {
-                                    backupAutoDestination = value;
-                                  });
-                                },
-                        ),
-                        const SizedBox(height: 12),
                         TextField(
                           controller: backupDriveFolderController,
                           style: const TextStyle(color: Colors.white),
                           decoration: const InputDecoration(
                             labelText: 'ID cartella Drive backup',
                             helperText:
-                                'Richiesto solo se scegli Google Drive come destinazione automatica o manuale.',
+                                'Cartella dedicata letta dal backend per export automatici e import dell\'ultimo backup.',
                             labelStyle: TextStyle(color: Colors.white70),
                             helperStyle: TextStyle(color: Colors.white54),
                           ),
                         ),
                         const SizedBox(height: 12),
-                        TextField(
-                          controller: googleClientIdController,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: const InputDecoration(
-                            labelText: 'Google Web Client ID (browser corrente)',
-                            helperText:
-                                'Serve per l\'upload automatico/manuale su Drive da questo terminale.',
-                            labelStyle: TextStyle(color: Colors.white70),
-                            helperStyle: TextStyle(color: Colors.white54),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 12,
-                          runSpacing: 12,
-                          children: <Widget>[
-                            FilledButton.icon(
-                              onPressed:
-                                  isAuthorizingDrive ? null : _authorizeDriveSession,
-                              icon: const Icon(Icons.verified_user_rounded),
-                              label: Text(
-                                isAuthorizingDrive
-                                    ? 'Autorizzazione...'
-                                    : 'Autorizza Drive',
-                              ),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: FilledButton(
+                            onPressed: isSaving ? null : _save,
+                            child: Text(
+                              isSaving ? 'Salvataggio...' : 'Salva pianificazione',
                             ),
-                            FilledButton(
-                              onPressed: isSaving ? null : _save,
-                              child: Text(isSaving ? 'Salvataggio...' : 'Salva pianificazione'),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          _backupStatusLabel,
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ],
                     ),
                   ),
+                  const SizedBox(height: 20),
+                  _buildRecentJobsSection(),
                   if (message.isNotEmpty) ...<Widget>[
                     const SizedBox(height: 16),
                     Text(
@@ -756,7 +726,7 @@ class _SettingsPageState extends State<SettingsPage>
           ),
         FloatingPageMenu(
           currentIndex: appNavigationIndex.value,
-          onSelected: (index) {
+          onSelected: (int index) {
             if (appNavigationIndex.value != index) {
               appNavigationIndex.value = index;
             }
