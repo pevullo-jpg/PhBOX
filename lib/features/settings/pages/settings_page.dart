@@ -188,9 +188,9 @@ class _SettingsPageState extends State<SettingsPage>
 
   String _formatBlockingJobMessage(BackupJob? job) {
     if (job == null) {
-      return 'C'e gia un job backup in coda o in esecuzione. Attendi che il backend lo consumi.';
+      return "C'e gia un job backup in coda o in esecuzione. Attendi che il backend lo consumi.";
     }
-    return 'C'e gia un job backup ${job.status.toLowerCase()} in coda: ${_jobTitle(job)} richiesto il ${_formatDateTime(job.requestedAt)}.';
+    return "C'e gia un job backup ${job.status.toLowerCase()} in coda: ${_jobTitle(job)} richiesto il ${_formatDateTime(job.requestedAt)}.";
   }
 
   Future<void> _load() async {

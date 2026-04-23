@@ -125,8 +125,7 @@ class AppSettings {
     final String normalized = value.toString().trim();
     if (normalized.isEmpty) return const <String>[];
     return normalized
-        .split(RegExp(r'[,;|
-]'))
+        .split(RegExp(r'[,;|\n]'))
         .map((String item) => item.trim())
         .where((String item) => item.isNotEmpty)
         .toList();
