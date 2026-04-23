@@ -7,11 +7,6 @@ class AppSettings {
   final String? backupDriveFolderId;
   final DateTime? backupLastRunAt;
   final String? backupLastRunStatus;
-  final DateTime? backupWorkerLastSeenAt;
-  final String? backupWorkerLastCycleStatus;
-  final String? backupWorkerVersion;
-  final DateTime? backupTriggerInstalledAt;
-  final int backupQueuePendingCount;
   final DateTime updatedAt;
 
   const AppSettings({
@@ -23,11 +18,6 @@ class AppSettings {
     this.backupDriveFolderId,
     this.backupLastRunAt,
     this.backupLastRunStatus,
-    this.backupWorkerLastSeenAt,
-    this.backupWorkerLastCycleStatus,
-    this.backupWorkerVersion,
-    this.backupTriggerInstalledAt,
-    this.backupQueuePendingCount = 0,
     required this.updatedAt,
   });
 
@@ -62,11 +52,6 @@ class AppSettings {
       backupLastRunStatus: clearBackupLastRunStatus
           ? null
           : (backupLastRunStatus ?? this.backupLastRunStatus),
-      backupWorkerLastSeenAt: backupWorkerLastSeenAt,
-      backupWorkerLastCycleStatus: backupWorkerLastCycleStatus,
-      backupWorkerVersion: backupWorkerVersion,
-      backupTriggerInstalledAt: backupTriggerInstalledAt,
-      backupQueuePendingCount: backupQueuePendingCount,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -100,12 +85,6 @@ class AppSettings {
       backupDriveFolderId: _readNullableString(map['backupDriveFolderId']),
       backupLastRunAt: _readDate(map['backupLastRunAt']),
       backupLastRunStatus: _readNullableString(map['backupLastRunStatus']),
-      backupWorkerLastSeenAt: _readDate(map['backupWorkerLastSeenAt']),
-      backupWorkerLastCycleStatus:
-          _readNullableString(map['backupWorkerLastCycleStatus']),
-      backupWorkerVersion: _readNullableString(map['backupWorkerVersion']),
-      backupTriggerInstalledAt: _readDate(map['backupTriggerInstalledAt']),
-      backupQueuePendingCount: _readInt(map['backupQueuePendingCount']) ?? 0,
       updatedAt: _readDate(map['updatedAt']) ?? DateTime.now(),
     );
   }
@@ -133,7 +112,6 @@ class AppSettings {
 
   static int? _readInt(dynamic value) {
     if (value is int) return value;
-    if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '');
   }
 
@@ -168,9 +146,7 @@ class AppSettings {
     } catch (_) {}
     try {
       final dynamic seconds = (value as dynamic).seconds;
-      if (seconds is int) {
-        return DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
-      }
+      if (seconds is int) return DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
     } catch (_) {}
     return null;
   }

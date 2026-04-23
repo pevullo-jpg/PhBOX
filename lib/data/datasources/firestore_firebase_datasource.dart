@@ -1,6 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-import '../../core/utils/tenant_firestore_path_resolver.dart';
 import 'firestore_datasource.dart';
 
 class FirestoreFirebaseDatasource implements FirestoreDatasource {
@@ -14,11 +13,7 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     required String documentId,
     required Map<String, dynamic> data,
   }) {
-    return TenantFirestorePathResolver.document(
-      firestore: firestore,
-      collectionPath: collectionPath,
-      documentId: documentId,
-    ).set(data);
+    return firestore.collection(collectionPath).doc(documentId).set(data);
   }
 
   @override
@@ -27,11 +22,10 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     required String documentId,
     required Map<String, dynamic> data,
   }) {
-    return TenantFirestorePathResolver.document(
-      firestore: firestore,
-      collectionPath: collectionPath,
-      documentId: documentId,
-    ).set(data, SetOptions(merge: true));
+    return firestore
+        .collection(collectionPath)
+        .doc(documentId)
+        .set(data, SetOptions(merge: true));
   }
 
   @override
@@ -39,11 +33,7 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     required String collectionPath,
     required String documentId,
   }) async {
-    final DocumentSnapshot<Map<String, dynamic>> doc = await TenantFirestorePathResolver.document(
-      firestore: firestore,
-      collectionPath: collectionPath,
-      documentId: documentId,
-    ).get();
+    final doc = await firestore.collection(collectionPath).doc(documentId).get();
     final Map<String, dynamic>? data = doc.data();
     if (data == null) {
       return null;
@@ -57,8 +47,7 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     String? orderBy,
     bool descending = false,
   }) async {
-    Query<Map<String, dynamic>> query =
-        TenantFirestorePathResolver.collection(firestore, collectionPath);
+    Query<Map<String, dynamic>> query = firestore.collection(collectionPath);
     if (orderBy != null) {
       query = query.orderBy(orderBy, descending: descending);
     }
@@ -74,9 +63,7 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     String? orderBy,
     bool descending = false,
   }) async {
-    Query<Map<String, dynamic>> query = firestore.collectionGroup(
-      TenantFirestorePathResolver.resolveCollectionGroupId(collectionPath),
-    );
+    Query<Map<String, dynamic>> query = firestore.collectionGroup(collectionPath);
     if (orderBy != null) {
       query = query.orderBy(orderBy, descending: descending);
     }
@@ -91,11 +78,7 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     required String collectionPath,
     required String documentId,
   }) {
-    return TenantFirestorePathResolver.document(
-      firestore: firestore,
-      collectionPath: collectionPath,
-      documentId: documentId,
-    ).delete();
+    return firestore.collection(collectionPath).doc(documentId).delete();
   }
 
   @override
@@ -106,11 +89,12 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     required String subDocumentId,
     required Map<String, dynamic> data,
   }) {
-    return TenantFirestorePathResolver.document(
-      firestore: firestore,
-      collectionPath: collectionPath,
-      documentId: documentId,
-    ).collection(subcollectionPath).doc(subDocumentId).set(data);
+    return firestore
+        .collection(collectionPath)
+        .doc(documentId)
+        .collection(subcollectionPath)
+        .doc(subDocumentId)
+        .set(data);
   }
 
   @override
@@ -120,11 +104,12 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     required String subcollectionPath,
     required String subDocumentId,
   }) {
-    return TenantFirestorePathResolver.document(
-      firestore: firestore,
-      collectionPath: collectionPath,
-      documentId: documentId,
-    ).collection(subcollectionPath).doc(subDocumentId).delete();
+    return firestore
+        .collection(collectionPath)
+        .doc(documentId)
+        .collection(subcollectionPath)
+        .doc(subDocumentId)
+        .delete();
   }
 
   @override
@@ -135,11 +120,10 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     String? orderBy,
     bool descending = false,
   }) async {
-    Query<Map<String, dynamic>> query = TenantFirestorePathResolver.document(
-      firestore: firestore,
-      collectionPath: collectionPath,
-      documentId: documentId,
-    ).collection(subcollectionPath);
+    Query<Map<String, dynamic>> query = firestore
+        .collection(collectionPath)
+        .doc(documentId)
+        .collection(subcollectionPath);
     if (orderBy != null) {
       query = query.orderBy(orderBy, descending: descending);
     }
@@ -148,6 +132,7 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
         .map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => _withDocumentId(doc.data(), doc.id))
         .toList();
   }
+
 
   Map<String, dynamic> _withDocumentId(Map<String, dynamic> data, String documentId) {
     if (data.containsKey('id')) {

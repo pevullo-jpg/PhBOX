@@ -1,7 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../core/constants/app_constants.dart';
-import '../../core/utils/tenant_firestore_path_resolver.dart';
 import '../../core/utils/patient_identity_utils.dart';
 import '../../core/utils/patient_input_normalizer.dart';
 import '../datasources/firestore_datasource.dart';
@@ -186,16 +185,12 @@ class PatientsRepository {
     final DateTime now = DateTime.now();
     final String isoNow = now.toIso8601String();
 
-    final DocumentReference<Map<String, dynamic>> oldPatientRef = TenantFirestorePathResolver.document(
-      firestore: firestore,
-      collectionPath: AppCollections.patients,
-      documentId: normalizedTemporaryDocumentId,
-    );
-    final DocumentReference<Map<String, dynamic>> newPatientRef = TenantFirestorePathResolver.document(
-      firestore: firestore,
-      collectionPath: AppCollections.patients,
-      documentId: normalizedFiscalCode,
-    );
+    final DocumentReference<Map<String, dynamic>> oldPatientRef = firestore
+        .collection(AppCollections.patients)
+        .doc(normalizedTemporaryDocumentId);
+    final DocumentReference<Map<String, dynamic>> newPatientRef = firestore
+        .collection(AppCollections.patients)
+        .doc(normalizedFiscalCode);
 
     final Map<String, dynamic> nextPatientMap =
         _cleanMapForWrite(currentPatientMap);
@@ -266,11 +261,7 @@ class PatientsRepository {
     final WriteBatch batch = firestore.batch();
     final String isoNow = DateTime.now().toIso8601String();
     final DocumentReference<Map<String, dynamic>> patientRef =
-        TenantFirestorePathResolver.document(
-          firestore: firestore,
-          collectionPath: AppCollections.patients,
-          documentId: documentId,
-        );
+        firestore.collection(AppCollections.patients).doc(documentId);
 
     batch.set(
       patientRef,
@@ -311,11 +302,7 @@ class PatientsRepository {
   }) async {
     final FirebaseFirestore firestore = _firebaseFirestoreOrThrow();
     final DocumentReference<Map<String, dynamic>> patientRef =
-        TenantFirestorePathResolver.document(
-          firestore: firestore,
-          collectionPath: AppCollections.patients,
-          documentId: patientDocumentId,
-        );
+        firestore.collection(AppCollections.patients).doc(patientDocumentId);
 
     for (final String subcollection in _manualSubcollections) {
       final List<Map<String, dynamic>> items = await datasource.getSubCollection(
@@ -440,20 +427,13 @@ class PatientsRepository {
       nextMap['patientFiscalCode'] = normalizedNew;
       nextMap['patientFullName'] = fullName;
       nextMap['updatedAt'] = isoNow;
-      final DocumentReference<Map<String, dynamic>> targetRef =
-          TenantFirestorePathResolver.document(
-            firestore: firestore,
-            collectionPath: AppCollections.doctorPatientLinks,
-            documentId: targetLinkId,
-          );
+      final DocumentReference<Map<String, dynamic>> targetRef = firestore
+          .collection(AppCollections.doctorPatientLinks)
+          .doc(targetLinkId);
       batch.set(targetRef, nextMap);
       if (migrationMode && targetLinkId != currentLinkId) {
         batch.delete(
-          TenantFirestorePathResolver.document(
-            firestore: firestore,
-            collectionPath: AppCollections.doctorPatientLinks,
-            documentId: currentLinkId,
-          ),
+          firestore.collection(AppCollections.doctorPatientLinks).doc(currentLinkId),
         );
       }
     }
@@ -484,16 +464,12 @@ class PatientsRepository {
     }
 
     final FirebaseFirestore firestore = _firebaseFirestoreOrThrow();
-    final DocumentReference<Map<String, dynamic>> oldAdviceRef = TenantFirestorePathResolver.document(
-      firestore: firestore,
-      collectionPath: AppCollections.patientTherapeuticAdvice,
-      documentId: oldPatientDocumentId,
-    );
-    final DocumentReference<Map<String, dynamic>> newAdviceRef = TenantFirestorePathResolver.document(
-      firestore: firestore,
-      collectionPath: AppCollections.patientTherapeuticAdvice,
-      documentId: newPatientDocumentId,
-    );
+    final DocumentReference<Map<String, dynamic>> oldAdviceRef = firestore
+        .collection(AppCollections.patientTherapeuticAdvice)
+        .doc(oldPatientDocumentId);
+    final DocumentReference<Map<String, dynamic>> newAdviceRef = firestore
+        .collection(AppCollections.patientTherapeuticAdvice)
+        .doc(newPatientDocumentId);
     final Map<String, dynamic> nextAdvice = _cleanMapForWrite(therapeuticAdvice);
     nextAdvice['patientFiscalCode'] = newPatientDocumentId;
     nextAdvice['updatedAt'] = isoNow;
@@ -527,11 +503,7 @@ class PatientsRepository {
           .toList()
         ..sort();
       batch.set(
-        TenantFirestorePathResolver.document(
-          firestore: firestore,
-          collectionPath: AppCollections.families,
-          documentId: familyId,
-        ),
+        firestore.collection(AppCollections.families).doc(familyId),
         <String, dynamic>{
           'memberFiscalCodes': nextMembers,
           'updatedAt': isoNow,

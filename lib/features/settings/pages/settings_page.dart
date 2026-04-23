@@ -47,7 +47,6 @@ class _SettingsPageState extends State<SettingsPage>
 
   AppSettings currentSettings = AppSettings.empty();
   List<BackupJob> recentBackupJobs = <BackupJob>[];
-  List<BackupJob> activeBackupJobs = <BackupJob>[];
 
   @override
   void initState() {
@@ -121,78 +120,6 @@ class _SettingsPageState extends State<SettingsPage>
     return false;
   }
 
-  bool get _hasActiveBackupQueue => activeBackupJobs.isNotEmpty;
-
-  int get _pendingJobsCount =>
-      activeBackupJobs.where((BackupJob job) => job.isPending).length;
-
-  int get _runningJobsCount =>
-      activeBackupJobs.where((BackupJob job) => job.isRunning).length;
-
-  String get _activeBackupQueueLabel {
-    if (!_hasActiveBackupQueue) {
-      return 'Coda libera: nessun job pending o running.';
-    }
-    final List<String> parts = <String>[];
-    if (_pendingJobsCount > 0) {
-      parts.add('pending: $_pendingJobsCount');
-    }
-    if (_runningJobsCount > 0) {
-      parts.add('running: $_runningJobsCount');
-    }
-    final BackupJob oldestJob = activeBackupJobs
-        .reduce((BackupJob a, BackupJob b) =>
-            a.requestedAt.isBefore(b.requestedAt) ? a : b);
-    return 'Coda occupata (${parts.join(' • ')}). Job piu vecchio: ${_formatDateTime(oldestJob.requestedAt)}.';
-  }
-
-  bool get _isWorkerHeartbeatFresh {
-    final DateTime? lastSeen = currentSettings.backupWorkerLastSeenAt;
-    if (lastSeen == null) {
-      return false;
-    }
-    final int maxMinutes = currentSettings.backupAutoEnabled
-        ? (currentSettings.backupAutoIntervalMinutes * 2)
-        : 15;
-    return DateTime.now().difference(lastSeen).inMinutes <=
-        (maxMinutes < 15 ? 15 : maxMinutes);
-  }
-
-  Color get _workerHealthColor {
-    if (currentSettings.backupWorkerLastSeenAt == null) {
-      return AppColors.red;
-    }
-    if (_isWorkerHeartbeatFresh) {
-      return AppColors.green;
-    }
-    return AppColors.red;
-  }
-
-  String get _workerHealthLabel {
-    final DateTime? lastSeen = currentSettings.backupWorkerLastSeenAt;
-    final String cycle =
-        (currentSettings.backupWorkerLastCycleStatus ?? '').trim().isEmpty
-            ? '-'
-            : (currentSettings.backupWorkerLastCycleStatus ?? '').trim();
-    final String triggerWhen = currentSettings.backupTriggerInstalledAt == null
-        ? 'trigger non registrato'
-        : 'trigger: ${_formatDateTime(currentSettings.backupTriggerInstalledAt!)}';
-    final String pendingFromSettings =
-        'queue pending: ${currentSettings.backupQueuePendingCount}';
-    if (lastSeen == null) {
-      return 'Worker backend mai visto • $triggerWhen • $pendingFromSettings';
-    }
-    final String freshness = _isWorkerHeartbeatFresh ? 'attivo' : 'non aggiornato';
-    return 'Worker $freshness • ultimo heartbeat: ${_formatDateTime(lastSeen)} • ciclo: $cycle • $triggerWhen • $pendingFromSettings';
-  }
-
-  String _formatBlockingJobMessage(BackupJob? job) {
-    if (job == null) {
-      return "C'e gia un job backup in coda o in esecuzione. Attendi che il backend lo consumi.";
-    }
-    return "C'e gia un job backup ${job.status.toLowerCase()} in coda: ${_jobTitle(job)} richiesto il ${_formatDateTime(job.requestedAt)}.";
-  }
-
   Future<void> _load() async {
     setState(() {
       isLoading = true;
@@ -206,16 +133,13 @@ class _SettingsPageState extends State<SettingsPage>
       final List<dynamic> results = await Future.wait<dynamic>(<Future<dynamic>>[
         repository.getSettings(),
         backupJobsRepository.getRecentJobs(),
-        backupJobsRepository.getActiveJobs(),
       ]);
       if (!mounted) return;
       final AppSettings settings = results[0] as AppSettings;
       final List<BackupJob> jobs = results[1] as List<BackupJob>;
-      final List<BackupJob> activeJobs = results[2] as List<BackupJob>;
       setState(() {
         currentSettings = settings;
         recentBackupJobs = jobs;
-        activeBackupJobs = activeJobs;
         expiryWarningController.text = settings.expiryWarningDays.toString();
         doctorsCatalogController.text = settings.doctorsCatalog.join('\n');
         backupIntervalController.text =
@@ -307,14 +231,12 @@ class _SettingsPageState extends State<SettingsPage>
     });
 
     try {
-      final BackupQueueRequestResult result =
+      final String jobId =
           await backupJobsRepository.enqueueExport(targetFolderId: folderId);
       if (!mounted) return;
       setState(() {
-        message = result.enqueued
-            ? 'Richiesta export accodata. Job: ${_shortJobId(result.jobId ?? '')}. Il backend la eseguira automaticamente con trigger separato.'
-            : _formatBlockingJobMessage(result.blockingJob);
-        isErrorMessage = !result.enqueued;
+        message =
+            'Richiesta export accodata. Job: ${_shortJobId(jobId)}. Il backend la eseguirà al prossimo trigger backup.';
       });
       await _load();
     } catch (e) {
@@ -357,7 +279,7 @@ class _SettingsPageState extends State<SettingsPage>
     });
 
     try {
-      final BackupQueueRequestResult result = await backupJobsRepository.enqueueImport(
+      final String jobId = await backupJobsRepository.enqueueImport(
         importMode:
             mode == BackupRequestImportMode.merge ? 'merge' : 'overwrite',
         sourceBackupFileId: sourceFileId,
@@ -365,10 +287,9 @@ class _SettingsPageState extends State<SettingsPage>
       );
       if (!mounted) return;
       setState(() {
-        message = result.enqueued
-            ? 'Richiesta import accodata. Job: ${_shortJobId(result.jobId ?? '')}. Il backend usera ${sourceFileId.isEmpty ? 'l\'ultimo backup disponibile' : 'il file indicato'}.'
-            : _formatBlockingJobMessage(result.blockingJob);
-        isErrorMessage = !result.enqueued;
+        message =
+            'Richiesta import accodata. Job: ${_shortJobId(jobId)}. Il backend userà '
+            '${sourceFileId.isEmpty ? 'l\'ultimo backup disponibile' : 'il file indicato'}.';
       });
       await _load();
     } catch (e) {
@@ -502,22 +423,6 @@ class _SettingsPageState extends State<SettingsPage>
               fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 8),
-          Text(
-            _workerHealthLabel,
-            style: TextStyle(
-              color: _workerHealthColor,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _activeBackupQueueLabel,
-            style: TextStyle(
-              color: _hasActiveBackupQueue ? AppColors.amber : Colors.white70,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
           const SizedBox(height: 12),
           if (recentBackupJobs.isEmpty)
             const Text(
@@ -612,7 +517,7 @@ class _SettingsPageState extends State<SettingsPage>
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Il front non accede più a Drive per il backup. Qui configuri solo i parametri, controlli il heartbeat del worker backend e accodi i job che il backend eseguirà con trigger separato.',
+                    'Il front non accede più a Drive per il backup. Qui configuri solo i parametri e accodi i job che il backend eseguirà con trigger separato.',
                     style: TextStyle(color: Colors.white70, height: 1.5),
                   ),
                   const SizedBox(height: 20),
@@ -672,13 +577,8 @@ class _SettingsPageState extends State<SettingsPage>
                       spacing: 12,
                       runSpacing: 12,
                       children: <Widget>[
-                        if (_hasActiveBackupQueue)
-                          const Text(
-                            'Nuove richieste bloccate finche esiste almeno un job pending o running.',
-                            style: TextStyle(color: Colors.white70),
-                          ),
                         FilledButton.icon(
-                          onPressed: (isQueueingExport || _hasActiveBackupQueue) ? null : _requestBackupExport,
+                          onPressed: isQueueingExport ? null : _requestBackupExport,
                           icon: const Icon(Icons.archive_rounded),
                           label: Text(
                             isQueueingExport
@@ -714,7 +614,7 @@ class _SettingsPageState extends State<SettingsPage>
                           runSpacing: 12,
                           children: <Widget>[
                             FilledButton.icon(
-                              onPressed: (isQueueingImport || _hasActiveBackupQueue)
+                              onPressed: isQueueingImport
                                   ? null
                                   : () => _requestBackupImport(
                                         BackupRequestImportMode.merge,
@@ -727,7 +627,7 @@ class _SettingsPageState extends State<SettingsPage>
                               ),
                             ),
                             FilledButton.icon(
-                              onPressed: (isQueueingImport || _hasActiveBackupQueue)
+                              onPressed: isQueueingImport
                                   ? null
                                   : () => _requestBackupImport(
                                         BackupRequestImportMode.overwrite,
