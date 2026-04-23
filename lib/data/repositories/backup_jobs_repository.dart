@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../core/constants/app_constants.dart';
+import '../../core/utils/tenant_firestore_path_resolver.dart';
 import '../models/backup_job.dart';
 
 class BackupQueueRequestResult {
@@ -48,7 +49,7 @@ class BackupJobsRepository {
       return BackupQueueRequestResult.blocked(activeJobs.first);
     }
     final DocumentReference<Map<String, dynamic>> doc =
-        firestore.collection(AppCollections.backupJobs).doc();
+        TenantFirestorePathResolver.collection(firestore, AppCollections.backupJobs).doc();
     final DateTime now = DateTime.now();
     await doc.set(<String, dynamic>{
       'id': doc.id,
@@ -81,7 +82,7 @@ class BackupJobsRepository {
       return BackupQueueRequestResult.blocked(activeJobs.first);
     }
     final DocumentReference<Map<String, dynamic>> doc =
-        firestore.collection(AppCollections.backupJobs).doc();
+        TenantFirestorePathResolver.collection(firestore, AppCollections.backupJobs).doc();
     final DateTime now = DateTime.now();
     await doc.set(<String, dynamic>{
       'id': doc.id,
@@ -106,7 +107,7 @@ class BackupJobsRepository {
 
   Future<List<BackupJob>> getRecentJobs({int limit = 8}) async {
     final QuerySnapshot<Map<String, dynamic>> snapshot = await firestore
-        .collection(AppCollections.backupJobs)
+        .collection(TenantFirestorePathResolver.resolveCollectionPath(AppCollections.backupJobs))
         .orderBy('requestedAt', descending: true)
         .limit(limit)
         .get();
@@ -142,7 +143,7 @@ class BackupJobsRepository {
     required int limit,
   }) async {
     final QuerySnapshot<Map<String, dynamic>> snapshot = await firestore
-        .collection(AppCollections.backupJobs)
+        .collection(TenantFirestorePathResolver.resolveCollectionPath(AppCollections.backupJobs))
         .where('status', isEqualTo: status)
         .limit(limit)
         .get();
