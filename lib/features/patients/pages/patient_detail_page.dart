@@ -506,7 +506,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
   Future<void> _addDebt(Patient patient) async {
     final descriptionController = TextEditingController();
     final amountController = TextEditingController();
-    final partialPaidController = TextEditingController();
     final noteController = TextEditingController();
     try {
       await showDialog<void>(
@@ -518,8 +517,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
           Future<void> submit(StateSetter setLocalState) async {
             final String description = descriptionController.text.trim();
             final double amount = _parseEuro(amountController.text);
-            final double initialPaidAmount = _parseEuro(partialPaidController.text);
-            if (description.isEmpty || amount <= 0) {
+            if (description.isEmpty || amount == 0) {
               setLocalState(() => localError = 'Causale e importo sono obbligatori.');
               return;
             }
@@ -536,7 +534,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                   patientName: patient.fullName,
                   description: description,
                   amount: amount,
-                  initialPaidAmountRaw: initialPaidAmount,
+                  initialPaidAmountRaw: 0,
                   createdAt: now,
                   dueDate: now,
                   note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
@@ -572,13 +570,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                     _dialogField(
                       amountController,
                       'Importo debito (€)',
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
-                    ),
-                    const SizedBox(height: 12),
-                    _dialogField(
-                      partialPaidController,
-                      'Saldo parziale (€)',
                       keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
                       inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[-0-9,\.]'))],
                     ),
@@ -622,7 +613,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     } finally {
       descriptionController.dispose();
       amountController.dispose();
-      partialPaidController.dispose();
       noteController.dispose();
     }
   }

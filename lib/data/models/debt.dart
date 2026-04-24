@@ -33,12 +33,28 @@ class Debt {
     required String patientName,
     required String description,
     required double amount,
-    required double initialPaidAmountRaw,
+    double initialPaidAmountRaw = 0,
     required DateTime createdAt,
     DateTime? dueDate,
     String? note,
   }) {
-    final double safeAmount = amount < 0 ? 0 : amount;
+    if (amount < 0) {
+      return Debt(
+        id: id,
+        patientFiscalCode: patientFiscalCode,
+        patientName: patientName,
+        description: description,
+        amount: amount,
+        paidAmount: 0,
+        residualAmount: amount,
+        createdAt: createdAt,
+        dueDate: dueDate,
+        status: resolveStatus(amount),
+        note: note,
+      );
+    }
+
+    final double safeAmount = amount;
     final double normalizedPaidAmount = normalizeInitialPaidAmount(
       amount: safeAmount,
       rawValue: initialPaidAmountRaw,
@@ -77,7 +93,10 @@ class Debt {
   }
 
   static String resolveStatus(double residualAmount) {
-    return residualAmount <= 0 ? 'closed' : 'open';
+    if (residualAmount < 0) {
+      return 'credit';
+    }
+    return residualAmount == 0 ? 'closed' : 'open';
   }
 
   Map<String, dynamic> toMap() {

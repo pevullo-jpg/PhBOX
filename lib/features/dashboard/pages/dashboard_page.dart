@@ -57,10 +57,15 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
   late final SettingsRepository _settingsRepository;
 
   Future<_DashboardData>? _future;
+  _DashboardTotals _dashboardTotals = _DashboardTotals.empty();
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
   bool _searchInFlags = false;
+  bool _isRefreshingTotals = false;
+  Timer? _inactiveFilterResetTimer;
   DateTime? _lastRefreshAt;
+
+  static const Duration _inactiveFilterResetDelay = Duration(minutes: 2);
 
   @override
   void initState() {
@@ -82,12 +87,49 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
 
   @override
   void dispose() {
+    _inactiveFilterResetTimer?.cancel();
+    _inactiveFilterResetTimer = null;
     _searchController.removeListener(_handleSearchChanged);
     _searchController.dispose();
     super.dispose();
   }
 
   void _handleSearchChanged() {
+    setState(() {});
+    _scheduleInactiveFilterResetIfNeeded();
+  }
+
+  bool get _hasTemporaryDashboardState {
+    return _activeCardFilters.isNotEmpty ||
+        _searchController.text.trim().isNotEmpty ||
+        _searchInFlags;
+  }
+
+  void _scheduleInactiveFilterResetIfNeeded() {
+    _inactiveFilterResetTimer?.cancel();
+    _inactiveFilterResetTimer = null;
+    if (!_hasTemporaryDashboardState) {
+      return;
+    }
+    _inactiveFilterResetTimer = Timer(
+      _inactiveFilterResetDelay,
+      _resetTemporaryDashboardState,
+    );
+  }
+
+  void _resetTemporaryDashboardState() {
+    if (!mounted || !_hasTemporaryDashboardState) {
+      return;
+    }
+    _inactiveFilterResetTimer?.cancel();
+    _inactiveFilterResetTimer = null;
+    _activeCardFilters.clear();
+    _searchInFlags = false;
+    if (_searchController.text.isNotEmpty) {
+      _searchController.removeListener(_handleSearchChanged);
+      _searchController.clear();
+      _searchController.addListener(_handleSearchChanged);
+    }
     setState(() {});
   }
 
@@ -97,15 +139,16 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
 
   @override
   void onAutoRefreshTick() {
-    _refresh();
+    _refreshTotals();
   }
 
   void _trackRefreshCompletion(Future<_DashboardData> future) {
-    future.then((_) {
+    future.then((data) {
       if (!mounted) {
         return;
       }
       setState(() {
+        _dashboardTotals = data.totals;
         _lastRefreshAt = DateTime.now();
       });
     }).catchError((_) {});
@@ -207,7 +250,58 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
       summaries: summaries,
       doctorsCatalog: settings.doctorsCatalog,
       families: families,
+      totals: _DashboardTotals.fromCollections(
+        imports: imports,
+        legacyPrescriptions: allPrescriptions,
+        debts: allDebts,
+        advances: allAdvances,
+        bookings: allBookings,
+      ),
     );
+  }
+
+  Future<_DashboardTotals> _loadTotals() async {
+    final results = await Future.wait<dynamic>(<Future<dynamic>>[
+      _drivePdfImportsRepository.getAllImports(includeHidden: true),
+      _prescriptionsRepository.getAllLegacyPrescriptions(),
+      _debtsRepository.getAllDebts(),
+      _advancesRepository.getAllAdvances(),
+      _bookingsRepository.getAllBookings(),
+    ]);
+
+    return _DashboardTotals.fromCollections(
+      imports: results[0] as List<DrivePdfImport>,
+      legacyPrescriptions: results[1] as List<Prescription>,
+      debts: results[2] as List<Debt>,
+      advances: results[3] as List<Advance>,
+      bookings: results[4] as List<Booking>,
+    );
+  }
+
+  Future<void> _refreshTotals() async {
+    if (_isRefreshingTotals) {
+      return;
+    }
+    _isRefreshingTotals = true;
+    try {
+      final _DashboardTotals totals = await _loadTotals();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _dashboardTotals = totals;
+        _lastRefreshAt = DateTime.now();
+      });
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _message = 'Errore aggiornamento totali: $e';
+      });
+    } finally {
+      _isRefreshingTotals = false;
+    }
   }
 
   Map<String, List<T>> _groupByFiscalCode<T>(
@@ -342,6 +436,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
 
       _activeCardFilters.add(filter);
     });
+    _scheduleInactiveFilterResetIfNeeded();
   }
 
   Future<void> _openPdf(DrivePdfImport item) async {
@@ -474,7 +569,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
   Future<bool> _addDebtFromDashboard(_PatientDashboardSummary summary) async {
     final descriptionController = TextEditingController();
     final amountController = TextEditingController();
-    final partialPaidController = TextEditingController();
     final noteController = TextEditingController();
     bool saved = false;
 
@@ -488,8 +582,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
           Future<void> submit(StateSetter setLocalState) async {
             final String description = descriptionController.text.trim();
             final double amount = _parseEuro(amountController.text);
-            final double initialPaidAmount = _parseEuro(partialPaidController.text);
-            if (description.isEmpty || amount <= 0) {
+            if (description.isEmpty || amount == 0) {
               setLocalState(() => localError = 'Causale e importo sono obbligatori.');
               return;
             }
@@ -506,7 +599,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                   patientName: summary.patient.fullName,
                   description: description,
                   amount: amount,
-                  initialPaidAmountRaw: initialPaidAmount,
+                  initialPaidAmountRaw: 0,
                   createdAt: now,
                   dueDate: now,
                   note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
@@ -543,13 +636,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                     _dialogField(
                       amountController,
                       'Importo debito (€)',
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
-                    ),
-                    const SizedBox(height: 12),
-                    _dialogField(
-                      partialPaidController,
-                      'Saldo parziale (€)',
                       keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
                       inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[-0-9,\.]'))],
                     ),
@@ -594,7 +680,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
     } finally {
       descriptionController.dispose();
       amountController.dispose();
-      partialPaidController.dispose();
       noteController.dispose();
     }
   }
@@ -860,7 +945,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
 
     final debtDescriptionController = TextEditingController();
     final debtAmountController = TextEditingController();
-    final debtPartialPaidController = TextEditingController();
     final debtNoteController = TextEditingController();
 
     final advanceDrugController = TextEditingController();
@@ -904,7 +988,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
             debtDescriptionController.clear();
             debtAmountController.clear();
             debtNoteController.clear();
-            debtPartialPaidController.clear();
             advanceDrugController.clear();
             advanceNoteController.clear();
             bookingDrugController.clear();
@@ -923,8 +1006,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
               if (key == 'debiti') {
                 final String description = debtDescriptionController.text.trim();
                 final double amount = _parseEuro(debtAmountController.text);
-                final double initialPaidAmount = _parseEuro(debtPartialPaidController.text);
-                if (description.isEmpty || amount <= 0) {
+                if (description.isEmpty || amount == 0) {
                   setLocalState(() => formError = 'Inserisci causale e importo validi.');
                   return;
                 }
@@ -935,7 +1017,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                     patientName: patientName,
                     description: description,
                     amount: amount,
-                    initialPaidAmountRaw: initialPaidAmount,
+                    initialPaidAmountRaw: 0,
                     createdAt: now,
                     dueDate: now,
                     note: debtNoteController.text.trim().isEmpty ? null : debtNoteController.text.trim(),
@@ -1069,13 +1151,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                     _dialogField(
                       debtAmountController,
                       'Importo debito (€)',
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
-                    ),
-                    const SizedBox(height: 12),
-                    _dialogField(
-                      debtPartialPaidController,
-                      'Saldo parziale (€)',
                       keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
                       inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[-0-9,\.]'))],
                     ),
@@ -1242,7 +1317,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
     } finally {
       debtDescriptionController.dispose();
       debtAmountController.dispose();
-      debtPartialPaidController.dispose();
       debtNoteController.dispose();
       advanceDrugController.dispose();
       advanceNoteController.dispose();
@@ -1417,7 +1491,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
     final advanceController = TextEditingController();
     final bookingController = TextEditingController();
     final debtController = TextEditingController();
-    final debtPartialPaidController = TextEditingController();
     final debtDescriptionController = TextEditingController();
     String selectedDoctor = '';
     final doctorCandidates = data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList()..sort();
@@ -1507,7 +1580,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
             final String advanceText = advanceController.text.trim();
             final String bookingText = bookingController.text.trim();
             final double debtValue = _parseEuro(debtController.text);
-            final double debtPartialPaid = _parseEuro(debtPartialPaidController.text);
             final String debtDescription = debtDescriptionController.text.trim();
 
             if (fiscalCode.isEmpty && name.isEmpty && surname.isEmpty) {
@@ -1518,7 +1590,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
               setLocalState(() => localError = "Per l'anticipo devi selezionare il medico.");
               return;
             }
-            if (debtValue > 0 && debtDescription.isEmpty) {
+            if (debtValue != 0 && debtDescription.isEmpty) {
               setLocalState(() => localError = 'Per il debito devi indicare la causale.');
               return;
             }
@@ -1584,7 +1656,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                 );
               }
 
-              if (debtValue > 0) {
+              if (debtValue != 0) {
                 await _debtsRepository.saveDebt(
                   Debt.createNew(
                     id: 'debt_${now.microsecondsSinceEpoch}',
@@ -1592,7 +1664,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                     patientName: effectivePatientName,
                     description: debtDescription,
                     amount: debtValue,
-                    initialPaidAmountRaw: debtPartialPaid,
+                    initialPaidAmountRaw: 0,
                     createdAt: now,
                     dueDate: now,
                   ),
@@ -1758,20 +1830,12 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                         const SizedBox(height: 12),
                         _dialogField(
                           debtController,
-                          'Eventuale debito (€)',
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'))],
+                          'Importo debito (€)',
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                          inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[-0-9,\.]'))],
                           onChanged: (_) => setLocalState(() {}),
                         ),
-                        if (_parseEuro(debtController.text) > 0) ...[
-                          const SizedBox(height: 12),
-                          _dialogField(
-                            debtPartialPaidController,
-                            'Saldo parziale debito (€)',
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[-0-9,\.]'))],
-                            onChanged: (_) => setLocalState(() {}),
-                          ),
+                        if (_parseEuro(debtController.text) != 0) ...[
                           const SizedBox(height: 12),
                           _dialogField(debtDescriptionController, 'Causale debito'),
                           const SizedBox(height: 8),
@@ -1821,7 +1885,6 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
       advanceController.dispose();
       bookingController.dispose();
       debtController.dispose();
-      debtPartialPaidController.dispose();
       debtDescriptionController.dispose();
     }
   }
@@ -1896,13 +1959,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
         final data = snapshot.data;
         final allSummaries = data == null ? const <_PatientDashboardSummary>[] : data.summaries;
         final summaries = data == null ? const <_PatientDashboardSummary>[] : _applyFilters(allSummaries, data.families);
-        final expiring = summaries.where((item) => item.hasExpiryAlert).toList();
-        final totalRecipeCount = allSummaries.fold<int>(0, (sum, item) => sum + item.recipeCount);
-        final totalDpcCount = allSummaries.fold<int>(0, (sum, item) => sum + item.dpcItems.length);
-        final totalDebt = allSummaries.fold<double>(0, (sum, item) => sum + item.totalDebt);
-        final totalAdvances = allSummaries.fold<int>(0, (sum, item) => sum + item.advances.length);
-        final totalBookings = allSummaries.fold<int>(0, (sum, item) => sum + item.bookings.length);
-        final totalExpiring = allSummaries.where((item) => item.hasExpiryAlert).length;
+        final _DashboardTotals totals = _dashboardTotals;
         final familyState = data == null
             ? _DashboardFamilyState.empty()
             : _DashboardFamilyState.fromFamilies(data.summaries, data.families);
@@ -1937,7 +1994,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                               children: [
                                 _SummaryCard(
                                   title: 'Ricette',
-                                  value: totalRecipeCount.toString(),
+                                  value: totals.recipeCount.toString(),
                                   icon: Icons.receipt_long_outlined,
                                   accent: AppColors.green,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.ricette),
@@ -1945,7 +2002,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                                 ),
                                 _SummaryCard(
                                   title: 'Totale DPC',
-                                  value: totalDpcCount.toString(),
+                                  value: totals.dpcCount.toString(),
                                   icon: Icons.local_shipping_outlined,
                                   accent: AppColors.coral,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.dpc),
@@ -1953,7 +2010,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                                 ),
                                 _SummaryCard(
                                   title: 'Debiti',
-                                  value: '€ ${totalDebt.toStringAsFixed(2)}',
+                                  value: '€ ${totals.debtAmount.toStringAsFixed(2)}',
                                   icon: Icons.euro_outlined,
                                   accent: AppColors.wine,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.debiti),
@@ -1961,7 +2018,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                                 ),
                                 _SummaryCard(
                                   title: 'Anticipi',
-                                  value: totalAdvances.toString(),
+                                  value: totals.advanceCount.toString(),
                                   icon: Icons.payments_outlined,
                                   accent: AppColors.amber,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.anticipi),
@@ -1969,7 +2026,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                                 ),
                                 _SummaryCard(
                                   title: 'Prenotazioni',
-                                  value: totalBookings.toString(),
+                                  value: totals.bookingCount.toString(),
                                   icon: Icons.event_note_outlined,
                                   accent: AppColors.yellow,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.prenotazioni),
@@ -1977,7 +2034,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                                 ),
                                 _SummaryCard(
                                   title: 'In scadenza',
-                                  value: totalExpiring.toString(),
+                                  value: totals.expiringCount.toString(),
                                   icon: Icons.warning_amber_rounded,
                                   accent: AppColors.coral,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.scadenze),
@@ -2025,6 +2082,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                                         setState(() {
                                           _searchInFlags = !_searchInFlags;
                                         });
+                                        _scheduleInactiveFilterResetIfNeeded();
                                       },
                                       child: SizedBox(
                                         width: 52,
@@ -2062,6 +2120,14 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                                     letterSpacing: 1.4,
                                     fontFamily: 'Courier',
                                   ),
+                                ),
+                              ),
+                              const Spacer(),
+                              Tooltip(
+                                message: 'Aggiorna tutti i dati dashboard',
+                                child: IconButton(
+                                  onPressed: _refresh,
+                                  icon: const Icon(Icons.refresh, color: Colors.white70),
                                 ),
                               ),
                             ],
@@ -2299,7 +2365,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
     if (item.dpcItems.isNotEmpty) {
       widgets.add(_FlagChip(label: 'DPC ${item.dpcItems.length}', color: AppColors.coral, onTap: () => _handleFlagTap(item, 'dpc')));
     }
-    if (item.totalDebt > 0) {
+    if (item.totalDebt.abs() > 0.005) {
       widgets.add(_FlagChip(label: 'debiti € ${item.totalDebt.toStringAsFixed(2)}', color: AppColors.wine, onTap: () => _handleFlagTap(item, 'debiti')));
     }
     if (item.advances.isNotEmpty) {
@@ -2425,15 +2491,115 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
   }
 }
 
+class _DashboardTotals {
+  final int recipeCount;
+  final int dpcCount;
+  final double debtAmount;
+  final int advanceCount;
+  final int bookingCount;
+  final int expiringCount;
+
+  const _DashboardTotals({
+    required this.recipeCount,
+    required this.dpcCount,
+    required this.debtAmount,
+    required this.advanceCount,
+    required this.bookingCount,
+    required this.expiringCount,
+  });
+
+  factory _DashboardTotals.empty() {
+    return const _DashboardTotals(
+      recipeCount: 0,
+      dpcCount: 0,
+      debtAmount: 0,
+      advanceCount: 0,
+      bookingCount: 0,
+      expiringCount: 0,
+    );
+  }
+
+  factory _DashboardTotals.fromCollections({
+    required List<DrivePdfImport> imports,
+    required List<Prescription> legacyPrescriptions,
+    required List<Debt> debts,
+    required List<Advance> advances,
+    required List<Booking> bookings,
+  }) {
+    final List<DrivePdfImport> visibleImports =
+        imports.where((DrivePdfImport item) => !item.isHiddenFromFrontend).toList();
+    final Set<String> importPatientKeys = visibleImports
+        .map(_importPatientKey)
+        .where((String item) => item.isNotEmpty)
+        .toSet();
+
+    int recipeCount = 0;
+    int dpcCount = 0;
+    final Set<String> expiringPatientKeys = <String>{};
+
+    for (final DrivePdfImport item in visibleImports) {
+      recipeCount += item.prescriptionCount > 0 ? item.prescriptionCount : 1;
+      if (item.isDpc) {
+        dpcCount += 1;
+      }
+      final String key = _importPatientKey(item);
+      final DateTime baseDate = item.prescriptionDate ?? item.createdAt;
+      if (_isExpiryAlert(baseDate.add(const Duration(days: 30)))) {
+        expiringPatientKeys.add(key.isEmpty ? item.id : key);
+      }
+    }
+
+    for (final Prescription item in legacyPrescriptions) {
+      final String key = item.patientFiscalCode.trim().toUpperCase();
+      if (key.isNotEmpty && importPatientKeys.contains(key)) {
+        continue;
+      }
+      recipeCount += item.prescriptionCount > 0 ? item.prescriptionCount : 1;
+      if (item.dpcFlag) {
+        dpcCount += 1;
+      }
+      final DateTime expiryDate = item.expiryDate ?? item.prescriptionDate.add(const Duration(days: 30));
+      if (_isExpiryAlert(expiryDate)) {
+        expiringPatientKeys.add(key.isEmpty ? item.id : key);
+      }
+    }
+
+    return _DashboardTotals(
+      recipeCount: recipeCount,
+      dpcCount: dpcCount,
+      debtAmount: debts.fold<double>(0, (sum, item) => sum + item.residualAmount),
+      advanceCount: advances.length,
+      bookingCount: bookings.length,
+      expiringCount: expiringPatientKeys.length,
+    );
+  }
+
+  static String _importPatientKey(DrivePdfImport item) {
+    final String fiscalCode = item.patientFiscalCode.trim().toUpperCase();
+    if (fiscalCode.isNotEmpty) {
+      return fiscalCode;
+    }
+    return item.patientFullName.trim().toUpperCase();
+  }
+
+  static bool _isExpiryAlert(DateTime? date) {
+    final PrescriptionExpiryInfo info = PrescriptionExpiryUtils.evaluate(date);
+    return info.status == PrescriptionValidityStatus.expiringSoon ||
+        info.status == PrescriptionValidityStatus.expired;
+  }
+}
+
 class _DashboardData {
   final List<_PatientDashboardSummary> summaries;
   final List<String> doctorsCatalog;
   final List<FamilyGroup> families;
+  final _DashboardTotals totals;
 
   const _DashboardData({
     required this.summaries,
     required this.doctorsCatalog,
     required this.families,
+    required this.totals,
   });
 }
 
