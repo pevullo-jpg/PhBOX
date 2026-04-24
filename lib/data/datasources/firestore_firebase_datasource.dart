@@ -42,6 +42,38 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
   }
 
   @override
+  Stream<Map<String, dynamic>?> watchDocument({
+    required String collectionPath,
+    required String documentId,
+  }) {
+    return firestore.collection(collectionPath).doc(documentId).snapshots().map((doc) {
+      final Map<String, dynamic>? data = doc.data();
+      if (data == null) {
+        return null;
+      }
+      return _withDocumentId(data, doc.id);
+    });
+  }
+
+  @override
+  Future<void> incrementDocumentFields({
+    required String collectionPath,
+    required String documentId,
+    required Map<String, num> fields,
+    Map<String, dynamic>? extraData,
+  }) {
+    final Map<String, dynamic> data = <String, dynamic>{
+      if (extraData != null) ...extraData,
+      for (final MapEntry<String, num> entry in fields.entries)
+        entry.key: FieldValue.increment(entry.value),
+    };
+    return firestore
+        .collection(collectionPath)
+        .doc(documentId)
+        .set(data, SetOptions(merge: true));
+  }
+
+  @override
   Future<List<Map<String, dynamic>>> getCollection({
     required String collectionPath,
     String? orderBy,

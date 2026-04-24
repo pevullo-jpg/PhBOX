@@ -34,8 +34,6 @@ import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../features/patients/pages/patient_detail_page.dart';
-import '../../../shared/navigation/app_navigation.dart';
-import '../../../shared/mixins/page_auto_refresh_mixin.dart';
 import '../../../theme/app_theme.dart';
 
 class DashboardPage extends StatefulWidget {
@@ -45,7 +43,7 @@ class DashboardPage extends StatefulWidget {
   State<DashboardPage> createState() => _DashboardPageState();
 }
 
-class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin<DashboardPage> {
+class _DashboardPageState extends State<DashboardPage> {
   final TextEditingController _searchController = TextEditingController();
 
   late final PatientsRepository _patientsRepository;
@@ -71,6 +69,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
   String _lastUserRequestRefreshSignature = '';
   DateTime? _lastRefreshAt;
   DateTime? _lastLegacyTotalsFallbackAt;
+  StreamSubscription<DashboardTotalsSnapshot?>? _dashboardTotalsSubscription;
 
   static const Duration _inactiveFilterResetDelay = Duration(minutes: 2);
   static const Duration _legacyTotalsFallbackInterval = Duration(minutes: 5);
@@ -91,8 +90,8 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
     _settingsRepository = SettingsRepository(datasource: datasource);
     _dashboardTotalsRepository = DashboardTotalsRepository(datasource: datasource);
     _issueLoad();
+    _startDashboardTotalsListener();
     _searchController.addListener(_handleSearchChanged);
-    startPageAutoRefresh();
   }
 
   @override
@@ -101,6 +100,8 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
     _inactiveFilterResetTimer = null;
     _userRequestRefreshDebounceTimer?.cancel();
     _userRequestRefreshDebounceTimer = null;
+    _dashboardTotalsSubscription?.cancel();
+    _dashboardTotalsSubscription = null;
     _searchController.removeListener(_handleSearchChanged);
     _searchController.dispose();
     super.dispose();
@@ -152,14 +153,49 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
   }
 
 
-  @override
-  bool get shouldAutoRefresh => appNavigationIndex.value == 0 && !_isRouteCovered;
-
-  @override
-  void onAutoRefreshTick() {
-    _refreshTotals();
+  void _startDashboardTotalsListener() {
+    _dashboardTotalsSubscription?.cancel();
+    _dashboardTotalsSubscription = _dashboardTotalsRepository.watchMainTotals().listen(
+      (DashboardTotalsSnapshot? snapshot) async {
+        if (!mounted || _isRouteCovered) {
+          return;
+        }
+        if (snapshot == null) {
+          if (!_dashboardTotals.hasAnyValue) {
+            final _DashboardTotals fallbackTotals = await _loadLegacyTotalsFallback(force: false);
+            if (mounted && !_isRouteCovered) {
+              setState(() {
+                _dashboardTotals = fallbackTotals;
+                _lastRefreshAt = DateTime.now();
+              });
+            }
+          }
+          return;
+        }
+        final _DashboardTotals snapshotTotals = _DashboardTotals.fromSnapshot(snapshot);
+        if (!_canAcceptDashboardTotalsSnapshot(snapshotTotals)) {
+          return;
+        }
+        setState(() {
+          _dashboardTotals = snapshotTotals;
+          _lastRefreshAt = snapshot.updatedAt ?? DateTime.now();
+        });
+      },
+      onError: (Object error) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _message = 'Errore ascolto totali dashboard: $error';
+        });
+      },
+    );
   }
 
+  void _stopDashboardTotalsListener() {
+    _dashboardTotalsSubscription?.cancel();
+    _dashboardTotalsSubscription = null;
+  }
   void _trackRefreshCompletion(Future<_DashboardData> future) {
     future.then((data) {
       if (!mounted) {
@@ -172,12 +208,36 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
     }).catchError((_) {});
   }
 
-  void _issueLoad() {
+  void _issueLoad({bool publishFrontendManagedTotals = false}) {
     final Future<_DashboardData> nextFuture = _load();
     _trackRefreshCompletion(nextFuture);
+    if (publishFrontendManagedTotals) {
+      _publishFrontendManagedTotalsFrom(nextFuture);
+    }
     setState(() {
       _future = nextFuture;
     });
+  }
+
+  Future<void> _publishFrontendManagedTotalsFrom(Future<_DashboardData> future) async {
+    try {
+      final _DashboardData data = await future;
+      await _dashboardTotalsRepository.patchFrontendComputedTotals(
+        recipeCount: data.totals.recipeCount,
+        dpcCount: data.totals.dpcCount,
+        debtAmount: data.totals.debtAmount,
+        advanceCount: data.totals.advanceCount,
+        bookingCount: data.totals.bookingCount,
+        expiringCount: data.totals.expiringCount,
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _message = 'Totali rapidi non riallineati: $e';
+      });
+    }
   }
 
   Future<void> _copyToClipboard(String value, {String? message}) async {
@@ -381,7 +441,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
   }
 
   void _refresh() {
-    _issueLoad();
+    _issueLoad(publishFrontendManagedTotals: true);
   }
 
   List<_PatientDashboardSummary> _applyFilters(List<_PatientDashboardSummary> input, List<FamilyGroup> families) {
@@ -2010,6 +2070,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
   }
 
   void _openPatient(_PatientDashboardSummary summary) {
+    _stopDashboardTotalsListener();
     setState(() {
       _isRouteCovered = true;
     });
@@ -2026,6 +2087,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
           setState(() {
             _isRouteCovered = false;
           });
+          _startDashboardTotalsListener();
           _refresh();
         });
   }

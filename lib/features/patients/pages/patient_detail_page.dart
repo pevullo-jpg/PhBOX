@@ -24,6 +24,7 @@ import '../../../data/models/therapeutic_advice_note.dart';
 import '../../../data/repositories/advances_repository.dart';
 import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
+import '../../../data/repositories/dashboard_totals_repository.dart';
 import '../../../data/repositories/doctor_patient_links_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/family_groups_repository.dart';
@@ -55,6 +56,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   late final SettingsRepository _settingsRepository;
   late final DoctorPatientLinksRepository _doctorPatientLinksRepository;
   late final TherapeuticAdviceRepository _therapeuticAdviceRepository;
+  late final DashboardTotalsRepository _dashboardTotalsRepository;
 
   Future<_PatientDetailData>? _future;
   String _message = '';
@@ -74,6 +76,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     _settingsRepository = SettingsRepository(datasource: datasource);
     _doctorPatientLinksRepository = DoctorPatientLinksRepository(datasource: datasource);
     _therapeuticAdviceRepository = TherapeuticAdviceRepository(datasource: datasource);
+    _dashboardTotalsRepository = DashboardTotalsRepository(datasource: datasource);
     _currentFiscalCode = PatientInputNormalizer.normalizeFiscalCode(widget.fiscalCode);
     _future = _load();
   }
@@ -221,6 +224,30 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       }
       _future = _load();
     });
+  }
+
+  Future<void> _applyFrontendManagedTotalsDelta({
+    double debtAmountDelta = 0,
+    int advanceCountDelta = 0,
+    int bookingCountDelta = 0,
+  }) async {
+    if (debtAmountDelta == 0 && advanceCountDelta == 0 && bookingCountDelta == 0) {
+      return;
+    }
+    try {
+      await _dashboardTotalsRepository.applyFrontendManagedDelta(
+        debtAmountDelta: debtAmountDelta,
+        advanceCountDelta: advanceCountDelta,
+        bookingCountDelta: bookingCountDelta,
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _message = 'Dati salvati. Totali rapidi non riallineati: ' + e.toString();
+      });
+    }
   }
 
   String _resolveDoctor({
@@ -539,6 +566,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                 Navigator.of(dialogContext).pop();
               }
               if (mounted) {
+                await _applyFrontendManagedTotalsDelta(debtAmountDelta: amount);
                 _refresh('Debito aggiunto.');
               }
             } catch (e) {
@@ -665,6 +693,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                 Navigator.of(dialogContext).pop();
               }
               if (mounted) {
+                await _applyFrontendManagedTotalsDelta(advanceCountDelta: 1);
                 _refresh('Anticipo aggiunto.');
               }
             } catch (e) {
@@ -826,6 +855,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
           note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
         ),
       );
+      await _applyFrontendManagedTotalsDelta(bookingCountDelta: 1);
       _refresh('Prenotazione aggiunta.');
     } catch (e) {
       setState(() => _message = 'Errore salvataggio prenotazione: $e');
@@ -839,18 +869,21 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   Future<void> _deleteDebt(Patient patient, Debt debt) async {
     if (!await _confirmDelete(message: 'Eliminare questo debito?')) return;
     await _debtsRepository.deleteDebt(patient.fiscalCode, debt.id);
+    await _applyFrontendManagedTotalsDelta(debtAmountDelta: -debt.residualAmount);
     _refresh('Debito eliminato.');
   }
 
   Future<void> _deleteAdvance(Patient patient, Advance advance) async {
     if (!await _confirmDelete(message: 'Eliminare questo anticipo?')) return;
     await _advancesRepository.deleteAdvance(patient.fiscalCode, advance.id);
+    await _applyFrontendManagedTotalsDelta(advanceCountDelta: -1);
     _refresh('Anticipo eliminato.');
   }
 
   Future<void> _deleteBooking(Patient patient, Booking booking) async {
     if (!await _confirmDelete(message: 'Eliminare questa prenotazione?')) return;
     await _bookingsRepository.deleteBooking(patient.fiscalCode, booking.id);
+    await _applyFrontendManagedTotalsDelta(bookingCountDelta: -1);
     _refresh('Prenotazione eliminata.');
   }
 

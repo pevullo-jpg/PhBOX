@@ -16,6 +16,18 @@ abstract class FirestoreDatasource {
     required String documentId,
   });
 
+  Stream<Map<String, dynamic>?> watchDocument({
+    required String collectionPath,
+    required String documentId,
+  });
+
+  Future<void> incrementDocumentFields({
+    required String collectionPath,
+    required String documentId,
+    required Map<String, num> fields,
+    Map<String, dynamic>? extraData,
+  });
+
   Future<List<Map<String, dynamic>>> getCollection({
     required String collectionPath,
     String? orderBy,
