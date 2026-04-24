@@ -22,6 +22,14 @@ abstract class FirestoreDatasource {
     bool descending = false,
   });
 
+  Future<List<Map<String, dynamic>>> getCollectionWhereEqual({
+    required String collectionPath,
+    required String field,
+    required Object value,
+    String? orderBy,
+    bool descending = false,
+  });
+
   Future<List<Map<String, dynamic>>> getCollectionGroup({
     required String collectionPath,
     String? orderBy,

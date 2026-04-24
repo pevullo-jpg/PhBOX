@@ -58,6 +58,26 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
   }
 
   @override
+  Future<List<Map<String, dynamic>>> getCollectionWhereEqual({
+    required String collectionPath,
+    required String field,
+    required Object value,
+    String? orderBy,
+    bool descending = false,
+  }) async {
+    Query<Map<String, dynamic>> query = firestore
+        .collection(collectionPath)
+        .where(field, isEqualTo: value);
+    if (orderBy != null) {
+      query = query.orderBy(orderBy, descending: descending);
+    }
+    final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
+    return snapshot.docs
+        .map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => _withDocumentId(doc.data(), doc.id))
+        .toList();
+  }
+
+  @override
   Future<List<Map<String, dynamic>>> getCollectionGroup({
     required String collectionPath,
     String? orderBy,

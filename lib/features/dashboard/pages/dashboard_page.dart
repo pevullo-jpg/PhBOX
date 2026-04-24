@@ -17,6 +17,7 @@ import '../../../data/models/advance.dart';
 import '../../../data/models/app_settings.dart';
 import '../../../data/models/booking.dart';
 import '../../../data/models/debt.dart';
+import '../../../data/models/dashboard_totals_snapshot.dart';
 import '../../../data/models/doctor_patient_link.dart';
 import '../../../data/models/drive_pdf_import.dart';
 import '../../../data/models/family_group.dart';
@@ -25,6 +26,7 @@ import '../../../data/models/prescription.dart';
 import '../../../data/repositories/advances_repository.dart';
 import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
+import '../../../data/repositories/dashboard_totals_repository.dart';
 import '../../../data/repositories/doctor_patient_links_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/family_groups_repository.dart';
@@ -55,6 +57,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
   late final DoctorPatientLinksRepository _doctorPatientLinksRepository;
   late final FamilyGroupsRepository _familyGroupsRepository;
   late final SettingsRepository _settingsRepository;
+  late final DashboardTotalsRepository _dashboardTotalsRepository;
 
   Future<_DashboardData>? _future;
   _DashboardTotals _dashboardTotals = _DashboardTotals.empty();
@@ -62,10 +65,16 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
   String _message = '';
   bool _searchInFlags = false;
   bool _isRefreshingTotals = false;
+  bool _isRouteCovered = false;
   Timer? _inactiveFilterResetTimer;
+  Timer? _userRequestRefreshDebounceTimer;
+  String _lastUserRequestRefreshSignature = '';
   DateTime? _lastRefreshAt;
+  DateTime? _lastLegacyTotalsFallbackAt;
 
   static const Duration _inactiveFilterResetDelay = Duration(minutes: 2);
+  static const Duration _legacyTotalsFallbackInterval = Duration(minutes: 5);
+  static const Duration _userRequestRefreshDebounceDelay = Duration(milliseconds: 450);
 
   @override
   void initState() {
@@ -80,6 +89,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
     _doctorPatientLinksRepository = DoctorPatientLinksRepository(datasource: datasource);
     _familyGroupsRepository = FamilyGroupsRepository(datasource: datasource);
     _settingsRepository = SettingsRepository(datasource: datasource);
+    _dashboardTotalsRepository = DashboardTotalsRepository(datasource: datasource);
     _issueLoad();
     _searchController.addListener(_handleSearchChanged);
     startPageAutoRefresh();
@@ -89,6 +99,8 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
   void dispose() {
     _inactiveFilterResetTimer?.cancel();
     _inactiveFilterResetTimer = null;
+    _userRequestRefreshDebounceTimer?.cancel();
+    _userRequestRefreshDebounceTimer = null;
     _searchController.removeListener(_handleSearchChanged);
     _searchController.dispose();
     super.dispose();
@@ -97,6 +109,9 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
   void _handleSearchChanged() {
     setState(() {});
     _scheduleInactiveFilterResetIfNeeded();
+    if (_searchController.text.trim().length >= 3) {
+      _scheduleUserRequestedDataRefresh();
+    }
   }
 
   bool get _hasTemporaryDashboardState {
@@ -123,6 +138,9 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
     }
     _inactiveFilterResetTimer?.cancel();
     _inactiveFilterResetTimer = null;
+    _userRequestRefreshDebounceTimer?.cancel();
+    _userRequestRefreshDebounceTimer = null;
+    _lastUserRequestRefreshSignature = '';
     _activeCardFilters.clear();
     _searchInFlags = false;
     if (_searchController.text.isNotEmpty) {
@@ -135,7 +153,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
 
 
   @override
-  bool get shouldAutoRefresh => appNavigationIndex.value == 0;
+  bool get shouldAutoRefresh => appNavigationIndex.value == 0 && !_isRouteCovered;
 
   @override
   void onAutoRefreshTick() {
@@ -261,6 +279,16 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
   }
 
   Future<_DashboardTotals> _loadTotals() async {
+    final DashboardTotalsSnapshot? snapshot = await _dashboardTotalsRepository.getMainTotals();
+    if (snapshot != null) {
+      return _DashboardTotals.fromSnapshot(snapshot);
+    }
+
+    final DateTime now = DateTime.now();
+    final DateTime? lastFallback = _lastLegacyTotalsFallbackAt;
+    if (lastFallback != null && now.difference(lastFallback) < _legacyTotalsFallbackInterval) {
+      return _dashboardTotals;
+    }
     final results = await Future.wait<dynamic>(<Future<dynamic>>[
       _drivePdfImportsRepository.getAllImports(includeHidden: true),
       _prescriptionsRepository.getAllLegacyPrescriptions(),
@@ -269,6 +297,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
       _bookingsRepository.getAllBookings(),
     ]);
 
+    _lastLegacyTotalsFallbackAt = now;
     return _DashboardTotals.fromCollections(
       imports: results[0] as List<DrivePdfImport>,
       legacyPrescriptions: results[1] as List<Prescription>,
@@ -426,6 +455,29 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
     return result;
   }
 
+  void _scheduleUserRequestedDataRefresh() {
+    final List<String> activeFilters = _activeCardFilters
+        .map((filter) => filter.name)
+        .toList()
+      ..sort();
+    final String signature = <String>[
+      _searchController.text.trim().toUpperCase(),
+      activeFilters.join(','),
+      _searchInFlags ? 'FLAGS' : 'BASE',
+    ].join('|');
+    if (signature == _lastUserRequestRefreshSignature) {
+      return;
+    }
+    _lastUserRequestRefreshSignature = signature;
+    _userRequestRefreshDebounceTimer?.cancel();
+    _userRequestRefreshDebounceTimer = Timer(_userRequestRefreshDebounceDelay, () {
+      if (!mounted) {
+        return;
+      }
+      _issueLoad();
+    });
+  }
+
   void _toggleCardFilter(_DashboardCardFilter filter) {
     final bool wasSelected = _activeCardFilters.contains(filter);
     setState(() {
@@ -437,6 +489,7 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
       _activeCardFilters.add(filter);
     });
     _scheduleInactiveFilterResetIfNeeded();
+    _scheduleUserRequestedDataRefresh();
   }
 
   Future<void> _openPdf(DrivePdfImport item) async {
@@ -1942,13 +1995,24 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
   }
 
   void _openPatient(_PatientDashboardSummary summary) {
+    setState(() {
+      _isRouteCovered = true;
+    });
     Navigator.of(context)
         .push(
           MaterialPageRoute<void>(
             builder: (_) => PatientDetailPage(fiscalCode: summary.patient.fiscalCode),
           ),
         )
-        .then((_) => _refresh());
+        .whenComplete(() {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _isRouteCovered = false;
+          });
+          _refresh();
+        });
   }
 
   @override
@@ -2083,6 +2147,9 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
                                           _searchInFlags = !_searchInFlags;
                                         });
                                         _scheduleInactiveFilterResetIfNeeded();
+                                        if (_searchController.text.trim().length >= 3) {
+                                          _scheduleUserRequestedDataRefresh();
+                                        }
                                       },
                                       child: SizedBox(
                                         width: 52,
@@ -2516,6 +2583,17 @@ class _DashboardTotals {
       advanceCount: 0,
       bookingCount: 0,
       expiringCount: 0,
+    );
+  }
+
+  factory _DashboardTotals.fromSnapshot(DashboardTotalsSnapshot snapshot) {
+    return _DashboardTotals(
+      recipeCount: snapshot.recipeCount,
+      dpcCount: snapshot.dpcCount,
+      debtAmount: snapshot.debtAmount,
+      advanceCount: snapshot.advanceCount,
+      bookingCount: snapshot.bookingCount,
+      expiringCount: snapshot.expiringCount,
     );
   }
 

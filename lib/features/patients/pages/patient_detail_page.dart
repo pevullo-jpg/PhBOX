@@ -31,7 +31,6 @@ import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../data/repositories/therapeutic_advice_repository.dart';
-import '../../../shared/mixins/page_auto_refresh_mixin.dart';
 import '../../../shared/navigation/app_navigation.dart';
 import '../../../shared/widgets/floating_page_menu.dart';
 import '../../../theme/app_theme.dart';
@@ -45,7 +44,7 @@ class PatientDetailPage extends StatefulWidget {
   State<PatientDetailPage> createState() => _PatientDetailPageState();
 }
 
-class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefreshMixin<PatientDetailPage> {
+class _PatientDetailPageState extends State<PatientDetailPage> {
   late final PatientsRepository _patientsRepository;
   late final AdvancesRepository _advancesRepository;
   late final DebtsRepository _debtsRepository;
@@ -77,7 +76,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     _therapeuticAdviceRepository = TherapeuticAdviceRepository(datasource: datasource);
     _currentFiscalCode = PatientInputNormalizer.normalizeFiscalCode(widget.fiscalCode);
     _future = _load();
-    startPageAutoRefresh();
   }
 
   @override
@@ -93,11 +91,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     }
   }
 
-
-  @override
-  void onAutoRefreshTick() {
-    _refresh();
-  }
 
   Future<void> _copyToClipboard(String value, {String message = 'CF copiato negli appunti.'}) async {
     final String normalized = value.trim();
@@ -121,12 +114,14 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     final advances = await _advancesRepository.getPatientAdvances(_currentFiscalCode);
     final debts = await _debtsRepository.getPatientDebts(_currentFiscalCode);
     final bookings = await _bookingsRepository.getPatientBookings(_currentFiscalCode);
-    final prescriptions = await _prescriptionsRepository.getPatientPrescriptions(_currentFiscalCode);
     final allImports = await _drivePdfImportsRepository.getImportsByPatient(
       _currentFiscalCode,
       includeHidden: true,
     );
     final imports = allImports.where((DrivePdfImport item) => !item.isHiddenFromFrontend).toList();
+    final prescriptions = allImports.isNotEmpty
+        ? imports.map(_prescriptionsRepository.importToPrescription).toList()
+        : await _prescriptionsRepository.getLegacyPatientPrescriptions(_currentFiscalCode);
     final doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
     final settings = await _settingsRepository.getSettings();
     final therapeuticAdvice = await _therapeuticAdviceRepository.getByFiscalCode(_currentFiscalCode);

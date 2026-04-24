@@ -21,14 +21,20 @@ class _FarmaciaAppState extends State<FarmaciaApp> {
     appNavigationIndex.value = 0;
   }
 
+  Widget _buildPage(int currentIndex) {
+    switch (currentIndex) {
+      case 1:
+        return const FamiliesPage();
+      case 2:
+        return const SettingsPage();
+      case 0:
+      default:
+        return const DashboardPage();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final pages = <Widget>[
-      const DashboardPage(),
-      const FamiliesPage(),
-      const SettingsPage(),
-    ];
-
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'PhBOX',
@@ -40,10 +46,7 @@ class _FarmaciaAppState extends State<FarmaciaApp> {
           builder: (context, currentIndex, _) {
             return Stack(
               children: [
-                IndexedStack(
-                  index: currentIndex,
-                  children: pages,
-                ),
+                _buildPage(currentIndex),
                 FloatingPageMenu(
                   currentIndex: currentIndex,
                   onSelected: (index) {

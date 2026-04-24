@@ -55,12 +55,12 @@ class PrescriptionsRepository {
       return !item.isHiddenFromFrontend;
     }).toList();
     if (allImports.isNotEmpty) {
-      return visibleImports.map(_importToPrescription).toList();
+      return visibleImports.map(importToPrescription).toList();
     }
     return getLegacyPatientPrescriptions(fiscalCode);
   }
 
-  Prescription _importToPrescription(DrivePdfImport item) {
+  Prescription importToPrescription(DrivePdfImport item) {
     final DateTime prescriptionDate = item.prescriptionDate ?? item.createdAt;
     return Prescription(
       id: item.id,

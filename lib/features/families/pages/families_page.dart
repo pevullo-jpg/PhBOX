@@ -7,7 +7,6 @@ import '../../../data/models/family_group.dart';
 import '../../../data/models/patient.dart';
 import '../../../data/repositories/family_groups_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
-import '../../../shared/mixins/page_auto_refresh_mixin.dart';
 import '../../../shared/navigation/app_navigation.dart';
 import '../../../shared/widgets/floating_page_menu.dart';
 import '../../../theme/app_theme.dart';
@@ -19,7 +18,7 @@ class FamiliesPage extends StatefulWidget {
   State<FamiliesPage> createState() => _FamiliesPageState();
 }
 
-class _FamiliesPageState extends State<FamiliesPage> with PageAutoRefreshMixin<FamiliesPage> {
+class _FamiliesPageState extends State<FamiliesPage> {
   Patient? _findPatient(List<Patient> patients, String cf) {
     final normalized = cf.trim().toUpperCase();
     for (final patient in patients) {
@@ -41,17 +40,8 @@ class _FamiliesPageState extends State<FamiliesPage> with PageAutoRefreshMixin<F
     _familiesRepository = FamilyGroupsRepository(datasource: datasource);
     _patientsRepository = PatientsRepository(datasource: datasource);
     _future = _load();
-    startPageAutoRefresh();
   }
 
-
-  @override
-  bool get shouldAutoRefresh => appNavigationIndex.value == 1;
-
-  @override
-  void onAutoRefreshTick() {
-    _refresh();
-  }
 
   Future<_FamiliesData> _load() async {
     final families = await _familiesRepository.getAllFamilies();
