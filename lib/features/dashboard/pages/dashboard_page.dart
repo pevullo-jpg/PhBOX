@@ -281,12 +281,27 @@ class _DashboardPageState extends State<DashboardPage> with PageAutoRefreshMixin
   Future<_DashboardTotals> _loadTotals() async {
     final DashboardTotalsSnapshot? snapshot = await _dashboardTotalsRepository.getMainTotals();
     if (snapshot != null) {
-      return _DashboardTotals.fromSnapshot(snapshot);
+      final _DashboardTotals snapshotTotals = _DashboardTotals.fromSnapshot(snapshot);
+      if (_canAcceptDashboardTotalsSnapshot(snapshotTotals)) {
+        return snapshotTotals;
+      }
+      return _loadLegacyTotalsFallback(force: true);
     }
 
+    return _loadLegacyTotalsFallback(force: false);
+  }
+
+  bool _canAcceptDashboardTotalsSnapshot(_DashboardTotals snapshotTotals) {
+    if (snapshotTotals.hasAnyValue) {
+      return true;
+    }
+    return !_dashboardTotals.hasAnyValue;
+  }
+
+  Future<_DashboardTotals> _loadLegacyTotalsFallback({required bool force}) async {
     final DateTime now = DateTime.now();
     final DateTime? lastFallback = _lastLegacyTotalsFallbackAt;
-    if (lastFallback != null && now.difference(lastFallback) < _legacyTotalsFallbackInterval) {
+    if (!force && lastFallback != null && now.difference(lastFallback) < _legacyTotalsFallbackInterval) {
       return _dashboardTotals;
     }
     final results = await Future.wait<dynamic>(<Future<dynamic>>[
@@ -2595,6 +2610,15 @@ class _DashboardTotals {
       bookingCount: snapshot.bookingCount,
       expiringCount: snapshot.expiringCount,
     );
+  }
+
+  bool get hasAnyValue {
+    return recipeCount != 0 ||
+        dpcCount != 0 ||
+        debtAmount != 0 ||
+        advanceCount != 0 ||
+        bookingCount != 0 ||
+        expiringCount != 0;
   }
 
   factory _DashboardTotals.fromCollections({
