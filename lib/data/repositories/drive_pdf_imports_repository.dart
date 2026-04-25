@@ -60,12 +60,6 @@ class DrivePdfImportsRepository {
       return item.patientFiscalCode.trim().toUpperCase() == normalized;
     }).toList();
 
-    if (filtered.isEmpty) {
-      final List<DrivePdfImport> all = await getAllImports(includeHidden: includeHidden);
-      filtered = all.where((DrivePdfImport item) {
-        return item.patientFiscalCode.trim().toUpperCase() == normalized;
-      }).toList();
-    }
 
     filtered.sort((DrivePdfImport a, DrivePdfImport b) {
       return b.chronologyDate.compareTo(a.chronologyDate);

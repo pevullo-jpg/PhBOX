@@ -274,13 +274,6 @@ class PatientsRepository {
       SetOptions(merge: true),
     );
 
-    await _queueManualSubcollectionNameRewrite(
-      batch: batch,
-      patientDocumentId: documentId,
-      storedFiscalCode: storedFiscalCode,
-      fullName: fullName,
-      isoNow: isoNow,
-    );
     await _queueDoctorLinkSync(
       batch: batch,
       oldPatientDocumentId: documentId,
@@ -291,38 +284,6 @@ class PatientsRepository {
     );
 
     await batch.commit();
-  }
-
-  Future<void> _queueManualSubcollectionNameRewrite({
-    required WriteBatch batch,
-    required String patientDocumentId,
-    required String storedFiscalCode,
-    required String fullName,
-    required String isoNow,
-  }) async {
-    final FirebaseFirestore firestore = _firebaseFirestoreOrThrow();
-    final DocumentReference<Map<String, dynamic>> patientRef =
-        firestore.collection(AppCollections.patients).doc(patientDocumentId);
-
-    for (final String subcollection in _manualSubcollections) {
-      final List<Map<String, dynamic>> items = await datasource.getSubCollection(
-        collectionPath: AppCollections.patients,
-        documentId: patientDocumentId,
-        subcollectionPath: subcollection,
-      );
-      for (final Map<String, dynamic> item in items) {
-        final String itemId = _readId(item);
-        if (itemId.isEmpty) continue;
-        final Map<String, dynamic> nextMap = _cleanMapForWrite(item);
-        nextMap['patientFiscalCode'] = storedFiscalCode;
-        nextMap['patientName'] = fullName;
-        if (nextMap.containsKey('updatedAt') ||
-            subcollection == AppCollections.advances) {
-          nextMap['updatedAt'] = isoNow;
-        }
-        batch.set(patientRef.collection(subcollection).doc(itemId), nextMap);
-      }
-    }
   }
 
   Future<void> _queueManualSubcollectionMigration({
@@ -365,13 +326,15 @@ class PatientsRepository {
     required bool migrationMode,
   }) async {
     final FirebaseFirestore firestore = _firebaseFirestoreOrThrow();
-    final List<Map<String, dynamic>> links = await datasource.getCollection(
-      collectionPath: AppCollections.doctorPatientLinks,
-    );
     final String normalizedOld =
         PatientInputNormalizer.normalizeFiscalCode(oldPatientDocumentId);
     final String normalizedNew =
         PatientInputNormalizer.normalizeFiscalCode(newPatientDocumentId);
+    final List<Map<String, dynamic>> links = await datasource.getCollectionWhereEqual(
+      collectionPath: AppCollections.doctorPatientLinks,
+      field: 'patientFiscalCode',
+      value: normalizedOld,
+    );
 
     final Set<String> oldLinkIds = links
         .where((Map<String, dynamic> item) {
