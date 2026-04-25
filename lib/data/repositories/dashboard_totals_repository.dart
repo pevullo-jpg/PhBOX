@@ -32,32 +32,6 @@ class DashboardTotalsRepository {
     });
   }
 
-  Future<void> patchFrontendComputedTotals({
-    required int recipeCount,
-    required int dpcCount,
-    required double debtAmount,
-    required int advanceCount,
-    required int bookingCount,
-    required int expiringCount,
-  }) {
-    final String now = DateTime.now().toIso8601String();
-    return datasource.patchDocument(
-      collectionPath: AppCollections.dashboardTotals,
-      documentId: 'main',
-      data: <String, dynamic>{
-        'recipeCount': recipeCount,
-        'dpcCount': dpcCount,
-        'debtAmount': debtAmount,
-        'advanceCount': advanceCount,
-        'bookingCount': bookingCount,
-        'expiringCount': expiringCount,
-        'updatedAt': now,
-        'frontendComputedTotalsUpdatedAt': now,
-        'frontendComputedTotalsSource': 'frontend_full_refresh',
-      },
-    );
-  }
-
   Future<void> applyFrontendManagedDelta({
     double debtAmountDelta = 0,
     int advanceCountDelta = 0,

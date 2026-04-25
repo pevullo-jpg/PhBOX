@@ -58,21 +58,20 @@ class _DashboardPageState extends State<DashboardPage> {
   late final DashboardTotalsRepository _dashboardTotalsRepository;
 
   Future<_DashboardData>? _future;
+  _DashboardData _dashboardCache = _DashboardData.empty();
+  bool _dashboardCacheLoaded = false;
   _DashboardTotals _dashboardTotals = _DashboardTotals.empty();
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
   bool _searchInFlags = false;
-  bool _isRefreshingTotals = false;
   bool _isRouteCovered = false;
   Timer? _inactiveFilterResetTimer;
   Timer? _userRequestRefreshDebounceTimer;
   String _lastUserRequestRefreshSignature = '';
   DateTime? _lastRefreshAt;
-  DateTime? _lastLegacyTotalsFallbackAt;
   StreamSubscription<DashboardTotalsSnapshot?>? _dashboardTotalsSubscription;
 
   static const Duration _inactiveFilterResetDelay = Duration(minutes: 2);
-  static const Duration _legacyTotalsFallbackInterval = Duration(minutes: 5);
   static const Duration _userRequestRefreshDebounceDelay = Duration(milliseconds: 450);
 
   @override
@@ -111,7 +110,7 @@ class _DashboardPageState extends State<DashboardPage> {
     setState(() {});
     _scheduleInactiveFilterResetIfNeeded();
     if (_searchController.text.trim().length >= 3) {
-      _scheduleUserRequestedDataRefresh();
+      _ensureDashboardCacheForActiveRequest();
     }
   }
 
@@ -153,7 +152,9 @@ class _DashboardPageState extends State<DashboardPage> {
       _searchController.clear();
       _searchController.addListener(_handleSearchChanged);
     }
-    setState(() {});
+    setState(() {
+      _future = Future<_DashboardData>.value(_DashboardData.empty());
+    });
   }
 
 
@@ -165,15 +166,6 @@ class _DashboardPageState extends State<DashboardPage> {
           return;
         }
         if (snapshot == null) {
-          if (!_dashboardTotals.hasAnyValue) {
-            final _DashboardTotals fallbackTotals = await _loadLegacyTotalsFallback(force: false);
-            if (mounted && !_isRouteCovered) {
-              setState(() {
-                _dashboardTotals = fallbackTotals;
-                _lastRefreshAt = DateTime.now();
-              });
-            }
-          }
           return;
         }
         final _DashboardTotals snapshotTotals = _DashboardTotals.fromSnapshot(snapshot);
@@ -206,12 +198,20 @@ class _DashboardPageState extends State<DashboardPage> {
         return;
       }
       setState(() {
+        _dashboardCache = data;
+        _dashboardCacheLoaded = true;
         _lastRefreshAt = DateTime.now();
       });
     }).catchError((_) {});
   }
 
-  void _issueLoad() {
+  void _issueLoad({bool force = false}) {
+    if (!force && _dashboardCacheLoaded) {
+      setState(() {
+        _future = Future<_DashboardData>.value(_dashboardCache);
+      });
+      return;
+    }
     final Future<_DashboardData> nextFuture = _load();
     _trackRefreshCompletion(nextFuture);
     setState(() {
@@ -219,25 +219,111 @@ class _DashboardPageState extends State<DashboardPage> {
     });
   }
 
-  Future<void> _publishFrontendManagedTotalsFrom(Future<_DashboardData> future) async {
-    try {
-      final _DashboardData data = await future;
-      await _dashboardTotalsRepository.patchFrontendComputedTotals(
-        recipeCount: data.totals.recipeCount,
-        dpcCount: data.totals.dpcCount,
-        debtAmount: data.totals.debtAmount,
-        advanceCount: data.totals.advanceCount,
-        bookingCount: data.totals.bookingCount,
-        expiringCount: data.totals.expiringCount,
-      );
-    } catch (e) {
-      if (!mounted) {
-        return;
-      }
+  void _ensureDashboardCacheForActiveRequest() {
+    if (!_hasUserRequestedDashboardData) {
       setState(() {
-        _message = 'Totali rapidi non riallineati: $e';
+        _future = Future<_DashboardData>.value(_DashboardData.empty());
       });
+      return;
     }
+    if (_dashboardCacheLoaded) {
+      setState(() {
+        _future = Future<_DashboardData>.value(_dashboardCache);
+      });
+      return;
+    }
+    _scheduleUserRequestedDataRefresh();
+  }
+
+  _DashboardData _currentDashboardData() {
+    return _dashboardCacheLoaded ? _dashboardCache : _DashboardData.empty();
+  }
+
+  void _replaceDashboardCache(_DashboardData data) {
+    _dashboardCache = data;
+    _dashboardCacheLoaded = true;
+    _future = Future<_DashboardData>.value(data);
+  }
+
+  void _replaceCachedSummary(_PatientDashboardSummary nextSummary) {
+    final String targetCf = _normalizeFiscalCode(nextSummary.patient.fiscalCode);
+    if (targetCf.isEmpty || !_dashboardCacheLoaded) {
+      return;
+    }
+    final List<_PatientDashboardSummary> nextSummaries = <_PatientDashboardSummary>[];
+    bool replaced = false;
+    for (final _PatientDashboardSummary item in _dashboardCache.summaries) {
+      if (_normalizeFiscalCode(item.patient.fiscalCode) == targetCf) {
+        nextSummaries.add(nextSummary);
+        replaced = true;
+      } else {
+        nextSummaries.add(item);
+      }
+    }
+    if (!replaced) {
+      nextSummaries.add(nextSummary);
+    }
+    nextSummaries.sort((a, b) {
+      if (a.hasExpiryAlert != b.hasExpiryAlert) {
+        return a.hasExpiryAlert ? -1 : 1;
+      }
+      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+    });
+    _replaceDashboardCache(_dashboardCache.copyWith(summaries: nextSummaries));
+  }
+
+  void _removeCachedSummary(String fiscalCode) {
+    final String targetCf = _normalizeFiscalCode(fiscalCode);
+    if (targetCf.isEmpty || !_dashboardCacheLoaded) {
+      return;
+    }
+    final List<_PatientDashboardSummary> nextSummaries = _dashboardCache.summaries
+        .where((item) => _normalizeFiscalCode(item.patient.fiscalCode) != targetCf)
+        .toList();
+    _replaceDashboardCache(_dashboardCache.copyWith(summaries: nextSummaries));
+  }
+  void _removeRecipeFromCachedSummary(_PatientDashboardSummary summary, DrivePdfImport removedImport) {
+    final List<DrivePdfImport> nextImports = summary.imports
+        .where((DrivePdfImport item) => item.id != removedImport.id)
+        .toList();
+    final int removedCount = removedImport.prescriptionCount > 0 ? removedImport.prescriptionCount : 1;
+    final bool nextHasDpc = nextImports.any((DrivePdfImport item) => item.isDpc) ||
+        summary.prescriptions.any((Prescription item) => item.dpcFlag);
+    final bool nextHasExpiryAlert = nextImports.any((DrivePdfImport item) {
+          final DateTime baseDate = item.prescriptionDate ?? item.createdAt;
+          return _DashboardTotals._isExpiryAlert(baseDate.add(const Duration(days: 30)));
+        }) ||
+        summary.prescriptions.any((Prescription item) {
+          return _DashboardTotals._isExpiryAlert(
+            item.expiryDate ?? item.prescriptionDate.add(const Duration(days: 30)),
+          );
+        });
+    _replaceCachedSummary(
+      summary.copyWith(
+        imports: nextImports,
+        recipeCount: math.max(0, summary.recipeCount - removedCount),
+        hasDpc: nextHasDpc,
+        hasExpiryAlert: nextHasExpiryAlert,
+      ),
+    );
+  }
+
+
+  void _clearDisplayedDashboardRows() {
+    setState(() {
+      _future = Future<_DashboardData>.value(_DashboardData.empty());
+    });
+  }
+
+  void _manualRefreshRequestedData() {
+    if (!_hasUserRequestedDashboardData) {
+      setState(() {
+        _future = Future<_DashboardData>.value(_DashboardData.empty());
+        _message = 'Nessun reload dati: seleziona una card o cerca almeno 3 caratteri.';
+      });
+      return;
+    }
+    _issueLoad(force: true);
   }
 
   Future<void> _copyToClipboard(String value, {String? message}) async {
@@ -275,132 +361,77 @@ class _DashboardPageState extends State<DashboardPage> {
       return _DashboardData.empty();
     }
 
-    final String rawQuery = _searchController.text.trim();
-    final String query = rawQuery.toLowerCase();
-    final bool hasSearch = rawQuery.length >= 3;
-    final Set<_DashboardCardFilter> filters = Set<_DashboardCardFilter>.from(_activeCardFilters);
+    final results = await Future.wait<dynamic>(<Future<dynamic>>[
+      _patientsRepository.getAllPatients(),
+      _drivePdfImportsRepository.getAllImports(includeHidden: true),
+      _doctorPatientLinksRepository.getAllLinks(),
+      _familyGroupsRepository.getAllFamilies(),
+      _settingsRepository.getSettings(),
+      _prescriptionsRepository.getAllLegacyPrescriptions(),
+      _debtsRepository.getAllDebts(),
+      _advancesRepository.getAllAdvances(),
+      _bookingsRepository.getAllBookings(),
+    ]);
 
-    final AppSettings settings = await _settingsRepository.getSettings();
-    final List<FamilyGroup> families = await _familyGroupsRepository.getAllFamilies();
+    final List<Patient> patients = results[0] as List<Patient>;
+    final List<DrivePdfImport> imports = results[1] as List<DrivePdfImport>;
+    final List<DoctorPatientLink> doctorLinks = results[2] as List<DoctorPatientLink>;
+    final List<FamilyGroup> families = results[3] as List<FamilyGroup>;
+    final AppSettings settings = results[4] as AppSettings;
+    final List<Prescription> allPrescriptions = results[5] as List<Prescription>;
+    final List<Debt> allDebts = results[6] as List<Debt>;
+    final List<Advance> allAdvances = results[7] as List<Advance>;
+    final List<Booking> allBookings = results[8] as List<Booking>;
 
-    Set<String>? selectedCfs;
     final Map<String, Patient> patientByCf = <String, Patient>{};
-    final Map<String, List<DrivePdfImport>> importsByCf = <String, List<DrivePdfImport>>{};
-    final Map<String, List<Prescription>> prescriptionsByCf = <String, List<Prescription>>{};
-    final Map<String, List<Debt>> debtsByCf = <String, List<Debt>>{};
-    final Map<String, List<Advance>> advancesByCf = <String, List<Advance>>{};
-    final Map<String, List<Booking>> bookingsByCf = <String, List<Booking>>{};
-
-    void mergeSelection(Set<String> cfs) {
-      if (selectedCfs == null) {
-        selectedCfs = Set<String>.from(cfs);
-      } else {
-        selectedCfs = selectedCfs!.intersection(cfs);
-      }
-    }
-
-    if (hasSearch) {
-      final List<Patient> patients = await _patientsRepository.getAllPatients();
-      final Set<String> matched = <String>{};
-      for (final Patient patient in patients) {
-        final String cf = _normalizeFiscalCode(patient.fiscalCode);
-        if (cf.isEmpty) {
-          continue;
-        }
+    for (final Patient patient in patients) {
+      final String cf = _normalizeFiscalCode(patient.fiscalCode);
+      if (cf.isNotEmpty) {
         patientByCf[cf] = patient;
-        if (_matchesPatientSearch(patient, query) || _matchesPatientFamilySearch(patient, families, query)) {
-          matched.add(cf);
-        }
       }
-
-      if (_searchInFlags) {
-        final flagMatched = await _loadFlagSearchMatches(
-          query: query,
-          importsByCf: importsByCf,
-          prescriptionsByCf: prescriptionsByCf,
-          debtsByCf: debtsByCf,
-          advancesByCf: advancesByCf,
-          bookingsByCf: bookingsByCf,
-        );
-        matched.addAll(flagMatched);
-      }
-      mergeSelection(matched);
     }
 
-    if (filters.contains(_DashboardCardFilter.debiti)) {
-      final List<Debt> debts = await _debtsRepository.getAllDebts();
-      final Map<String, List<Debt>> grouped = _groupByFiscalCode(debts, (Debt item) => item.patientFiscalCode);
-      debtsByCf.addAll(grouped);
-      mergeSelection(grouped.keys.toSet());
-    }
+    final Map<String, List<DrivePdfImport>> importsByCf = _groupImportsByFiscalCode(imports);
+    final Map<String, List<Prescription>> prescriptionsByCf = _groupByFiscalCode(allPrescriptions, (Prescription item) => item.patientFiscalCode);
+    final Map<String, List<Debt>> debtsByCf = _groupByFiscalCode(allDebts, (Debt item) => item.patientFiscalCode);
+    final Map<String, List<Advance>> advancesByCf = _groupByFiscalCode(allAdvances, (Advance item) => item.patientFiscalCode);
+    final Map<String, List<Booking>> bookingsByCf = _groupByFiscalCode(allBookings, (Booking item) => item.patientFiscalCode);
+    final Map<String, List<DoctorPatientLink>> doctorLinksByCf = _groupByFiscalCode(doctorLinks, (DoctorPatientLink item) => item.patientFiscalCode);
 
-    if (filters.contains(_DashboardCardFilter.anticipi)) {
-      final List<Advance> advances = await _advancesRepository.getAllAdvances();
-      final Map<String, List<Advance>> grouped = _groupByFiscalCode(advances, (Advance item) => item.patientFiscalCode);
-      advancesByCf.addAll(grouped);
-      mergeSelection(grouped.keys.toSet());
-    }
+    _sortGroupsByDate(prescriptionsByCf, (Prescription item) => item.prescriptionDate);
+    _sortGroupsByDate(debtsByCf, (Debt item) => item.createdAt);
+    _sortGroupsByDate(advancesByCf, (Advance item) => item.createdAt);
+    _sortGroupsByDate(bookingsByCf, (Booking item) => item.createdAt);
 
-    if (filters.contains(_DashboardCardFilter.prenotazioni)) {
-      final List<Booking> bookings = await _bookingsRepository.getAllBookings();
-      final Map<String, List<Booking>> grouped = _groupByFiscalCode(bookings, (Booking item) => item.patientFiscalCode);
-      bookingsByCf.addAll(grouped);
-      mergeSelection(grouped.keys.toSet());
-    }
-
-    if (filters.contains(_DashboardCardFilter.ricette) ||
-        filters.contains(_DashboardCardFilter.dpc) ||
-        filters.contains(_DashboardCardFilter.scadenze)) {
-      final List<DrivePdfImport> imports = await _drivePdfImportsRepository.getAllImports(includeHidden: true);
-      final Map<String, List<DrivePdfImport>> groupedImports = _groupImportsByFiscalCode(imports);
-      importsByCf.addAll(groupedImports);
-
-      Set<String> importCfs = groupedImports.keys.toSet();
-      if (filters.contains(_DashboardCardFilter.dpc)) {
-        importCfs = groupedImports.entries
-            .where((entry) => entry.value.any((DrivePdfImport item) => item.isDpc && !item.isHiddenFromFrontend))
-            .map((entry) => entry.key)
-            .toSet();
-      }
-      if (filters.contains(_DashboardCardFilter.scadenze)) {
-        importCfs = groupedImports.entries
-            .where((entry) => entry.value.any((DrivePdfImport item) {
-                  if (item.isHiddenFromFrontend) return false;
-                  final DateTime baseDate = item.prescriptionDate ?? item.createdAt;
-                  return _DashboardTotals._isExpiryAlert(baseDate.add(const Duration(days: 30)));
-                }))
-            .map((entry) => entry.key)
-            .toSet();
-      }
-      mergeSelection(importCfs);
-    }
-
-    final List<String> cfs = (selectedCfs ?? <String>{}).where((String cf) => cf.trim().isNotEmpty).toList()..sort();
-    if (cfs.isEmpty) {
-      return _DashboardData(
-        summaries: const <_PatientDashboardSummary>[],
-        doctorsCatalog: settings.doctorsCatalog,
-        families: families,
-        totals: _dashboardTotals,
-      );
-    }
+    final Set<String> allCfs = <String>{
+      ...patientByCf.keys,
+      ...importsByCf.keys,
+      ...prescriptionsByCf.keys,
+      ...debtsByCf.keys,
+      ...advancesByCf.keys,
+      ...bookingsByCf.keys,
+    }..removeWhere((String cf) => cf.trim().isEmpty);
 
     final List<_PatientDashboardSummary> summaries = <_PatientDashboardSummary>[];
-    for (final String cf in cfs) {
-      final _PatientDashboardSummary? summary = await _loadPatientSummaryScoped(
+    for (final String cf in allCfs) {
+      final Patient patient = patientByCf[cf] ?? _syntheticPatient(
         fiscalCode: cf,
-        families: families,
-        cachedPatient: patientByCf[cf],
-        cachedImports: importsByCf[cf],
-        cachedPrescriptions: prescriptionsByCf[cf],
-        cachedDebts: debtsByCf[cf],
-        cachedAdvances: advancesByCf[cf],
-        cachedBookings: bookingsByCf[cf],
-        loadAllPatientFlags: hasSearch && !_searchInFlags && filters.isEmpty,
+        imports: importsByCf[cf] ?? const <DrivePdfImport>[],
+        prescriptions: prescriptionsByCf[cf] ?? const <Prescription>[],
+        debts: debtsByCf[cf] ?? const <Debt>[],
+        advances: advancesByCf[cf] ?? const <Advance>[],
+        bookings: bookingsByCf[cf] ?? const <Booking>[],
       );
-      if (summary != null) {
-        summaries.add(summary);
-      }
+      summaries.add(_PatientDashboardSummary.build(
+        patient: patient,
+        prescriptions: prescriptionsByCf[cf] ?? const <Prescription>[],
+        imports: importsByCf[cf] ?? const <DrivePdfImport>[],
+        debts: debtsByCf[cf] ?? const <Debt>[],
+        advances: advancesByCf[cf] ?? const <Advance>[],
+        bookings: bookingsByCf[cf] ?? const <Booking>[],
+        doctorLinks: doctorLinksByCf[cf] ?? const <DoctorPatientLink>[],
+        families: families,
+      ));
     }
 
     summaries.sort((a, b) {
@@ -415,127 +446,6 @@ class _DashboardPageState extends State<DashboardPage> {
       doctorsCatalog: settings.doctorsCatalog,
       families: families,
       totals: _dashboardTotals,
-    );
-  }
-
-  Future<Set<String>> _loadFlagSearchMatches({
-    required String query,
-    required Map<String, List<DrivePdfImport>> importsByCf,
-    required Map<String, List<Prescription>> prescriptionsByCf,
-    required Map<String, List<Debt>> debtsByCf,
-    required Map<String, List<Advance>> advancesByCf,
-    required Map<String, List<Booking>> bookingsByCf,
-  }) async {
-    final Set<String> matched = <String>{};
-
-    final List<DrivePdfImport> imports = await _drivePdfImportsRepository.getAllImports(includeHidden: true);
-    final Map<String, List<DrivePdfImport>> groupedImports = _groupImportsByFiscalCode(imports);
-    importsByCf.addAll(groupedImports);
-    for (final entry in groupedImports.entries) {
-      final String haystack = entry.value.expand((DrivePdfImport item) sync* {
-        yield item.fileName;
-        yield item.doctorFullName;
-        yield item.city;
-        yield item.exemptionCode;
-        for (final therapy in item.therapy) {
-          yield therapy;
-        }
-        if (item.isDpc) yield 'dpc';
-      }).join(' ').toLowerCase();
-      if (haystack.contains(query)) matched.add(entry.key);
-    }
-
-    final List<Prescription> prescriptions = await _prescriptionsRepository.getAllLegacyPrescriptions();
-    final Map<String, List<Prescription>> groupedPrescriptions = _groupByFiscalCode(prescriptions, (Prescription item) => item.patientFiscalCode);
-    prescriptionsByCf.addAll(groupedPrescriptions);
-    for (final entry in groupedPrescriptions.entries) {
-      final String haystack = entry.value.expand((Prescription item) sync* {
-        yield item.extractedText ?? '';
-        yield item.doctorName ?? '';
-        yield item.exemptionCode ?? '';
-        yield item.city ?? '';
-        for (final prescriptionItem in item.items) {
-          yield prescriptionItem.drugName;
-        }
-        if (item.dpcFlag) yield 'dpc';
-      }).join(' ').toLowerCase();
-      if (haystack.contains(query)) matched.add(entry.key);
-    }
-
-    final List<Debt> debts = await _debtsRepository.getAllDebts();
-    final Map<String, List<Debt>> groupedDebts = _groupByFiscalCode(debts, (Debt item) => item.patientFiscalCode);
-    debtsByCf.addAll(groupedDebts);
-    for (final entry in groupedDebts.entries) {
-      final String haystack = entry.value.map((Debt item) => '${item.description} ${item.note ?? ''}').join(' ').toLowerCase();
-      if (haystack.contains(query)) matched.add(entry.key);
-    }
-
-    final List<Advance> advances = await _advancesRepository.getAllAdvances();
-    final Map<String, List<Advance>> groupedAdvances = _groupByFiscalCode(advances, (Advance item) => item.patientFiscalCode);
-    advancesByCf.addAll(groupedAdvances);
-    for (final entry in groupedAdvances.entries) {
-      final String haystack = entry.value.map((Advance item) => '${item.drugName} ${item.doctorName} ${item.note ?? ''}').join(' ').toLowerCase();
-      if (haystack.contains(query)) matched.add(entry.key);
-    }
-
-    final List<Booking> bookings = await _bookingsRepository.getAllBookings();
-    final Map<String, List<Booking>> groupedBookings = _groupByFiscalCode(bookings, (Booking item) => item.patientFiscalCode);
-    bookingsByCf.addAll(groupedBookings);
-    for (final entry in groupedBookings.entries) {
-      final String haystack = entry.value.map((Booking item) => '${item.drugName} ${item.note ?? ''}').join(' ').toLowerCase();
-      if (haystack.contains(query)) matched.add(entry.key);
-    }
-
-    return matched;
-  }
-
-  Future<_PatientDashboardSummary?> _loadPatientSummaryScoped({
-    required String fiscalCode,
-    required List<FamilyGroup> families,
-    Patient? cachedPatient,
-    List<DrivePdfImport>? cachedImports,
-    List<Prescription>? cachedPrescriptions,
-    List<Debt>? cachedDebts,
-    List<Advance>? cachedAdvances,
-    List<Booking>? cachedBookings,
-    bool loadAllPatientFlags = false,
-  }) async {
-    final String normalized = _normalizeFiscalCode(fiscalCode);
-    if (normalized.isEmpty) {
-      return null;
-    }
-
-    final Patient? patient = cachedPatient ?? await _patientsRepository.getPatientByFiscalCode(normalized);
-    final List<DrivePdfImport> imports = cachedImports ??
-        (loadAllPatientFlags ? await _drivePdfImportsRepository.getImportsByPatient(normalized, includeHidden: true) : const <DrivePdfImport>[]);
-    final List<Prescription> prescriptions = cachedPrescriptions ??
-        ((loadAllPatientFlags && imports.isEmpty) ? await _prescriptionsRepository.getLegacyPatientPrescriptions(normalized) : const <Prescription>[]);
-    final List<Debt> debts = cachedDebts ??
-        (loadAllPatientFlags ? await _debtsRepository.getPatientDebts(normalized) : const <Debt>[]);
-    final List<Advance> advances = cachedAdvances ??
-        (loadAllPatientFlags ? await _advancesRepository.getPatientAdvances(normalized) : const <Advance>[]);
-    final List<Booking> bookings = cachedBookings ??
-        (loadAllPatientFlags ? await _bookingsRepository.getPatientBookings(normalized) : const <Booking>[]);
-    final List<DoctorPatientLink> doctorLinks = await _doctorPatientLinksRepository.getLinksForPatient(normalized);
-
-    final Patient effectivePatient = patient ?? _syntheticPatient(
-      fiscalCode: normalized,
-      imports: imports,
-      prescriptions: prescriptions,
-      debts: debts,
-      advances: advances,
-      bookings: bookings,
-    );
-
-    return _PatientDashboardSummary.build(
-      patient: effectivePatient,
-      prescriptions: prescriptions,
-      imports: imports,
-      debts: debts,
-      advances: advances,
-      bookings: bookings,
-      doctorLinks: doctorLinks,
-      families: families,
     );
   }
 
@@ -624,76 +534,6 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Future<_DashboardTotals> _loadTotals() async {
-    final DashboardTotalsSnapshot? snapshot = await _dashboardTotalsRepository.getMainTotals();
-    if (snapshot != null) {
-      final _DashboardTotals snapshotTotals = _DashboardTotals.fromSnapshot(snapshot);
-      if (_canAcceptDashboardTotalsSnapshot(snapshotTotals)) {
-        return snapshotTotals;
-      }
-      return _loadLegacyTotalsFallback(force: true);
-    }
-
-    return _loadLegacyTotalsFallback(force: false);
-  }
-
-  bool _canAcceptDashboardTotalsSnapshot(_DashboardTotals snapshotTotals) {
-    if (snapshotTotals.hasAnyValue) {
-      return true;
-    }
-    return !_dashboardTotals.hasAnyValue;
-  }
-
-  Future<_DashboardTotals> _loadLegacyTotalsFallback({required bool force}) async {
-    final DateTime now = DateTime.now();
-    final DateTime? lastFallback = _lastLegacyTotalsFallbackAt;
-    if (!force && lastFallback != null && now.difference(lastFallback) < _legacyTotalsFallbackInterval) {
-      return _dashboardTotals;
-    }
-    final results = await Future.wait<dynamic>(<Future<dynamic>>[
-      _drivePdfImportsRepository.getAllImports(includeHidden: true),
-      _prescriptionsRepository.getAllLegacyPrescriptions(),
-      _debtsRepository.getAllDebts(),
-      _advancesRepository.getAllAdvances(),
-      _bookingsRepository.getAllBookings(),
-    ]);
-
-    _lastLegacyTotalsFallbackAt = now;
-    return _DashboardTotals.fromCollections(
-      imports: results[0] as List<DrivePdfImport>,
-      legacyPrescriptions: results[1] as List<Prescription>,
-      debts: results[2] as List<Debt>,
-      advances: results[3] as List<Advance>,
-      bookings: results[4] as List<Booking>,
-    );
-  }
-
-  Future<void> _refreshTotals() async {
-    if (_isRefreshingTotals) {
-      return;
-    }
-    _isRefreshingTotals = true;
-    try {
-      final _DashboardTotals totals = await _loadTotals();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _dashboardTotals = totals;
-        _lastRefreshAt = DateTime.now();
-      });
-    } catch (e) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _message = 'Errore aggiornamento totali: $e';
-      });
-    } finally {
-      _isRefreshingTotals = false;
-    }
-  }
-
   Map<String, List<T>> _groupByFiscalCode<T>(
     List<T> items,
     String Function(T item) fiscalCodeSelector,
@@ -728,13 +568,12 @@ class _DashboardPageState extends State<DashboardPage> {
 
   void _refresh() {
     if (!_hasUserRequestedDashboardData) {
-      setState(() {
-        _future = Future<_DashboardData>.value(_DashboardData.empty());
-        _message = 'Nessun reload globale eseguito: seleziona una card o cerca almeno 3 caratteri.';
-      });
+      _clearDisplayedDashboardRows();
       return;
     }
-    _issueLoad();
+    setState(() {
+      _future = Future<_DashboardData>.value(_currentDashboardData());
+    });
   }
 
   List<_PatientDashboardSummary> _applyFilters(List<_PatientDashboardSummary> input, List<FamilyGroup> families) {
@@ -833,10 +672,19 @@ class _DashboardPageState extends State<DashboardPage> {
       activeFilters.join(','),
       _searchInFlags ? 'FLAGS' : 'BASE',
     ].join('|');
-    if (signature == _lastUserRequestRefreshSignature) {
+    if (signature == _lastUserRequestRefreshSignature && _dashboardCacheLoaded) {
+      setState(() {
+        _future = Future<_DashboardData>.value(_dashboardCache);
+      });
       return;
     }
     _lastUserRequestRefreshSignature = signature;
+    if (_dashboardCacheLoaded) {
+      setState(() {
+        _future = Future<_DashboardData>.value(_dashboardCache);
+      });
+      return;
+    }
     _userRequestRefreshDebounceTimer?.cancel();
     _userRequestRefreshDebounceTimer = Timer(_userRequestRefreshDebounceDelay, () {
       if (!mounted) {
@@ -857,7 +705,7 @@ class _DashboardPageState extends State<DashboardPage> {
       _activeCardFilters.add(filter);
     });
     _scheduleInactiveFilterResetIfNeeded();
-    _scheduleUserRequestedDataRefresh();
+    _ensureDashboardCacheForActiveRequest();
   }
 
   Future<void> _openPdf(DrivePdfImport item) async {
@@ -923,6 +771,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   final bool confirmed = await _confirmDeleteRecipe(item);
                                   if (!confirmed) return;
                                   await _drivePdfImportsRepository.requestPdfDelete(item.id);
+                                  _removeRecipeFromCachedSummary(summary, item);
                                   if (mounted) {
                                     Navigator.of(context).pop();
                                     _refresh();
@@ -1013,20 +862,20 @@ class _DashboardPageState extends State<DashboardPage> {
             });
             try {
               final DateTime now = DateTime.now();
-              await _debtsRepository.saveDebt(
-                Debt.createNew(
-                  id: 'debt_${now.microsecondsSinceEpoch}',
-                  patientFiscalCode: summary.patient.fiscalCode,
-                  patientName: summary.patient.fullName,
-                  description: description,
-                  amount: amount,
-                  initialPaidAmountRaw: 0,
-                  createdAt: now,
-                  dueDate: now,
-                  note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
-                ),
+              final Debt debt = Debt.createNew(
+                id: 'debt_${now.microsecondsSinceEpoch}',
+                patientFiscalCode: summary.patient.fiscalCode,
+                patientName: summary.patient.fullName,
+                description: description,
+                amount: amount,
+                initialPaidAmountRaw: 0,
+                createdAt: now,
+                dueDate: now,
+                note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
               );
+              await _debtsRepository.saveDebt(debt);
               await _dashboardTotalsRepository.applyFrontendManagedDelta(debtAmountDelta: amount);
+              _replaceCachedSummary(summary.copyWith(debts: <Debt>[debt, ...summary.debts]));
               saved = true;
               if (dialogContext.mounted) {
                 Navigator.of(dialogContext).pop();
@@ -1110,7 +959,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final drugController = TextEditingController();
     final noteController = TextEditingController();
     String selectedDoctor = summary.doctorName.trim() == '-' ? '' : summary.doctorName.trim();
-    final data = await _future!;
+    final data = _currentDashboardData();
     final candidateList = <String>{
       ...data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty),
       if (selectedDoctor.isNotEmpty) selectedDoctor,
@@ -1138,19 +987,22 @@ class _DashboardPageState extends State<DashboardPage> {
             });
             try {
               final DateTime now = DateTime.now();
-              await _advancesRepository.saveAdvance(
-                Advance(
-                  id: 'adv_${now.microsecondsSinceEpoch}',
-                  patientFiscalCode: summary.patient.fiscalCode,
-                  patientName: summary.patient.fullName,
-                  drugName: drugName,
-                  doctorName: doctorName,
-                  note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
-                  createdAt: now,
-                  updatedAt: now,
-                ),
+              final Advance advance = Advance(
+                id: 'adv_${now.microsecondsSinceEpoch}',
+                patientFiscalCode: summary.patient.fiscalCode,
+                patientName: summary.patient.fullName,
+                drugName: drugName,
+                doctorName: doctorName,
+                note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
+                createdAt: now,
+                updatedAt: now,
               );
+              await _advancesRepository.saveAdvance(advance);
               await _dashboardTotalsRepository.applyFrontendManagedDelta(advanceCountDelta: 1);
+              _replaceCachedSummary(summary.copyWith(
+                advances: <Advance>[advance, ...summary.advances],
+                doctorName: doctorName,
+              ));
               await _doctorPatientLinksRepository.saveManualOverride(
                 patientFiscalCode: summary.patient.fiscalCode,
                 patientFullName: summary.patient.fullName,
@@ -1299,19 +1151,19 @@ class _DashboardPageState extends State<DashboardPage> {
         throw Exception('Farmaco obbligatorio.');
       }
       final now = DateTime.now();
-      await _bookingsRepository.saveBooking(
-        Booking(
-          id: 'book_${now.microsecondsSinceEpoch}',
-          patientFiscalCode: summary.patient.fiscalCode,
-          patientName: summary.patient.fullName,
-          drugName: drugController.text.trim(),
-          quantity: int.tryParse(quantityController.text.trim()) ?? 1,
-          createdAt: now,
-          expectedDate: now,
-          note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
-        ),
+      final Booking booking = Booking(
+        id: 'book_${now.microsecondsSinceEpoch}',
+        patientFiscalCode: summary.patient.fiscalCode,
+        patientName: summary.patient.fullName,
+        drugName: drugController.text.trim(),
+        quantity: int.tryParse(quantityController.text.trim()) ?? 1,
+        createdAt: now,
+        expectedDate: now,
+        note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
       );
+      await _bookingsRepository.saveBooking(booking);
       await _dashboardTotalsRepository.applyFrontendManagedDelta(bookingCountDelta: 1);
+      _replaceCachedSummary(summary.copyWith(bookings: <Booking>[booking, ...summary.bookings]));
       _refresh();
       return true;
     } catch (e) {
@@ -1331,6 +1183,7 @@ class _DashboardPageState extends State<DashboardPage> {
       await _debtsRepository.deleteDebt(summary.patient.fiscalCode, item.id);
     }
     await _dashboardTotalsRepository.applyFrontendManagedDelta(debtAmountDelta: debtDelta);
+    _replaceCachedSummary(summary.copyWith(debts: const <Debt>[]));
     _refresh();
     return true;
   }
@@ -1342,6 +1195,7 @@ class _DashboardPageState extends State<DashboardPage> {
       await _advancesRepository.deleteAdvance(summary.patient.fiscalCode, item.id);
     }
     await _dashboardTotalsRepository.applyFrontendManagedDelta(advanceCountDelta: advanceDelta);
+    _replaceCachedSummary(summary.copyWith(advances: const <Advance>[]));
     _refresh();
     return true;
   }
@@ -1353,27 +1207,17 @@ class _DashboardPageState extends State<DashboardPage> {
       await _bookingsRepository.deleteBooking(summary.patient.fiscalCode, item.id);
     }
     await _dashboardTotalsRepository.applyFrontendManagedDelta(bookingCountDelta: bookingDelta);
+    _replaceCachedSummary(summary.copyWith(bookings: const <Booking>[]));
     _refresh();
     return true;
   }
 
 
-  Future<_PatientDashboardSummary?> _reloadSummary(String fiscalCode) async {
-    final String normalized = _normalizeFiscalCode(fiscalCode);
-    if (normalized.isEmpty) return null;
-    final List<FamilyGroup> families = await _familyGroupsRepository.getAllFamilies();
-    return _loadPatientSummaryScoped(
-      fiscalCode: normalized,
-      families: families,
-      loadAllPatientFlags: true,
-    );
-  }
-
   Future<void> _openEditableFlagModal({
     required _PatientDashboardSummary summary,
     required String key,
   }) async {
-    final data = await _future!;
+    final data = _currentDashboardData();
     final doctorsCatalog = data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty).toList()..sort();
 
     final debtDescriptionController = TextEditingController();
@@ -1399,11 +1243,7 @@ class _DashboardPageState extends State<DashboardPage> {
           String selectedDoctor = summary.doctorName.trim() == '-' ? '' : summary.doctorName.trim();
 
           Future<void> reload(StateSetter setLocalState) async {
-            final refreshed = await _reloadSummary(summary.patient.fiscalCode);
             setLocalState(() {
-              if (refreshed != null) {
-                currentSummary = refreshed;
-              }
               busy = false;
             });
           }
@@ -1443,20 +1283,21 @@ class _DashboardPageState extends State<DashboardPage> {
                   setLocalState(() => formError = 'Inserisci causale e importo validi.');
                   return;
                 }
-                await _debtsRepository.saveDebt(
-                  Debt.createNew(
-                    id: 'debt_${now.microsecondsSinceEpoch}',
-                    patientFiscalCode: fiscalCode,
-                    patientName: patientName,
-                    description: description,
-                    amount: amount,
-                    initialPaidAmountRaw: 0,
-                    createdAt: now,
-                    dueDate: now,
-                    note: debtNoteController.text.trim().isEmpty ? null : debtNoteController.text.trim(),
-                  ),
+                final Debt debt = Debt.createNew(
+                  id: 'debt_${now.microsecondsSinceEpoch}',
+                  patientFiscalCode: fiscalCode,
+                  patientName: patientName,
+                  description: description,
+                  amount: amount,
+                  initialPaidAmountRaw: 0,
+                  createdAt: now,
+                  dueDate: now,
+                  note: debtNoteController.text.trim().isEmpty ? null : debtNoteController.text.trim(),
                 );
+                await _debtsRepository.saveDebt(debt);
                 await _dashboardTotalsRepository.applyFrontendManagedDelta(debtAmountDelta: amount);
+                currentSummary = currentSummary.copyWith(debts: <Debt>[debt, ...currentSummary.debts]);
+                _replaceCachedSummary(currentSummary);
               } else if (key == 'anticipi') {
                 final drugName = advanceDrugController.text.trim();
                 final doctorName = selectedDoctor.trim();
@@ -1464,19 +1305,23 @@ class _DashboardPageState extends State<DashboardPage> {
                   setLocalState(() => formError = 'Inserisci farmaco e medico.');
                   return;
                 }
-                await _advancesRepository.saveAdvance(
-                  Advance(
-                    id: 'adv_${now.microsecondsSinceEpoch}',
-                    patientFiscalCode: fiscalCode,
-                    patientName: patientName,
-                    drugName: drugName,
-                    doctorName: doctorName,
-                    note: advanceNoteController.text.trim().isEmpty ? null : advanceNoteController.text.trim(),
-                    createdAt: now,
-                    updatedAt: now,
-                  ),
+                final Advance advance = Advance(
+                  id: 'adv_${now.microsecondsSinceEpoch}',
+                  patientFiscalCode: fiscalCode,
+                  patientName: patientName,
+                  drugName: drugName,
+                  doctorName: doctorName,
+                  note: advanceNoteController.text.trim().isEmpty ? null : advanceNoteController.text.trim(),
+                  createdAt: now,
+                  updatedAt: now,
                 );
+                await _advancesRepository.saveAdvance(advance);
                 await _dashboardTotalsRepository.applyFrontendManagedDelta(advanceCountDelta: 1);
+                currentSummary = currentSummary.copyWith(
+                  advances: <Advance>[advance, ...currentSummary.advances],
+                  doctorName: doctorName,
+                );
+                _replaceCachedSummary(currentSummary);
               } else {
                 final drugName = bookingDrugController.text.trim();
                 final quantity = int.tryParse(bookingQuantityController.text.trim()) ?? 1;
@@ -1484,19 +1329,20 @@ class _DashboardPageState extends State<DashboardPage> {
                   setLocalState(() => formError = 'Inserisci farmaco e quantità valide.');
                   return;
                 }
-                await _bookingsRepository.saveBooking(
-                  Booking(
-                    id: 'book_${now.microsecondsSinceEpoch}',
-                    patientFiscalCode: fiscalCode,
-                    patientName: patientName,
-                    drugName: drugName,
-                    quantity: quantity,
-                    createdAt: now,
-                    expectedDate: now,
-                    note: bookingNoteController.text.trim().isEmpty ? null : bookingNoteController.text.trim(),
-                  ),
+                final Booking booking = Booking(
+                  id: 'book_${now.microsecondsSinceEpoch}',
+                  patientFiscalCode: fiscalCode,
+                  patientName: patientName,
+                  drugName: drugName,
+                  quantity: quantity,
+                  createdAt: now,
+                  expectedDate: now,
+                  note: bookingNoteController.text.trim().isEmpty ? null : bookingNoteController.text.trim(),
                 );
+                await _bookingsRepository.saveBooking(booking);
                 await _dashboardTotalsRepository.applyFrontendManagedDelta(bookingCountDelta: 1);
+                currentSummary = currentSummary.copyWith(bookings: <Booking>[booking, ...currentSummary.bookings]);
+                _replaceCachedSummary(currentSummary);
               }
 
               _refresh();
@@ -1522,6 +1368,10 @@ class _DashboardPageState extends State<DashboardPage> {
                           await runBusyAction(setLocalState, () async {
                             await _debtsRepository.deleteDebt(currentSummary.patient.fiscalCode, item.id);
                             await _dashboardTotalsRepository.applyFrontendManagedDelta(debtAmountDelta: -item.residualAmount);
+                            currentSummary = currentSummary.copyWith(
+                              debts: currentSummary.debts.where((Debt debt) => debt.id != item.id).toList(),
+                            );
+                            _replaceCachedSummary(currentSummary);
                             _refresh();
                           });
                         },
@@ -1537,6 +1387,10 @@ class _DashboardPageState extends State<DashboardPage> {
                           await runBusyAction(setLocalState, () async {
                             await _advancesRepository.deleteAdvance(currentSummary.patient.fiscalCode, item.id);
                             await _dashboardTotalsRepository.applyFrontendManagedDelta(advanceCountDelta: -1);
+                            currentSummary = currentSummary.copyWith(
+                              advances: currentSummary.advances.where((Advance advance) => advance.id != item.id).toList(),
+                            );
+                            _replaceCachedSummary(currentSummary);
                             _refresh();
                           });
                         },
@@ -1551,6 +1405,10 @@ class _DashboardPageState extends State<DashboardPage> {
                         await runBusyAction(setLocalState, () async {
                           await _bookingsRepository.deleteBooking(currentSummary.patient.fiscalCode, item.id);
                           await _dashboardTotalsRepository.applyFrontendManagedDelta(bookingCountDelta: -1);
+                          currentSummary = currentSummary.copyWith(
+                            bookings: currentSummary.bookings.where((Booking booking) => booking.id != item.id).toList(),
+                          );
+                          _replaceCachedSummary(currentSummary);
                           _refresh();
                         });
                       },
@@ -1719,6 +1577,8 @@ class _DashboardPageState extends State<DashboardPage> {
                                   await _debtsRepository.deleteDebt(currentSummary.patient.fiscalCode, item.id);
                                 }
                                 await _dashboardTotalsRepository.applyFrontendManagedDelta(debtAmountDelta: debtDelta);
+                                currentSummary = currentSummary.copyWith(debts: const <Debt>[]);
+                                _replaceCachedSummary(currentSummary);
                               } else if (key == 'anticipi') {
                                 int advanceDelta = 0;
                                 for (final item in currentSummary.advances) {
@@ -1726,6 +1586,8 @@ class _DashboardPageState extends State<DashboardPage> {
                                   await _advancesRepository.deleteAdvance(currentSummary.patient.fiscalCode, item.id);
                                 }
                                 await _dashboardTotalsRepository.applyFrontendManagedDelta(advanceCountDelta: advanceDelta);
+                                currentSummary = currentSummary.copyWith(advances: const <Advance>[]);
+                                _replaceCachedSummary(currentSummary);
                               } else {
                                 int bookingDelta = 0;
                                 for (final item in currentSummary.bookings) {
@@ -1733,6 +1595,8 @@ class _DashboardPageState extends State<DashboardPage> {
                                   await _bookingsRepository.deleteBooking(currentSummary.patient.fiscalCode, item.id);
                                 }
                                 await _dashboardTotalsRepository.applyFrontendManagedDelta(bookingCountDelta: bookingDelta);
+                                currentSummary = currentSummary.copyWith(bookings: const <Booking>[]);
+                                _replaceCachedSummary(currentSummary);
                               }
                               _refresh();
                             }),
@@ -1930,7 +1794,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _openAddPatientDialog() async {
-    final data = await _future!;
+    final data = _currentDashboardData();
     final fiscalCodeController = TextEditingController();
     final fiscalCodeFocusNode = FocusNode();
     final nameController = TextEditingController();
@@ -2384,6 +2248,12 @@ class _DashboardPageState extends State<DashboardPage> {
       for (final importItem in recipeImports) {
         await _drivePdfImportsRepository.requestPdfDelete(importItem.id);
       }
+      await _dashboardTotalsRepository.applyFrontendManagedDelta(
+        debtAmountDelta: -summary.totalDebt,
+        advanceCountDelta: -summary.advances.length,
+        bookingCountDelta: -summary.bookings.length,
+      );
+      _removeCachedSummary(summary.patient.fiscalCode);
       setState(() {
         _message = 'Dati operativi rimossi e delete PDF richiesta.';
       });
@@ -2423,8 +2293,8 @@ class _DashboardPageState extends State<DashboardPage> {
       future: _future,
       builder: (context, snapshot) {
         final data = snapshot.data;
-        final allSummaries = data == null ? const <_PatientDashboardSummary>[] : data.summaries;
-        final summaries = data == null ? const <_PatientDashboardSummary>[] : _applyFilters(allSummaries, data.families);
+        final allSummaries = data == null || !_hasUserRequestedDashboardData ? const <_PatientDashboardSummary>[] : data.summaries;
+        final summaries = data == null || !_hasUserRequestedDashboardData ? const <_PatientDashboardSummary>[] : _applyFilters(allSummaries, data.families);
         final _DashboardTotals totals = _dashboardTotals;
         final familyState = data == null
             ? _DashboardFamilyState.empty()
@@ -2550,7 +2420,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                         });
                                         _scheduleInactiveFilterResetIfNeeded();
                                         if (_searchController.text.trim().length >= 3) {
-                                          _scheduleUserRequestedDataRefresh();
+                                          _ensureDashboardCacheForActiveRequest();
                                         }
                                       },
                                       child: SizedBox(
@@ -2595,7 +2465,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               Tooltip(
                                 message: 'Aggiorna solo la richiesta attiva',
                                 child: IconButton(
-                                  onPressed: _refresh,
+                                  onPressed: _manualRefreshRequestedData,
                                   icon: const Icon(Icons.refresh, color: Colors.white70),
                                 ),
                               ),
@@ -2853,6 +2723,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final confirmed = await _confirmDeleteRecipe(item);
       if (!confirmed) return;
       await _drivePdfImportsRepository.requestPdfDelete(item.id);
+      _removeRecipeFromCachedSummary(summary, item);
       _refresh();
       return;
     }
@@ -2866,6 +2737,7 @@ class _DashboardPageState extends State<DashboardPage> {
             if (!confirmed) return;
             setLocalState(() => busy = true);
             await _drivePdfImportsRepository.requestPdfDelete(item.id);
+            _removeRecipeFromCachedSummary(summary, item);
             _refresh();
             setLocalState(() => busy = false);
             if (!mounted) return;
@@ -3091,6 +2963,20 @@ class _DashboardData {
     required this.totals,
   });
 
+  _DashboardData copyWith({
+    List<_PatientDashboardSummary>? summaries,
+    List<String>? doctorsCatalog,
+    List<FamilyGroup>? families,
+    _DashboardTotals? totals,
+  }) {
+    return _DashboardData(
+      summaries: summaries ?? this.summaries,
+      doctorsCatalog: doctorsCatalog ?? this.doctorsCatalog,
+      families: families ?? this.families,
+      totals: totals ?? this.totals,
+    );
+  }
+
   factory _DashboardData.empty() {
     return _DashboardData(
       summaries: const <_PatientDashboardSummary>[],
@@ -3133,6 +3019,40 @@ class _PatientDashboardSummary {
     required this.familyId,
     required this.familyName,
   });
+
+  _PatientDashboardSummary copyWith({
+    Patient? patient,
+    String? doctorName,
+    String? exemptionCode,
+    String? city,
+    List<Prescription>? prescriptions,
+    List<DrivePdfImport>? imports,
+    List<Debt>? debts,
+    List<Advance>? advances,
+    List<Booking>? bookings,
+    bool? hasDpc,
+    int? recipeCount,
+    bool? hasExpiryAlert,
+    String? familyId,
+    String? familyName,
+  }) {
+    return _PatientDashboardSummary(
+      patient: patient ?? this.patient,
+      doctorName: doctorName ?? this.doctorName,
+      exemptionCode: exemptionCode ?? this.exemptionCode,
+      city: city ?? this.city,
+      prescriptions: prescriptions ?? this.prescriptions,
+      imports: imports ?? this.imports,
+      debts: debts ?? this.debts,
+      advances: advances ?? this.advances,
+      bookings: bookings ?? this.bookings,
+      hasDpc: hasDpc ?? this.hasDpc,
+      recipeCount: recipeCount ?? this.recipeCount,
+      hasExpiryAlert: hasExpiryAlert ?? this.hasExpiryAlert,
+      familyId: familyId ?? this.familyId,
+      familyName: familyName ?? this.familyName,
+    );
+  }
 
   String get displayName => patient.fullName.trim().isEmpty ? patient.fiscalCode : patient.fullName.trim();
   String get patientAlias => (patient.alias ?? '').trim();

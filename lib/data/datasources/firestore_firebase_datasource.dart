@@ -78,11 +78,13 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     required String collectionPath,
     String? orderBy,
     bool descending = false,
+    int? limit,
   }) async {
     Query<Map<String, dynamic>> query = firestore.collection(collectionPath);
     if (orderBy != null) {
       query = query.orderBy(orderBy, descending: descending);
     }
+    query = _applyLimit(query, limit);
     final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
     return snapshot.docs
         .map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => _withDocumentId(doc.data(), doc.id))
@@ -96,6 +98,7 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     required Object value,
     String? orderBy,
     bool descending = false,
+    int? limit,
   }) async {
     Query<Map<String, dynamic>> query = firestore
         .collection(collectionPath)
@@ -103,6 +106,29 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     if (orderBy != null) {
       query = query.orderBy(orderBy, descending: descending);
     }
+    query = _applyLimit(query, limit);
+    final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
+    return snapshot.docs
+        .map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => _withDocumentId(doc.data(), doc.id))
+        .toList();
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> getCollectionWhereArrayContains({
+    required String collectionPath,
+    required String field,
+    required Object value,
+    String? orderBy,
+    bool descending = false,
+    int? limit,
+  }) async {
+    Query<Map<String, dynamic>> query = firestore
+        .collection(collectionPath)
+        .where(field, arrayContains: value);
+    if (orderBy != null) {
+      query = query.orderBy(orderBy, descending: descending);
+    }
+    query = _applyLimit(query, limit);
     final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
     return snapshot.docs
         .map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => _withDocumentId(doc.data(), doc.id))
@@ -114,11 +140,13 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     required String collectionPath,
     String? orderBy,
     bool descending = false,
+    int? limit,
   }) async {
     Query<Map<String, dynamic>> query = firestore.collectionGroup(collectionPath);
     if (orderBy != null) {
       query = query.orderBy(orderBy, descending: descending);
     }
+    query = _applyLimit(query, limit);
     final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
     return snapshot.docs
         .map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => _withDocumentId(doc.data(), doc.id))
@@ -171,6 +199,7 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     required String subcollectionPath,
     String? orderBy,
     bool descending = false,
+    int? limit,
   }) async {
     Query<Map<String, dynamic>> query = firestore
         .collection(collectionPath)
@@ -179,12 +208,19 @@ class FirestoreFirebaseDatasource implements FirestoreDatasource {
     if (orderBy != null) {
       query = query.orderBy(orderBy, descending: descending);
     }
+    query = _applyLimit(query, limit);
     final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
     return snapshot.docs
         .map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => _withDocumentId(doc.data(), doc.id))
         .toList();
   }
 
+  Query<Map<String, dynamic>> _applyLimit(Query<Map<String, dynamic>> query, int? limit) {
+    if (limit != null && limit > 0) {
+      return query.limit(limit);
+    }
+    return query;
+  }
 
   Map<String, dynamic> _withDocumentId(Map<String, dynamic> data, String documentId) {
     if (data.containsKey('id')) {

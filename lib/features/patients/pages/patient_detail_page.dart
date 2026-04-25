@@ -155,28 +155,29 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     if (patient == null) {
       return null;
     }
-    final List<FamilyGroup> families = await _familyGroupsRepository.getAllFamilies();
     final String normalizedCurrentCode =
         PatientInputNormalizer.normalizeFiscalCode(patient.fiscalCode);
-    FamilyGroup? currentFamily;
-    for (final FamilyGroup family in families) {
-      final bool containsPatient = family.memberFiscalCodes.any(
-        (String item) =>
-            PatientInputNormalizer.normalizeFiscalCode(item) ==
-            normalizedCurrentCode,
-      );
-      if (containsPatient) {
-        currentFamily = family;
-        break;
-      }
-    }
+    final FamilyGroup? currentFamily =
+        await _familyGroupsRepository.findFamilyByMemberFiscalCode(normalizedCurrentCode);
     if (currentFamily == null) {
       return null;
     }
 
+    return _buildFamilyContextFromFamily(
+      family: currentFamily,
+      currentPatient: patient,
+    );
+  }
+
+  Future<_PatientFamilyContext> _buildFamilyContextFromFamily({
+    required FamilyGroup family,
+    required Patient currentPatient,
+  }) async {
+    final String normalizedCurrentCode =
+        PatientInputNormalizer.normalizeFiscalCode(currentPatient.fiscalCode);
     final List<String> orderedCodes = <String>[];
     final Set<String> seenCodes = <String>{};
-    for (final String rawCode in currentFamily.memberFiscalCodes) {
+    for (final String rawCode in family.memberFiscalCodes) {
       final String normalized =
           PatientInputNormalizer.normalizeFiscalCode(rawCode);
       if (normalized.isEmpty || !seenCodes.add(normalized)) {
@@ -200,7 +201,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         .map((String fiscalCode) {
           final bool isCurrentPatient = fiscalCode == normalizedCurrentCode;
           final Patient? resolvedPatient = isCurrentPatient
-              ? patient
+              ? currentPatient
               : patientsByCode[fiscalCode];
           return _PatientFamilyMember(
             fiscalCode: fiscalCode,
@@ -211,18 +212,9 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         .toList();
 
     return _PatientFamilyContext(
-      family: currentFamily,
+      family: family,
       members: members,
     );
-  }
-
-  void _refresh([String? message]) {
-    setState(() {
-      if (message != null) {
-        _message = message;
-      }
-      _future = _load();
-    });
   }
 
   void _replaceData(_PatientDetailData data, String message) {
@@ -358,15 +350,28 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     }
     try {
       final String textValue = controller.text.trim();
+      final DateTime now = DateTime.now();
       if (textValue.isEmpty) {
         await _therapeuticAdviceRepository.clear(patient.fiscalCode);
-        _refresh('Consigli terapeutici rimossi.');
+        _replaceData(
+          data.copyWith(therapeuticAdvice: null),
+          'Consigli terapeutici rimossi.',
+        );
       } else {
         await _therapeuticAdviceRepository.save(
           fiscalCode: patient.fiscalCode,
           text: textValue,
         );
-        _refresh('Consigli terapeutici salvati.');
+        final TherapeuticAdviceNote nextNote = TherapeuticAdviceNote(
+          patientFiscalCode: patient.fiscalCode,
+          text: textValue,
+          createdAt: data.therapeuticAdvice?.createdAt ?? now,
+          updatedAt: now,
+        );
+        _replaceData(
+          data.copyWith(therapeuticAdvice: nextNote),
+          'Consigli terapeutici salvati.',
+        );
       }
     } catch (e) {
       setState(() => _message = 'Errore salvataggio consigli terapeutici: $e');
@@ -402,7 +407,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     if (confirmed != true) return;
     try {
       await _therapeuticAdviceRepository.clear(patient.fiscalCode);
-      _refresh('Consigli terapeutici rimossi.');
+      _replaceData(
+        data.copyWith(therapeuticAdvice: null),
+        'Consigli terapeutici rimossi.',
+      );
     } catch (e) {
       setState(() => _message = 'Errore eliminazione consigli terapeutici: $e');
     }
@@ -468,7 +476,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               ),
             if (matchingImport != null)
               IconButton(
-                onPressed: () => _requestPrescriptionDelete(matchingImport),
+                onPressed: () => _requestPrescriptionDelete(data, matchingImport),
                 icon: const Icon(Icons.delete_outline, color: AppColors.red),
               ),
           ],
@@ -960,10 +968,30 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     );
   }
 
-  Future<void> _requestPrescriptionDelete(DrivePdfImport item) async {
+  Future<void> _requestPrescriptionDelete(_PatientDetailData data, DrivePdfImport item) async {
     if (!await _confirmDelete(message: 'Eliminare questa ricetta?')) return;
     await _drivePdfImportsRepository.requestPdfDelete(item.id);
-    _refresh('Richiesta delete PDF registrata.');
+    final DrivePdfImport hiddenItem = item.copyWith(
+      deletePdfRequested: true,
+      deleteRequestedAt: DateTime.now(),
+    );
+    final List<DrivePdfImport> nextAllImports = data.allImports
+        .map((DrivePdfImport current) => current.id == item.id ? hiddenItem : current)
+        .toList();
+    final List<DrivePdfImport> nextVisibleImports = data.imports
+        .where((DrivePdfImport current) => current.id != item.id)
+        .toList();
+    final List<Prescription> nextPrescriptions = data.prescriptions
+        .where((Prescription current) => current.id != item.id)
+        .toList();
+    _replaceData(
+      data.copyWith(
+        imports: nextVisibleImports,
+        allImports: nextAllImports,
+        prescriptions: nextPrescriptions,
+      ),
+      'Richiesta delete PDF registrata.',
+    );
   }
 
   Future<bool> _confirmDelete({
@@ -1142,7 +1170,11 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
 
   Future<void> _editCurrentPatientFromMenu() async {
     try {
-      final _PatientDetailData data = await _load();
+      final Future<_PatientDetailData>? currentFuture = _future;
+      if (currentFuture == null) {
+        return;
+      }
+      final _PatientDetailData data = await currentFuture;
       if (!mounted || data.patient == null) {
         return;
       }
@@ -1476,7 +1508,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               localError = '';
             });
             try {
-              await _familyGroupsRepository.createFamily(
+              final FamilyGroup family = await _familyGroupsRepository.createFamily(
                 name: nameController.text,
                 memberFiscalCodes: <String>[currentCode, ...selectedCodes],
               );
@@ -1486,7 +1518,15 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               if (!mounted) {
                 return;
               }
-              _refresh("Famiglia creata e collegata all'assistito.");
+              final _PatientFamilyContext familyContext =
+                  await _buildFamilyContextFromFamily(
+                family: family,
+                currentPatient: currentPatient,
+              );
+              _replaceData(
+                data.copyWith(familyContext: familyContext),
+                "Famiglia creata e collegata all'assistito.",
+              );
             } on FamilyMutationException catch (e) {
               if (dialogContext.mounted) {
                 setLocalState(() {
@@ -1743,7 +1783,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               localError = '';
             });
             try {
-              await _familyGroupsRepository.addMembersToFamily(
+              final FamilyGroup family = await _familyGroupsRepository.addMembersToFamily(
                 familyId: selectedFamilyId!,
                 memberFiscalCodes: <String>[currentCode],
               );
@@ -1753,7 +1793,15 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               if (!mounted) {
                 return;
               }
-              _refresh('Assistito aggiunto al nucleo familiare.');
+              final _PatientFamilyContext familyContext =
+                  await _buildFamilyContextFromFamily(
+                family: family,
+                currentPatient: currentPatient,
+              );
+              _replaceData(
+                data.copyWith(familyContext: familyContext),
+                'Assistito aggiunto al nucleo familiare.',
+              );
             } on FamilyMutationException catch (e) {
               if (dialogContext.mounted) {
                 setLocalState(() {
@@ -1963,6 +2011,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   }
 
   Future<void> _openAddFamilyMembersDialog({
+    required _PatientDetailData data,
     required _PatientFamilyContext familyContext,
   }) async {
     final List<Patient> allPatients = await _patientsRepository.getAllPatients();
@@ -1992,17 +2041,25 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               localError = '';
             });
             try {
-              await _familyGroupsRepository.addMembersToFamily(
+              final FamilyGroup family = await _familyGroupsRepository.addMembersToFamily(
                 familyId: familyContext.family.id,
                 memberFiscalCodes: selectedCodes,
               );
               if (dialogContext.mounted) {
                 Navigator.of(dialogContext).pop();
               }
-              if (!mounted) {
+              if (!mounted || data.patient == null) {
                 return;
               }
-              _refresh('Membri famiglia aggiornati.');
+              final _PatientFamilyContext nextFamilyContext =
+                  await _buildFamilyContextFromFamily(
+                family: family,
+                currentPatient: data.patient!,
+              );
+              _replaceData(
+                data.copyWith(familyContext: nextFamilyContext),
+                'Membri famiglia aggiornati.',
+              );
             } on FamilyMutationException catch (e) {
               if (dialogContext.mounted) {
                 setLocalState(() {
@@ -2210,6 +2267,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   }
 
   Future<void> _removeFamilyMember({
+    required _PatientDetailData data,
     required _PatientFamilyContext familyContext,
     required _PatientFamilyMember member,
   }) async {
@@ -2237,12 +2295,21 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       if (!mounted) {
         return;
       }
-      _refresh(
-        result.deletedFamily
-            ? 'Famiglia eliminata: nessun membro residuo.'
-            : member.isCurrentPatient
-                ? 'Assistito rimosso dal nucleo familiare.'
-                : 'Membro rimosso dal nucleo familiare.',
+      final String message = result.deletedFamily
+          ? 'Famiglia eliminata: nessun membro residuo.'
+          : member.isCurrentPatient
+              ? 'Assistito rimosso dal nucleo familiare.'
+              : 'Membro rimosso dal nucleo familiare.';
+      _PatientFamilyContext? nextFamilyContext;
+      if (!result.deletedFamily && !member.isCurrentPatient && result.family != null && data.patient != null) {
+        nextFamilyContext = await _buildFamilyContextFromFamily(
+          family: result.family!,
+          currentPatient: data.patient!,
+        );
+      }
+      _replaceData(
+        data.copyWith(familyContext: nextFamilyContext),
+        message,
       );
     } on FamilyMutationException catch (e) {
       _showTransientError(e.message);
@@ -2294,10 +2361,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         builder: (_) => PatientDetailPage(fiscalCode: fiscalCode),
       ),
     );
-    if (!mounted) {
-      return;
-    }
-    _refresh();
   }
 
 
@@ -2386,6 +2449,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                 icon: Icons.person_add_alt_1_rounded,
                 label: 'Aggiungi membro',
                 onPressed: () => _openAddFamilyMembersDialog(
+                  data: data,
                   familyContext: familyContext,
                 ),
               ),
@@ -2476,6 +2540,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                       : 'Rimuovi membro dal nucleo',
                   child: IconButton(
                     onPressed: () => _removeFamilyMember(
+                      data: data,
                       familyContext: familyContext,
                       member: member,
                     ),
@@ -2796,8 +2861,10 @@ class _PatientDetailData {
     required this.familyContext,
   });
 
+  static const Object _unset = Object();
+
   _PatientDetailData copyWith({
-    Patient? patient,
+    Object? patient = _unset,
     List<Advance>? advances,
     List<Debt>? debts,
     List<Booking>? bookings,
@@ -2806,11 +2873,11 @@ class _PatientDetailData {
     List<DrivePdfImport>? allImports,
     AppSettings? settings,
     String? resolvedDoctorName,
-    TherapeuticAdviceNote? therapeuticAdvice,
-    _PatientFamilyContext? familyContext,
+    Object? therapeuticAdvice = _unset,
+    Object? familyContext = _unset,
   }) {
     return _PatientDetailData(
-      patient: patient ?? this.patient,
+      patient: identical(patient, _unset) ? this.patient : patient as Patient?,
       advances: advances ?? this.advances,
       debts: debts ?? this.debts,
       bookings: bookings ?? this.bookings,
@@ -2819,8 +2886,12 @@ class _PatientDetailData {
       allImports: allImports ?? this.allImports,
       settings: settings ?? this.settings,
       resolvedDoctorName: resolvedDoctorName ?? this.resolvedDoctorName,
-      therapeuticAdvice: therapeuticAdvice ?? this.therapeuticAdvice,
-      familyContext: familyContext ?? this.familyContext,
+      therapeuticAdvice: identical(therapeuticAdvice, _unset)
+          ? this.therapeuticAdvice
+          : therapeuticAdvice as TherapeuticAdviceNote?,
+      familyContext: identical(familyContext, _unset)
+          ? this.familyContext
+          : familyContext as _PatientFamilyContext?,
     );
   }
 

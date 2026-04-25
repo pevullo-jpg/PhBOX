@@ -447,14 +447,13 @@ class PatientsRepository {
     required String isoNow,
   }) async {
     final FirebaseFirestore firestore = _firebaseFirestoreOrThrow();
-    final List<Map<String, dynamic>> families = await datasource.getCollection(
+    final List<Map<String, dynamic>> families = await datasource.getCollectionWhereArrayContains(
       collectionPath: AppCollections.families,
+      field: 'memberFiscalCodes',
+      value: oldPatientDocumentId,
     );
     for (final Map<String, dynamic> family in families) {
       final List<String> members = _readStringList(family['memberFiscalCodes']);
-      if (!members.contains(oldPatientDocumentId)) {
-        continue;
-      }
       final String familyId = _readId(family);
       if (familyId.isEmpty) {
         continue;

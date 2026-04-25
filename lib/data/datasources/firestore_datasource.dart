@@ -32,6 +32,7 @@ abstract class FirestoreDatasource {
     required String collectionPath,
     String? orderBy,
     bool descending = false,
+    int? limit,
   });
 
   Future<List<Map<String, dynamic>>> getCollectionWhereEqual({
@@ -40,12 +41,23 @@ abstract class FirestoreDatasource {
     required Object value,
     String? orderBy,
     bool descending = false,
+    int? limit,
+  });
+
+  Future<List<Map<String, dynamic>>> getCollectionWhereArrayContains({
+    required String collectionPath,
+    required String field,
+    required Object value,
+    String? orderBy,
+    bool descending = false,
+    int? limit,
   });
 
   Future<List<Map<String, dynamic>>> getCollectionGroup({
     required String collectionPath,
     String? orderBy,
     bool descending = false,
+    int? limit,
   });
 
   Future<void> deleteDocument({
@@ -67,6 +79,7 @@ abstract class FirestoreDatasource {
     required String subcollectionPath,
     String? orderBy,
     bool descending = false,
+    int? limit,
   });
 
   Future<void> deleteSubDocument({

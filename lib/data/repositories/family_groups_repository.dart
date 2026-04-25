@@ -40,18 +40,17 @@ class FamilyGroupsRepository {
     if (normalizedFiscalCode.isEmpty) {
       return null;
     }
-    final List<FamilyGroup> families = await getAllFamilies();
-    for (final FamilyGroup family in families) {
-      final bool containsPatient = family.memberFiscalCodes.any(
-        (String item) =>
-            PatientInputNormalizer.normalizeFiscalCode(item) ==
-            normalizedFiscalCode,
-      );
-      if (containsPatient) {
-        return family;
-      }
+    final List<Map<String, dynamic>> maps = await datasource.getCollectionWhereArrayContains(
+      collectionPath: AppCollections.families,
+      field: 'memberFiscalCodes',
+      value: normalizedFiscalCode,
+      limit: 1,
+    );
+    if (maps.isEmpty) {
+      return null;
     }
-    return null;
+    final FamilyGroup family = FamilyGroup.fromMap(maps.first);
+    return family.id.isEmpty ? null : family;
   }
 
   Future<void> saveFamily(FamilyGroup family) {
@@ -199,24 +198,27 @@ class FamilyGroupsRepository {
       return;
     }
 
-    final List<FamilyGroup> families = await getAllFamilies();
     for (final String candidate in normalizedCandidates) {
-      for (final FamilyGroup family in families) {
+      final List<Map<String, dynamic>> maps = await datasource.getCollectionWhereArrayContains(
+        collectionPath: AppCollections.families,
+        field: 'memberFiscalCodes',
+        value: candidate,
+        limit: 2,
+      );
+      for (final Map<String, dynamic> map in maps) {
+        final FamilyGroup family = FamilyGroup.fromMap(map);
+        if (family.id.isEmpty) {
+          continue;
+        }
         if (targetFamilyId != null && family.id == targetFamilyId) {
           continue;
         }
-        final bool alreadyBound = family.memberFiscalCodes.any(
-          (String item) =>
-              PatientInputNormalizer.normalizeFiscalCode(item) == candidate,
+        final String label = family.name.trim().isNotEmpty
+            ? family.name.trim()
+            : family.id.trim();
+        throw FamilyMutationException(
+          'L\'assistito $candidate appartiene già al nucleo $label.',
         );
-        if (alreadyBound) {
-          final String label = family.name.trim().isNotEmpty
-              ? family.name.trim()
-              : family.id.trim();
-          throw FamilyMutationException(
-            'L\'assistito $candidate appartiene già al nucleo $label.',
-          );
-        }
       }
     }
   }
