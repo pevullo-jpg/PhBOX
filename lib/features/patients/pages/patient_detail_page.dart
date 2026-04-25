@@ -29,6 +29,7 @@ import '../../../data/repositories/doctor_patient_links_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/family_groups_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
+import '../../../data/repositories/patient_dashboard_index_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../data/repositories/therapeutic_advice_repository.dart';
@@ -57,6 +58,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   late final DoctorPatientLinksRepository _doctorPatientLinksRepository;
   late final TherapeuticAdviceRepository _therapeuticAdviceRepository;
   late final DashboardTotalsRepository _dashboardTotalsRepository;
+  late final PatientDashboardIndexRepository _patientDashboardIndexRepository;
 
   Future<_PatientDetailData>? _future;
   String _message = '';
@@ -77,6 +79,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     _doctorPatientLinksRepository = DoctorPatientLinksRepository(datasource: datasource);
     _therapeuticAdviceRepository = TherapeuticAdviceRepository(datasource: datasource);
     _dashboardTotalsRepository = DashboardTotalsRepository(datasource: datasource);
+    _patientDashboardIndexRepository = PatientDashboardIndexRepository(datasource: datasource);
     _currentFiscalCode = PatientInputNormalizer.normalizeFiscalCode(widget.fiscalCode);
     _future = _load();
   }
@@ -282,6 +285,30 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       }
       setState(() {
         _message = 'Dati salvati. Totali rapidi non riallineati: ' + e.toString();
+      });
+    }
+  }
+
+  Future<void> _syncPatientDashboardIndex(_PatientDetailData data) async {
+    final Patient? patient = data.patient;
+    if (patient == null) return;
+    try {
+      await _patientDashboardIndexRepository.patchFrontendManagedState(
+        fiscalCode: patient.fiscalCode,
+        fullName: patient.fullName,
+        alias: patient.alias,
+        doctorFullName: data.resolvedDoctorName == '-' ? patient.doctorName : data.resolvedDoctorName,
+        city: patient.city,
+        exemptionCode: patient.primaryExemption,
+        debtCount: data.debts.length,
+        debtAmount: data.debts.fold<double>(0, (double sum, Debt item) => sum + item.residualAmount),
+        advanceCount: data.advances.length,
+        bookingCount: data.bookings.length,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _message = 'Dati salvati. Indice dashboard non riallineato: ' + e.toString();
       });
     }
   }
@@ -620,8 +647,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               }
               if (mounted) {
                 await _applyFrontendManagedTotalsDelta(debtAmountDelta: debt.residualAmount);
+                final _PatientDetailData nextData = data.copyWith(debts: <Debt>[debt, ...data.debts]);
+                await _syncPatientDashboardIndex(nextData);
                 _replaceData(
-                  data.copyWith(debts: <Debt>[debt, ...data.debts]),
+                  nextData,
                   'Debito aggiunto.',
                 );
               }
@@ -749,11 +778,13 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               }
               if (mounted) {
                 await _applyFrontendManagedTotalsDelta(advanceCountDelta: 1);
+                final _PatientDetailData nextData = data.copyWith(
+                  advances: <Advance>[advance, ...data.advances],
+                  resolvedDoctorName: doctor,
+                );
+                await _syncPatientDashboardIndex(nextData);
                 _replaceData(
-                  data.copyWith(
-                    advances: <Advance>[advance, ...data.advances],
-                    resolvedDoctorName: doctor,
-                  ),
+                  nextData,
                   'Anticipo aggiunto.',
                 );
               }
@@ -919,8 +950,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       );
       await _bookingsRepository.saveBooking(booking);
       await _applyFrontendManagedTotalsDelta(bookingCountDelta: 1);
+      final _PatientDetailData nextData = data.copyWith(bookings: <Booking>[booking, ...data.bookings]);
+      await _syncPatientDashboardIndex(nextData);
       _replaceData(
-        data.copyWith(bookings: <Booking>[booking, ...data.bookings]),
+        nextData,
         'Prenotazione aggiunta.',
       );
     } catch (e) {
@@ -938,8 +971,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     if (!await _confirmDelete(message: 'Eliminare questo debito?')) return;
     await _debtsRepository.deleteDebt(patient.fiscalCode, debt.id);
     await _applyFrontendManagedTotalsDelta(debtAmountDelta: -debt.residualAmount);
+    final _PatientDetailData nextData = data.copyWith(debts: data.debts.where((Debt item) => item.id != debt.id).toList());
+    await _syncPatientDashboardIndex(nextData);
     _replaceData(
-      data.copyWith(debts: data.debts.where((Debt item) => item.id != debt.id).toList()),
+      nextData,
       'Debito eliminato.',
     );
   }
@@ -950,8 +985,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     if (!await _confirmDelete(message: 'Eliminare questo anticipo?')) return;
     await _advancesRepository.deleteAdvance(patient.fiscalCode, advance.id);
     await _applyFrontendManagedTotalsDelta(advanceCountDelta: -1);
+    final _PatientDetailData nextData = data.copyWith(advances: data.advances.where((Advance item) => item.id != advance.id).toList());
+    await _syncPatientDashboardIndex(nextData);
     _replaceData(
-      data.copyWith(advances: data.advances.where((Advance item) => item.id != advance.id).toList()),
+      nextData,
       'Anticipo eliminato.',
     );
   }
@@ -962,8 +999,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     if (!await _confirmDelete(message: 'Eliminare questa prenotazione?')) return;
     await _bookingsRepository.deleteBooking(patient.fiscalCode, booking.id);
     await _applyFrontendManagedTotalsDelta(bookingCountDelta: -1);
+    final _PatientDetailData nextData = data.copyWith(bookings: data.bookings.where((Booking item) => item.id != booking.id).toList());
+    await _syncPatientDashboardIndex(nextData);
     _replaceData(
-      data.copyWith(bookings: data.bookings.where((Booking item) => item.id != booking.id).toList()),
+      nextData,
       'Prenotazione eliminata.',
     );
   }
@@ -1084,8 +1123,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                   fullName: result.fullName,
                   alias: _nullableTrimmed(aliasController.text),
                 );
+                final _PatientDetailData nextData = data.copyWith(patient: updatedPatient);
+                await _syncPatientDashboardIndex(nextData);
                 _replaceData(
-                  data.copyWith(patient: updatedPatient),
+                  nextData,
                   'Assistito aggiornato.',
                 );
               }

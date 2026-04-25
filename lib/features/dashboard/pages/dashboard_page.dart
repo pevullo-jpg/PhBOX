@@ -22,6 +22,7 @@ import '../../../data/models/doctor_patient_link.dart';
 import '../../../data/models/drive_pdf_import.dart';
 import '../../../data/models/family_group.dart';
 import '../../../data/models/patient.dart';
+import '../../../data/models/patient_dashboard_index.dart';
 import '../../../data/models/prescription.dart';
 import '../../../data/repositories/advances_repository.dart';
 import '../../../data/repositories/bookings_repository.dart';
@@ -31,6 +32,7 @@ import '../../../data/repositories/doctor_patient_links_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/family_groups_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
+import '../../../data/repositories/patient_dashboard_index_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../features/patients/pages/patient_detail_page.dart';
@@ -56,6 +58,7 @@ class _DashboardPageState extends State<DashboardPage> {
   late final FamilyGroupsRepository _familyGroupsRepository;
   late final SettingsRepository _settingsRepository;
   late final DashboardTotalsRepository _dashboardTotalsRepository;
+  late final PatientDashboardIndexRepository _patientDashboardIndexRepository;
 
   Future<_DashboardData>? _future;
   _DashboardData _dashboardCache = _DashboardData.empty();
@@ -88,6 +91,7 @@ class _DashboardPageState extends State<DashboardPage> {
     _familyGroupsRepository = FamilyGroupsRepository(datasource: datasource);
     _settingsRepository = SettingsRepository(datasource: datasource);
     _dashboardTotalsRepository = DashboardTotalsRepository(datasource: datasource);
+    _patientDashboardIndexRepository = PatientDashboardIndexRepository(datasource: datasource);
     _future = Future<_DashboardData>.value(_DashboardData.empty());
     _startDashboardTotalsListener();
     _searchController.addListener(_handleSearchChanged);
@@ -277,6 +281,29 @@ class _DashboardPageState extends State<DashboardPage> {
       return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
     });
     _replaceDashboardCache(_dashboardCache.copyWith(summaries: nextSummaries));
+    unawaited(_syncPatientDashboardIndex(nextSummary));
+  }
+
+  Future<void> _syncPatientDashboardIndex(_PatientDashboardSummary summary) async {
+    try {
+      await _patientDashboardIndexRepository.patchFrontendManagedState(
+        fiscalCode: summary.patient.fiscalCode,
+        fullName: summary.patient.fullName,
+        alias: summary.patient.alias,
+        doctorFullName: summary.doctorName == '-' ? summary.patient.doctorName : summary.doctorName,
+        city: summary.city == '-' ? summary.patient.city : summary.city,
+        exemptionCode: summary.exemptionCode == '-' ? summary.patient.primaryExemption : summary.exemptionCode,
+        debtCount: summary.debtCount,
+        debtAmount: summary.totalDebt,
+        advanceCount: summary.advanceCount,
+        bookingCount: summary.bookingCount,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _message = 'Dati salvati. Indice dashboard non riallineato: ' + e.toString();
+      });
+    }
   }
 
   void _removeCachedSummary(String fiscalCode) {
@@ -368,78 +395,11 @@ class _DashboardPageState extends State<DashboardPage> {
       return _DashboardData.empty();
     }
 
-    final results = await Future.wait<dynamic>(<Future<dynamic>>[
-      _patientsRepository.getAllPatients(),
-      _drivePdfImportsRepository.getAllImports(includeHidden: true),
-      _doctorPatientLinksRepository.getAllLinks(),
-      _familyGroupsRepository.getAllFamilies(),
-      _settingsRepository.getSettings(),
-      _prescriptionsRepository.getAllLegacyPrescriptions(),
-      _debtsRepository.getAllDebts(),
-      _advancesRepository.getAllAdvances(),
-      _bookingsRepository.getAllBookings(),
-    ]);
-
-    final List<Patient> patients = results[0] as List<Patient>;
-    final List<DrivePdfImport> imports = results[1] as List<DrivePdfImport>;
-    final List<DoctorPatientLink> doctorLinks = results[2] as List<DoctorPatientLink>;
-    final List<FamilyGroup> families = results[3] as List<FamilyGroup>;
-    final AppSettings settings = results[4] as AppSettings;
-    final List<Prescription> allPrescriptions = results[5] as List<Prescription>;
-    final List<Debt> allDebts = results[6] as List<Debt>;
-    final List<Advance> allAdvances = results[7] as List<Advance>;
-    final List<Booking> allBookings = results[8] as List<Booking>;
-
-    final Map<String, Patient> patientByCf = <String, Patient>{};
-    for (final Patient patient in patients) {
-      final String cf = _normalizeFiscalCode(patient.fiscalCode);
-      if (cf.isNotEmpty) {
-        patientByCf[cf] = patient;
-      }
-    }
-
-    final Map<String, List<DrivePdfImport>> importsByCf = _groupImportsByFiscalCode(imports);
-    final Map<String, List<Prescription>> prescriptionsByCf = _groupByFiscalCode(allPrescriptions, (Prescription item) => item.patientFiscalCode);
-    final Map<String, List<Debt>> debtsByCf = _groupByFiscalCode(allDebts, (Debt item) => item.patientFiscalCode);
-    final Map<String, List<Advance>> advancesByCf = _groupByFiscalCode(allAdvances, (Advance item) => item.patientFiscalCode);
-    final Map<String, List<Booking>> bookingsByCf = _groupByFiscalCode(allBookings, (Booking item) => item.patientFiscalCode);
-    final Map<String, List<DoctorPatientLink>> doctorLinksByCf = _groupByFiscalCode(doctorLinks, (DoctorPatientLink item) => item.patientFiscalCode);
-
-    _sortGroupsByDate(prescriptionsByCf, (Prescription item) => item.prescriptionDate);
-    _sortGroupsByDate(debtsByCf, (Debt item) => item.createdAt);
-    _sortGroupsByDate(advancesByCf, (Advance item) => item.createdAt);
-    _sortGroupsByDate(bookingsByCf, (Booking item) => item.createdAt);
-
-    final Set<String> allCfs = <String>{
-      ...patientByCf.keys,
-      ...importsByCf.keys,
-      ...prescriptionsByCf.keys,
-      ...debtsByCf.keys,
-      ...advancesByCf.keys,
-      ...bookingsByCf.keys,
-    }..removeWhere((String cf) => cf.trim().isEmpty);
-
-    final List<_PatientDashboardSummary> summaries = <_PatientDashboardSummary>[];
-    for (final String cf in allCfs) {
-      final Patient patient = patientByCf[cf] ?? _syntheticPatient(
-        fiscalCode: cf,
-        imports: importsByCf[cf] ?? const <DrivePdfImport>[],
-        prescriptions: prescriptionsByCf[cf] ?? const <Prescription>[],
-        debts: debtsByCf[cf] ?? const <Debt>[],
-        advances: advancesByCf[cf] ?? const <Advance>[],
-        bookings: bookingsByCf[cf] ?? const <Booking>[],
-      );
-      summaries.add(_PatientDashboardSummary.build(
-        patient: patient,
-        prescriptions: prescriptionsByCf[cf] ?? const <Prescription>[],
-        imports: importsByCf[cf] ?? const <DrivePdfImport>[],
-        debts: debtsByCf[cf] ?? const <Debt>[],
-        advances: advancesByCf[cf] ?? const <Advance>[],
-        bookings: bookingsByCf[cf] ?? const <Booking>[],
-        doctorLinks: doctorLinksByCf[cf] ?? const <DoctorPatientLink>[],
-        families: families,
-      ));
-    }
+    final List<PatientDashboardIndex> indexRows = await _loadDashboardIndexRows();
+    final List<_PatientDashboardSummary> summaries = indexRows
+        .map(_summaryFromIndex)
+        .where(_matchesActiveIndexFilters)
+        .toList();
 
     summaries.sort((a, b) {
       if (a.hasExpiryAlert != b.hasExpiryAlert) {
@@ -450,10 +410,90 @@ class _DashboardPageState extends State<DashboardPage> {
 
     return _DashboardData(
       summaries: summaries,
-      doctorsCatalog: settings.doctorsCatalog,
-      families: families,
+      doctorsCatalog: const <String>[],
+      families: const <FamilyGroup>[],
       totals: _dashboardTotals,
     );
+  }
+
+  Future<List<PatientDashboardIndex>> _loadDashboardIndexRows() async {
+    final _DashboardCardFilter? primaryFilter = _selectPrimaryIndexFilter();
+    if (primaryFilter != null) {
+      return _patientDashboardIndexRepository.getByFlag(
+        flag: _indexFlagForDashboardFilter(primaryFilter),
+      );
+    }
+
+    final String query = _searchController.text.trim();
+    if (query.length >= 3) {
+      return _patientDashboardIndexRepository.searchByPrefix(query);
+    }
+
+    return const <PatientDashboardIndex>[];
+  }
+
+  _DashboardCardFilter? _selectPrimaryIndexFilter() {
+    const List<_DashboardCardFilter> priority = <_DashboardCardFilter>[
+      _DashboardCardFilter.debiti,
+      _DashboardCardFilter.anticipi,
+      _DashboardCardFilter.prenotazioni,
+      _DashboardCardFilter.scadenze,
+      _DashboardCardFilter.dpc,
+      _DashboardCardFilter.ricette,
+    ];
+    for (final _DashboardCardFilter filter in priority) {
+      if (_activeCardFilters.contains(filter)) {
+        return filter;
+      }
+    }
+    return null;
+  }
+
+  PatientDashboardIndexFlag _indexFlagForDashboardFilter(_DashboardCardFilter filter) {
+    switch (filter) {
+      case _DashboardCardFilter.ricette:
+        return PatientDashboardIndexFlag.recipes;
+      case _DashboardCardFilter.dpc:
+        return PatientDashboardIndexFlag.dpc;
+      case _DashboardCardFilter.debiti:
+        return PatientDashboardIndexFlag.debt;
+      case _DashboardCardFilter.anticipi:
+        return PatientDashboardIndexFlag.advance;
+      case _DashboardCardFilter.prenotazioni:
+        return PatientDashboardIndexFlag.booking;
+      case _DashboardCardFilter.scadenze:
+        return PatientDashboardIndexFlag.expiry;
+    }
+  }
+
+  bool _matchesActiveIndexFilters(_PatientDashboardSummary item) {
+    for (final _DashboardCardFilter filter in _activeCardFilters) {
+      switch (filter) {
+        case _DashboardCardFilter.ricette:
+          if (item.recipeCount == 0) return false;
+          break;
+        case _DashboardCardFilter.dpc:
+          if (!item.hasDpc) return false;
+          break;
+        case _DashboardCardFilter.debiti:
+          if (!item.hasDebt) return false;
+          break;
+        case _DashboardCardFilter.anticipi:
+          if (!item.hasAdvance) return false;
+          break;
+        case _DashboardCardFilter.prenotazioni:
+          if (!item.hasBooking) return false;
+          break;
+        case _DashboardCardFilter.scadenze:
+          if (!item.hasExpiryAlert) return false;
+          break;
+      }
+    }
+    return true;
+  }
+
+  _PatientDashboardSummary _summaryFromIndex(PatientDashboardIndex item) {
+    return _PatientDashboardSummary.fromIndex(item);
   }
 
   bool _matchesPatientSearch(Patient patient, String query) {
@@ -603,13 +643,13 @@ class _DashboardPageState extends State<DashboardPage> {
             if (!item.hasDpc) return false;
             break;
           case _DashboardCardFilter.debiti:
-            if (item.debts.isEmpty) return false;
+            if (!item.hasDebt) return false;
             break;
           case _DashboardCardFilter.anticipi:
-            if (item.advances.isEmpty) return false;
+            if (!item.hasAdvance) return false;
             break;
           case _DashboardCardFilter.prenotazioni:
-            if (item.bookings.isEmpty) return false;
+            if (!item.hasBooking) return false;
             break;
           case _DashboardCardFilter.scadenze:
             if (!item.hasExpiryAlert) return false;
@@ -732,6 +772,92 @@ class _DashboardPageState extends State<DashboardPage> {
       mode: LaunchMode.platformDefault,
       webOnlyWindowName: '_blank',
     );
+  }
+
+  Future<_PatientDashboardSummary> _ensureSummaryDetailsForKey(
+    _PatientDashboardSummary summary,
+    String key,
+  ) async {
+    final String cf = summary.patient.fiscalCode.trim().toUpperCase();
+    if (cf.isEmpty) {
+      return summary;
+    }
+
+    bool needsArchive = false;
+    bool needsDebts = false;
+    bool needsAdvances = false;
+    bool needsBookings = false;
+
+    switch (key) {
+      case 'ricette':
+      case 'dpc':
+        needsArchive = summary.recipeCount > 0 && summary.imports.isEmpty && summary.prescriptions.isEmpty;
+        break;
+      case 'debiti':
+        needsDebts = summary.hasDebt && summary.debts.isEmpty;
+        break;
+      case 'anticipi':
+        needsAdvances = summary.hasAdvance && summary.advances.isEmpty;
+        break;
+      case 'prenotazioni':
+        needsBookings = summary.hasBooking && summary.bookings.isEmpty;
+        break;
+      case 'quick-edit':
+        needsDebts = summary.hasDebt && summary.debts.isEmpty;
+        needsAdvances = summary.hasAdvance && summary.advances.isEmpty;
+        needsBookings = summary.hasBooking && summary.bookings.isEmpty;
+        break;
+    }
+
+    if (!needsArchive && !needsDebts && !needsAdvances && !needsBookings) {
+      return summary;
+    }
+
+    final List<Future<dynamic>> futures = <Future<dynamic>>[
+      if (needsArchive) _drivePdfImportsRepository.getImportsByPatient(cf, includeHidden: true),
+      if (needsArchive) _prescriptionsRepository.getLegacyPatientPrescriptions(cf),
+      if (needsDebts) _debtsRepository.getPatientDebts(cf),
+      if (needsAdvances) _advancesRepository.getPatientAdvances(cf),
+      if (needsBookings) _bookingsRepository.getPatientBookings(cf),
+    ];
+    final List<dynamic> results = await Future.wait<dynamic>(futures);
+
+    int cursor = 0;
+    List<DrivePdfImport>? imports;
+    List<Prescription>? prescriptions;
+    List<Debt>? debts;
+    List<Advance>? advances;
+    List<Booking>? bookings;
+
+    if (needsArchive) {
+      imports = (results[cursor++] as List<DrivePdfImport>)
+          .where((DrivePdfImport item) => !item.isHiddenFromFrontend)
+          .toList();
+      prescriptions = results[cursor++] as List<Prescription>;
+    }
+    if (needsDebts) {
+      debts = results[cursor++] as List<Debt>;
+    }
+    if (needsAdvances) {
+      advances = results[cursor++] as List<Advance>;
+    }
+    if (needsBookings) {
+      bookings = results[cursor++] as List<Booking>;
+    }
+
+    final _PatientDashboardSummary next = summary.copyWith(
+      imports: imports,
+      prescriptions: prescriptions,
+      debts: debts,
+      advances: advances,
+      bookings: bookings,
+      indexedDebtAmount: debts == null ? null : debts.fold<double>(0, (sum, item) => sum + item.residualAmount),
+      indexedDebtCount: debts?.length,
+      indexedAdvanceCount: advances?.length,
+      indexedBookingCount: bookings?.length,
+    );
+    _replaceCachedSummary(next);
+    return next;
   }
 
   Future<void> _openPdfList(_PatientDashboardSummary summary) async {
@@ -1737,14 +1863,15 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _handleFlagTap(_PatientDashboardSummary summary, String key) async {
+    final _PatientDashboardSummary detailSummary = await _ensureSummaryDetailsForKey(summary, key);
     if (key == 'ricette') {
-      await _openPdfList(summary);
+      await _openPdfList(detailSummary);
       return;
     }
     if (key == 'dpc') {
       await _openFlagModal(
         title: 'DPC · ${summary.displayName}',
-        items: summary.dpcItems.map((item) {
+        items: detailSummary.dpcItems.map((item) {
           return _FlagItem(
             title: item.title,
             subtitle: item.subtitle,
@@ -1790,12 +1917,12 @@ class _DashboardPageState extends State<DashboardPage> {
         },
       );
       if (selectedKey != null && mounted) {
-        await _openEditableFlagModal(summary: summary, key: selectedKey);
+        await _openEditableFlagModal(summary: detailSummary, key: selectedKey);
       }
       return;
     }
     if (key == 'debiti' || key == 'anticipi' || key == 'prenotazioni') {
-      await _openEditableFlagModal(summary: summary, key: key);
+      await _openEditableFlagModal(summary: detailSummary, key: key);
       return;
     }
   }
@@ -1994,6 +2121,16 @@ class _DashboardPageState extends State<DashboardPage> {
                 debtAmountDelta: debtValue,
                 advanceCountDelta: advanceText.isNotEmpty ? 1 : 0,
                 bookingCountDelta: bookingText.isNotEmpty ? 1 : 0,
+              );
+              await _patientDashboardIndexRepository.patchFrontendManagedState(
+                fiscalCode: patientDocumentId,
+                fullName: effectivePatientName,
+                alias: alias,
+                doctorFullName: selectedDoctor.trim(),
+                debtCount: debtValue == 0 ? 0 : 1,
+                debtAmount: debtValue,
+                advanceCount: advanceText.isNotEmpty ? 1 : 0,
+                bookingCount: bookingText.isNotEmpty ? 1 : 0,
               );
 
               if (dialogContext.mounted) {
@@ -2305,7 +2442,7 @@ class _DashboardPageState extends State<DashboardPage> {
         final _DashboardTotals totals = _dashboardTotals;
         final familyState = data == null
             ? _DashboardFamilyState.empty()
-            : _DashboardFamilyState.fromFamilies(data.summaries, data.families);
+            : _DashboardFamilyState.fromSummaries(data.summaries);
         return Scaffold(
           backgroundColor: AppColors.background,
           body: Padding(
@@ -2684,7 +2821,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final widgets = <Widget>[
       _QuickEditFlag(onTap: () => _handleFlagTap(item, 'quick-edit')),
     ];
-    if (item.recipeCount > 0 && item.imports.isNotEmpty) {
+    if (item.recipeCount > 0) {
       widgets.add(
         Container(
           padding: const EdgeInsets.only(right: 4),
@@ -2708,17 +2845,18 @@ class _DashboardPageState extends State<DashboardPage> {
         ),
       );
     }
-    if (item.dpcItems.isNotEmpty) {
-      widgets.add(_FlagChip(label: 'DPC ${item.dpcItems.length}', color: AppColors.coral, onTap: () => _handleFlagTap(item, 'dpc')));
+    if (item.hasDpc) {
+      final int dpcCount = item.dpcItems.isNotEmpty ? item.dpcItems.length : math.max(1, item.recipeCount);
+      widgets.add(_FlagChip(label: 'DPC $dpcCount', color: AppColors.coral, onTap: () => _handleFlagTap(item, 'dpc')));
     }
-    if (item.totalDebt.abs() > 0.005) {
+    if (item.hasDebt) {
       widgets.add(_FlagChip(label: 'debiti € ${item.totalDebt.toStringAsFixed(2)}', color: AppColors.wine, onTap: () => _handleFlagTap(item, 'debiti')));
     }
-    if (item.advances.isNotEmpty) {
-      widgets.add(_FlagChip(label: 'anticipi ${item.advances.length}', color: AppColors.amber, onTap: () => _handleFlagTap(item, 'anticipi')));
+    if (item.hasAdvance) {
+      widgets.add(_FlagChip(label: 'anticipi ${item.advanceCount}', color: AppColors.amber, onTap: () => _handleFlagTap(item, 'anticipi')));
     }
-    if (item.bookings.isNotEmpty) {
-      widgets.add(_FlagChip(label: 'prenotazioni ${item.bookings.length}', color: AppColors.yellow, onTap: () => _handleFlagTap(item, 'prenotazioni')));
+    if (item.hasBooking) {
+      widgets.add(_FlagChip(label: 'prenotazioni ${item.bookingCount}', color: AppColors.yellow, onTap: () => _handleFlagTap(item, 'prenotazioni')));
     }
     return widgets;
   }
@@ -3009,6 +3147,11 @@ class _PatientDashboardSummary {
   final bool hasExpiryAlert;
   final String familyId;
   final String familyName;
+  final int familyColorIndex;
+  final double indexedDebtAmount;
+  final int indexedDebtCount;
+  final int indexedAdvanceCount;
+  final int indexedBookingCount;
 
   const _PatientDashboardSummary({
     required this.patient,
@@ -3025,6 +3168,11 @@ class _PatientDashboardSummary {
     required this.hasExpiryAlert,
     required this.familyId,
     required this.familyName,
+    this.familyColorIndex = 0,
+    this.indexedDebtAmount = 0,
+    this.indexedDebtCount = 0,
+    this.indexedAdvanceCount = 0,
+    this.indexedBookingCount = 0,
   });
 
   _PatientDashboardSummary copyWith({
@@ -3042,6 +3190,11 @@ class _PatientDashboardSummary {
     bool? hasExpiryAlert,
     String? familyId,
     String? familyName,
+    int? familyColorIndex,
+    double? indexedDebtAmount,
+    int? indexedDebtCount,
+    int? indexedAdvanceCount,
+    int? indexedBookingCount,
   }) {
     return _PatientDashboardSummary(
       patient: patient ?? this.patient,
@@ -3058,13 +3211,24 @@ class _PatientDashboardSummary {
       hasExpiryAlert: hasExpiryAlert ?? this.hasExpiryAlert,
       familyId: familyId ?? this.familyId,
       familyName: familyName ?? this.familyName,
+      familyColorIndex: familyColorIndex ?? this.familyColorIndex,
+      indexedDebtAmount: indexedDebtAmount ?? this.indexedDebtAmount,
+      indexedDebtCount: indexedDebtCount ?? this.indexedDebtCount,
+      indexedAdvanceCount: indexedAdvanceCount ?? this.indexedAdvanceCount,
+      indexedBookingCount: indexedBookingCount ?? this.indexedBookingCount,
     );
   }
 
   String get displayName => patient.fullName.trim().isEmpty ? patient.fiscalCode : patient.fullName.trim();
   String get patientAlias => (patient.alias ?? '').trim();
 
-  double get totalDebt => debts.fold<double>(0, (sum, item) => sum + item.residualAmount);
+  double get totalDebt => debts.isNotEmpty ? debts.fold<double>(0, (sum, item) => sum + item.residualAmount) : indexedDebtAmount;
+  int get debtCount => debts.isNotEmpty ? debts.length : indexedDebtCount;
+  int get advanceCount => advances.isNotEmpty ? advances.length : indexedAdvanceCount;
+  int get bookingCount => bookings.isNotEmpty ? bookings.length : indexedBookingCount;
+  bool get hasDebt => totalDebt.abs() > 0.005 || debtCount > 0;
+  bool get hasAdvance => advanceCount > 0;
+  bool get hasBooking => bookingCount > 0;
 
   String get doctorNameUpper => doctorName.trim().isEmpty ? '-' : doctorName.trim().toUpperCase();
   String get doctorSurnameUpper {
@@ -3074,7 +3238,7 @@ class _PatientDashboardSummary {
     return (parts.isEmpty ? cleaned : parts.first).toUpperCase();
   }
 
-  bool get hasActiveContent => recipeCount > 0 || hasDpc || debts.isNotEmpty || advances.isNotEmpty || bookings.isNotEmpty;
+  bool get hasActiveContent => recipeCount > 0 || hasDpc || hasDebt || hasAdvance || hasBooking;
   String get flagSearchIndex {
     final Iterable<String> tokens = <String>[
       ...prescriptions.expand((Prescription item) sync* {
@@ -3120,6 +3284,31 @@ class _PatientDashboardSummary {
       );
     });
     return [...fromPrescriptions, ...fromImports];
+  }
+
+
+  factory _PatientDashboardSummary.fromIndex(PatientDashboardIndex item) {
+    return _PatientDashboardSummary(
+      patient: item.toPatient(),
+      doctorName: item.doctorFullName.trim().isEmpty ? '-' : item.doctorFullName.trim(),
+      exemptionCode: item.exemptionCode.trim().isEmpty ? '-' : item.exemptionCode.trim(),
+      city: item.city.trim().isEmpty ? '-' : item.city.trim(),
+      prescriptions: const <Prescription>[],
+      imports: const <DrivePdfImport>[],
+      debts: const <Debt>[],
+      advances: const <Advance>[],
+      bookings: const <Booking>[],
+      hasDpc: item.hasDpc,
+      recipeCount: item.recipeCount,
+      hasExpiryAlert: item.hasExpiry,
+      familyId: item.familyId,
+      familyName: item.familyName,
+      familyColorIndex: item.familyColorIndex,
+      indexedDebtAmount: item.debtAmount,
+      indexedDebtCount: item.debtCount,
+      indexedAdvanceCount: item.advanceCount,
+      indexedBookingCount: item.bookingCount,
+    );
   }
 
   static _PatientDashboardSummary build({
@@ -3227,6 +3416,11 @@ class _PatientDashboardSummary {
       hasExpiryAlert: hasExpiryAlert,
       familyId: familyId,
       familyName: familyName,
+      familyColorIndex: 0,
+      indexedDebtAmount: debts.fold<double>(0, (sum, item) => sum + item.residualAmount),
+      indexedDebtCount: debts.length,
+      indexedAdvanceCount: advances.length,
+      indexedBookingCount: bookings.length,
     );
   }
 }
@@ -3262,13 +3456,15 @@ class _DashboardFamilyState {
 
   factory _DashboardFamilyState.empty() => const _DashboardFamilyState(activeCounts: <String, int>{}, colors: <String, Color>{});
 
-  factory _DashboardFamilyState.fromFamilies(List<_PatientDashboardSummary> summaries, List<FamilyGroup> families) {
+  factory _DashboardFamilyState.fromSummaries(List<_PatientDashboardSummary> summaries) {
     final counts = <String, int>{};
     final colors = <String, Color>{};
-    for (final family in families) {
-      final activeCount = summaries.where((item) => item.familyId == family.id && item.hasActiveContent).length;
-      counts[family.id] = activeCount;
-      colors[family.id] = FamilyGroupColorUtils.colorForIndex(family.colorIndex);
+    for (final item in summaries) {
+      if (item.familyId.isEmpty) continue;
+      if (item.hasActiveContent) {
+        counts[item.familyId] = (counts[item.familyId] ?? 0) + 1;
+      }
+      colors[item.familyId] = FamilyGroupColorUtils.colorForIndex(item.familyColorIndex);
     }
     return _DashboardFamilyState(activeCounts: counts, colors: colors);
   }
