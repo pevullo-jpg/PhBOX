@@ -24,6 +24,7 @@ import '../../../data/models/therapeutic_advice_note.dart';
 import '../../../data/repositories/advances_repository.dart';
 import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
+import '../../../data/repositories/dashboard_totals_repository.dart';
 import '../../../data/repositories/doctor_patient_links_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/family_groups_repository.dart';
@@ -31,7 +32,6 @@ import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../data/repositories/therapeutic_advice_repository.dart';
-import '../../../shared/mixins/page_auto_refresh_mixin.dart';
 import '../../../shared/navigation/app_navigation.dart';
 import '../../../shared/widgets/floating_page_menu.dart';
 import '../../../theme/app_theme.dart';
@@ -45,7 +45,7 @@ class PatientDetailPage extends StatefulWidget {
   State<PatientDetailPage> createState() => _PatientDetailPageState();
 }
 
-class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefreshMixin<PatientDetailPage> {
+class _PatientDetailPageState extends State<PatientDetailPage> {
   late final PatientsRepository _patientsRepository;
   late final AdvancesRepository _advancesRepository;
   late final DebtsRepository _debtsRepository;
@@ -56,6 +56,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
   late final SettingsRepository _settingsRepository;
   late final DoctorPatientLinksRepository _doctorPatientLinksRepository;
   late final TherapeuticAdviceRepository _therapeuticAdviceRepository;
+  late final DashboardTotalsRepository _dashboardTotalsRepository;
 
   Future<_PatientDetailData>? _future;
   String _message = '';
@@ -75,9 +76,9 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     _settingsRepository = SettingsRepository(datasource: datasource);
     _doctorPatientLinksRepository = DoctorPatientLinksRepository(datasource: datasource);
     _therapeuticAdviceRepository = TherapeuticAdviceRepository(datasource: datasource);
+    _dashboardTotalsRepository = DashboardTotalsRepository(datasource: datasource);
     _currentFiscalCode = PatientInputNormalizer.normalizeFiscalCode(widget.fiscalCode);
     _future = _load();
-    startPageAutoRefresh();
   }
 
   @override
@@ -93,11 +94,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     }
   }
 
-
-  @override
-  void onAutoRefreshTick() {
-    _refresh();
-  }
 
   Future<void> _copyToClipboard(String value, {String message = 'CF copiato negli appunti.'}) async {
     final String normalized = value.trim();
@@ -121,13 +117,15 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     final advances = await _advancesRepository.getPatientAdvances(_currentFiscalCode);
     final debts = await _debtsRepository.getPatientDebts(_currentFiscalCode);
     final bookings = await _bookingsRepository.getPatientBookings(_currentFiscalCode);
-    final prescriptions = await _prescriptionsRepository.getPatientPrescriptions(_currentFiscalCode);
     final allImports = await _drivePdfImportsRepository.getImportsByPatient(
       _currentFiscalCode,
       includeHidden: true,
     );
     final imports = allImports.where((DrivePdfImport item) => !item.isHiddenFromFrontend).toList();
-    final doctorLinks = await _doctorPatientLinksRepository.getAllLinks();
+    final prescriptions = allImports.isNotEmpty
+        ? imports.map(_prescriptionsRepository.importToPrescription).toList()
+        : await _prescriptionsRepository.getLegacyPatientPrescriptions(_currentFiscalCode);
+    final doctorLinks = await _doctorPatientLinksRepository.getLinksForPatient(_currentFiscalCode);
     final settings = await _settingsRepository.getSettings();
     final therapeuticAdvice = await _therapeuticAdviceRepository.getByFiscalCode(_currentFiscalCode);
     final familyContext = await _loadFamilyContext(patient);
@@ -157,28 +155,29 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     if (patient == null) {
       return null;
     }
-    final List<FamilyGroup> families = await _familyGroupsRepository.getAllFamilies();
     final String normalizedCurrentCode =
         PatientInputNormalizer.normalizeFiscalCode(patient.fiscalCode);
-    FamilyGroup? currentFamily;
-    for (final FamilyGroup family in families) {
-      final bool containsPatient = family.memberFiscalCodes.any(
-        (String item) =>
-            PatientInputNormalizer.normalizeFiscalCode(item) ==
-            normalizedCurrentCode,
-      );
-      if (containsPatient) {
-        currentFamily = family;
-        break;
-      }
-    }
+    final FamilyGroup? currentFamily =
+        await _familyGroupsRepository.findFamilyByMemberFiscalCode(normalizedCurrentCode);
     if (currentFamily == null) {
       return null;
     }
 
+    return _buildFamilyContextFromFamily(
+      family: currentFamily,
+      currentPatient: patient,
+    );
+  }
+
+  Future<_PatientFamilyContext> _buildFamilyContextFromFamily({
+    required FamilyGroup family,
+    required Patient currentPatient,
+  }) async {
+    final String normalizedCurrentCode =
+        PatientInputNormalizer.normalizeFiscalCode(currentPatient.fiscalCode);
     final List<String> orderedCodes = <String>[];
     final Set<String> seenCodes = <String>{};
-    for (final String rawCode in currentFamily.memberFiscalCodes) {
+    for (final String rawCode in family.memberFiscalCodes) {
       final String normalized =
           PatientInputNormalizer.normalizeFiscalCode(rawCode);
       if (normalized.isEmpty || !seenCodes.add(normalized)) {
@@ -187,15 +186,14 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
       orderedCodes.add(normalized);
     }
 
-    final bool needsOtherPatients =
-        orderedCodes.any((String code) => code != normalizedCurrentCode);
     final Map<String, Patient> patientsByCode = <String, Patient>{};
-    if (needsOtherPatients) {
-      final List<Patient> allPatients = await _patientsRepository.getAllPatients();
-      for (final Patient item in allPatients) {
-        patientsByCode[
-          PatientInputNormalizer.normalizeFiscalCode(item.fiscalCode)
-        ] = item;
+    for (final String code in orderedCodes) {
+      if (code == normalizedCurrentCode) {
+        continue;
+      }
+      final Patient? member = await _patientsRepository.getPatientByFiscalCode(code);
+      if (member != null) {
+        patientsByCode[PatientInputNormalizer.normalizeFiscalCode(member.fiscalCode)] = member;
       }
     }
 
@@ -203,7 +201,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
         .map((String fiscalCode) {
           final bool isCurrentPatient = fiscalCode == normalizedCurrentCode;
           final Patient? resolvedPatient = isCurrentPatient
-              ? patient
+              ? currentPatient
               : patientsByCode[fiscalCode];
           return _PatientFamilyMember(
             fiscalCode: fiscalCode,
@@ -214,18 +212,78 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
         .toList();
 
     return _PatientFamilyContext(
-      family: currentFamily,
+      family: family,
       members: members,
     );
   }
 
-  void _refresh([String? message]) {
+  void _replaceData(_PatientDetailData data, String message) {
     setState(() {
-      if (message != null) {
-        _message = message;
-      }
-      _future = _load();
+      _message = message;
+      _future = Future<_PatientDetailData>.value(data);
     });
+  }
+
+  Patient _copyPatientProfile(
+    Patient patient, {
+    required String fiscalCode,
+    required String fullName,
+    String? alias,
+  }) {
+    return Patient(
+      fiscalCode: fiscalCode,
+      fullName: fullName,
+      alias: alias,
+      city: patient.city,
+      exemptionCode: patient.exemptionCode,
+      exemptions: patient.exemptions,
+      doctorName: patient.doctorName,
+      therapiesSummary: patient.therapiesSummary,
+      lastPrescriptionDate: patient.lastPrescriptionDate,
+      hasDebt: patient.hasDebt,
+      debtTotal: patient.debtTotal,
+      hasBooking: patient.hasBooking,
+      hasAdvance: patient.hasAdvance,
+      hasDpc: patient.hasDpc,
+      archivedRecipeCount: patient.archivedRecipeCount,
+      archivedPdfCount: patient.archivedPdfCount,
+      activeArchiveDocuments: patient.activeArchiveDocuments,
+      createdAt: patient.createdAt,
+      updatedAt: DateTime.now(),
+      hasArchivedRecipeCountAggregate: patient.hasArchivedRecipeCountAggregate,
+      hasHasDpcAggregate: patient.hasHasDpcAggregate,
+      hasLastPrescriptionDateAggregate: patient.hasLastPrescriptionDateAggregate,
+      hasTherapiesSummaryAggregate: patient.hasTherapiesSummaryAggregate,
+    );
+  }
+
+  String? _nullableTrimmed(String value) {
+    final String normalized = value.trim();
+    return normalized.isEmpty ? null : normalized;
+  }
+
+  Future<void> _applyFrontendManagedTotalsDelta({
+    double debtAmountDelta = 0,
+    int advanceCountDelta = 0,
+    int bookingCountDelta = 0,
+  }) async {
+    if (debtAmountDelta == 0 && advanceCountDelta == 0 && bookingCountDelta == 0) {
+      return;
+    }
+    try {
+      await _dashboardTotalsRepository.applyFrontendManagedDelta(
+        debtAmountDelta: debtAmountDelta,
+        advanceCountDelta: advanceCountDelta,
+        bookingCountDelta: bookingCountDelta,
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _message = 'Dati salvati. Totali rapidi non riallineati: ' + e.toString();
+      });
+    }
   }
 
   String _resolveDoctor({
@@ -292,15 +350,28 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     }
     try {
       final String textValue = controller.text.trim();
+      final DateTime now = DateTime.now();
       if (textValue.isEmpty) {
         await _therapeuticAdviceRepository.clear(patient.fiscalCode);
-        _refresh('Consigli terapeutici rimossi.');
+        _replaceData(
+          data.copyWith(therapeuticAdvice: null),
+          'Consigli terapeutici rimossi.',
+        );
       } else {
         await _therapeuticAdviceRepository.save(
           fiscalCode: patient.fiscalCode,
           text: textValue,
         );
-        _refresh('Consigli terapeutici salvati.');
+        final TherapeuticAdviceNote nextNote = TherapeuticAdviceNote(
+          patientFiscalCode: patient.fiscalCode,
+          text: textValue,
+          createdAt: data.therapeuticAdvice?.createdAt ?? now,
+          updatedAt: now,
+        );
+        _replaceData(
+          data.copyWith(therapeuticAdvice: nextNote),
+          'Consigli terapeutici salvati.',
+        );
       }
     } catch (e) {
       setState(() => _message = 'Errore salvataggio consigli terapeutici: $e');
@@ -336,7 +407,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     if (confirmed != true) return;
     try {
       await _therapeuticAdviceRepository.clear(patient.fiscalCode);
-      _refresh('Consigli terapeutici rimossi.');
+      _replaceData(
+        data.copyWith(therapeuticAdvice: null),
+        'Consigli terapeutici rimossi.',
+      );
     } catch (e) {
       setState(() => _message = 'Errore eliminazione consigli terapeutici: $e');
     }
@@ -402,7 +476,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
               ),
             if (matchingImport != null)
               IconButton(
-                onPressed: () => _requestPrescriptionDelete(matchingImport),
+                onPressed: () => _requestPrescriptionDelete(data, matchingImport),
                 icon: const Icon(Icons.delete_outline, color: AppColors.red),
               ),
           ],
@@ -424,7 +498,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
       action: FilledButton.icon(
         onPressed: () {
           Navigator.of(context).pop();
-          _addDebt(patient);
+          _addDebt(data);
         },
         icon: const Icon(Icons.add),
         label: const Text('Aggiungi'),
@@ -435,7 +509,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
           subtitle: 'Creazione ${_formatDate(debt.createdAt)} · Scadenza ${_formatDate(debt.dueDate)}',
           actions: [
             IconButton(
-              onPressed: () => _deleteDebt(patient, debt),
+              onPressed: () => _deleteDebt(data, debt),
               icon: const Icon(Icons.delete_outline, color: AppColors.red),
             ),
           ],
@@ -464,7 +538,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
           subtitle: '${advance.doctorName.isEmpty ? '-' : advance.doctorName} · ${_formatDate(advance.createdAt)}',
           actions: [
             IconButton(
-              onPressed: () => _deleteAdvance(patient, advance),
+              onPressed: () => _deleteAdvance(data, advance),
               icon: const Icon(Icons.delete_outline, color: AppColors.red),
             ),
           ],
@@ -482,7 +556,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
       action: FilledButton.icon(
         onPressed: () {
           Navigator.of(context).pop();
-          _addBooking(patient);
+          _addBooking(data);
         },
         icon: const Icon(Icons.add),
         label: const Text('Aggiungi'),
@@ -493,7 +567,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
           subtitle: 'Registrata ${_formatDate(booking.createdAt)} · Prevista ${_formatDate(booking.expectedDate)}',
           actions: [
             IconButton(
-              onPressed: () => _deleteBooking(patient, booking),
+              onPressed: () => _deleteBooking(data, booking),
               icon: const Icon(Icons.delete_outline, color: AppColors.red),
             ),
           ],
@@ -503,10 +577,11 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     );
   }
 
-  Future<void> _addDebt(Patient patient) async {
+  Future<void> _addDebt(_PatientDetailData data) async {
+    final patient = data.patient;
+    if (patient == null) return;
     final descriptionController = TextEditingController();
     final amountController = TextEditingController();
-    final partialPaidController = TextEditingController();
     final noteController = TextEditingController();
     try {
       await showDialog<void>(
@@ -518,7 +593,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
           Future<void> submit(StateSetter setLocalState) async {
             final String description = descriptionController.text.trim();
             final double amount = _parseEuro(amountController.text);
-            final double initialPaidAmount = _parseEuro(partialPaidController.text);
             if (description.isEmpty || amount == 0) {
               setLocalState(() => localError = 'Causale e importo sono obbligatori.');
               return;
@@ -529,24 +603,27 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
             });
             try {
               final DateTime now = DateTime.now();
-              await _debtsRepository.saveDebt(
-                Debt.createNew(
-                  id: _localId('debt'),
-                  patientFiscalCode: patient.fiscalCode,
-                  patientName: patient.fullName,
-                  description: description,
-                  amount: amount,
-                  initialPaidAmountRaw: initialPaidAmount,
-                  createdAt: now,
-                  dueDate: now,
-                  note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
-                ),
+              final Debt debt = Debt.createNew(
+                id: _localId('debt'),
+                patientFiscalCode: patient.fiscalCode,
+                patientName: patient.fullName,
+                description: description,
+                amount: amount,
+                initialPaidAmountRaw: 0,
+                createdAt: now,
+                dueDate: now,
+                note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
               );
+              await _debtsRepository.saveDebt(debt);
               if (dialogContext.mounted) {
                 Navigator.of(dialogContext).pop();
               }
               if (mounted) {
-                _refresh('Debito aggiunto.');
+                await _applyFrontendManagedTotalsDelta(debtAmountDelta: debt.residualAmount);
+                _replaceData(
+                  data.copyWith(debts: <Debt>[debt, ...data.debts]),
+                  'Debito aggiunto.',
+                );
               }
             } catch (e) {
               if (dialogContext.mounted) {
@@ -572,13 +649,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                     _dialogField(
                       amountController,
                       'Importo debito (€)',
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[-0-9,\.]'))],
-                    ),
-                    const SizedBox(height: 12),
-                    _dialogField(
-                      partialPaidController,
-                      'Saldo parziale (€)',
                       keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
                       inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[-0-9,\.]'))],
                     ),
@@ -622,7 +692,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     } finally {
       descriptionController.dispose();
       amountController.dispose();
-      partialPaidController.dispose();
       noteController.dispose();
     }
   }
@@ -658,18 +727,17 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
             });
             try {
               final DateTime now = DateTime.now();
-              await _advancesRepository.saveAdvance(
-                Advance(
-                  id: _localId('advance'),
-                  patientFiscalCode: patient.fiscalCode,
-                  patientName: patient.fullName,
-                  drugName: drugName,
-                  doctorName: doctor,
-                  note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
-                  createdAt: now,
-                  updatedAt: now,
-                ),
+              final Advance advance = Advance(
+                id: _localId('advance'),
+                patientFiscalCode: patient.fiscalCode,
+                patientName: patient.fullName,
+                drugName: drugName,
+                doctorName: doctor,
+                note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
+                createdAt: now,
+                updatedAt: now,
               );
+              await _advancesRepository.saveAdvance(advance);
               await _doctorPatientLinksRepository.saveManualOverride(
                 patientFiscalCode: patient.fiscalCode,
                 patientFullName: patient.fullName,
@@ -680,7 +748,14 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                 Navigator.of(dialogContext).pop();
               }
               if (mounted) {
-                _refresh('Anticipo aggiunto.');
+                await _applyFrontendManagedTotalsDelta(advanceCountDelta: 1);
+                _replaceData(
+                  data.copyWith(
+                    advances: <Advance>[advance, ...data.advances],
+                    resolvedDoctorName: doctor,
+                  ),
+                  'Anticipo aggiunto.',
+                );
               }
             } catch (e) {
               if (dialogContext.mounted) {
@@ -789,7 +864,9 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     return '-';
   }
 
-  Future<void> _addBooking(Patient patient) async {
+  Future<void> _addBooking(_PatientDetailData data) async {
+    final patient = data.patient;
+    if (patient == null) return;
     final drugController = TextEditingController();
     final quantityController = TextEditingController(text: '1');
     final noteController = TextEditingController();
@@ -829,19 +906,23 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     );
     if (confirmed != true) return;
     try {
-      await _bookingsRepository.saveBooking(
-        Booking(
-          id: _localId('booking'),
-          patientFiscalCode: patient.fiscalCode,
-          patientName: patient.fullName,
-          drugName: drugController.text.trim(),
-          quantity: int.tryParse(quantityController.text.trim()) ?? 1,
-          createdAt: DateTime.now(),
-          expectedDate: DateTime.now(),
-          note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
-        ),
+      final DateTime now = DateTime.now();
+      final Booking booking = Booking(
+        id: _localId('booking'),
+        patientFiscalCode: patient.fiscalCode,
+        patientName: patient.fullName,
+        drugName: drugController.text.trim(),
+        quantity: int.tryParse(quantityController.text.trim()) ?? 1,
+        createdAt: now,
+        expectedDate: now,
+        note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
       );
-      _refresh('Prenotazione aggiunta.');
+      await _bookingsRepository.saveBooking(booking);
+      await _applyFrontendManagedTotalsDelta(bookingCountDelta: 1);
+      _replaceData(
+        data.copyWith(bookings: <Booking>[booking, ...data.bookings]),
+        'Prenotazione aggiunta.',
+      );
     } catch (e) {
       setState(() => _message = 'Errore salvataggio prenotazione: $e');
     } finally {
@@ -851,28 +932,66 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
     }
   }
 
-  Future<void> _deleteDebt(Patient patient, Debt debt) async {
+  Future<void> _deleteDebt(_PatientDetailData data, Debt debt) async {
+    final Patient? patient = data.patient;
+    if (patient == null) return;
     if (!await _confirmDelete(message: 'Eliminare questo debito?')) return;
     await _debtsRepository.deleteDebt(patient.fiscalCode, debt.id);
-    _refresh('Debito eliminato.');
+    await _applyFrontendManagedTotalsDelta(debtAmountDelta: -debt.residualAmount);
+    _replaceData(
+      data.copyWith(debts: data.debts.where((Debt item) => item.id != debt.id).toList()),
+      'Debito eliminato.',
+    );
   }
 
-  Future<void> _deleteAdvance(Patient patient, Advance advance) async {
+  Future<void> _deleteAdvance(_PatientDetailData data, Advance advance) async {
+    final Patient? patient = data.patient;
+    if (patient == null) return;
     if (!await _confirmDelete(message: 'Eliminare questo anticipo?')) return;
     await _advancesRepository.deleteAdvance(patient.fiscalCode, advance.id);
-    _refresh('Anticipo eliminato.');
+    await _applyFrontendManagedTotalsDelta(advanceCountDelta: -1);
+    _replaceData(
+      data.copyWith(advances: data.advances.where((Advance item) => item.id != advance.id).toList()),
+      'Anticipo eliminato.',
+    );
   }
 
-  Future<void> _deleteBooking(Patient patient, Booking booking) async {
+  Future<void> _deleteBooking(_PatientDetailData data, Booking booking) async {
+    final Patient? patient = data.patient;
+    if (patient == null) return;
     if (!await _confirmDelete(message: 'Eliminare questa prenotazione?')) return;
     await _bookingsRepository.deleteBooking(patient.fiscalCode, booking.id);
-    _refresh('Prenotazione eliminata.');
+    await _applyFrontendManagedTotalsDelta(bookingCountDelta: -1);
+    _replaceData(
+      data.copyWith(bookings: data.bookings.where((Booking item) => item.id != booking.id).toList()),
+      'Prenotazione eliminata.',
+    );
   }
 
-  Future<void> _requestPrescriptionDelete(DrivePdfImport item) async {
+  Future<void> _requestPrescriptionDelete(_PatientDetailData data, DrivePdfImport item) async {
     if (!await _confirmDelete(message: 'Eliminare questa ricetta?')) return;
     await _drivePdfImportsRepository.requestPdfDelete(item.id);
-    _refresh('Richiesta delete PDF registrata.');
+    final DrivePdfImport hiddenItem = item.copyWith(
+      deletePdfRequested: true,
+      deleteRequestedAt: DateTime.now(),
+    );
+    final List<DrivePdfImport> nextAllImports = data.allImports
+        .map((DrivePdfImport current) => current.id == item.id ? hiddenItem : current)
+        .toList();
+    final List<DrivePdfImport> nextVisibleImports = data.imports
+        .where((DrivePdfImport current) => current.id != item.id)
+        .toList();
+    final List<Prescription> nextPrescriptions = data.prescriptions
+        .where((Prescription current) => current.id != item.id)
+        .toList();
+    _replaceData(
+      data.copyWith(
+        imports: nextVisibleImports,
+        allImports: nextAllImports,
+        prescriptions: nextPrescriptions,
+      ),
+      'Richiesta delete PDF registrata.',
+    );
   }
 
   Future<bool> _confirmDelete({
@@ -952,13 +1071,24 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
               if (!mounted) {
                 return;
               }
-              setState(() {
-                _currentFiscalCode = result.effectiveDocumentId;
-                _message = result.migratedFromTemporaryKey
-                    ? 'Assistito completato e migrato su codice fiscale reale.'
-                    : 'Assistito aggiornato.';
-                _future = _load();
-              });
+              _currentFiscalCode = result.effectiveDocumentId;
+              if (result.migratedFromTemporaryKey) {
+                setState(() {
+                  _message = 'Assistito completato e migrato su codice fiscale reale.';
+                  _future = _load();
+                });
+              } else {
+                final Patient updatedPatient = _copyPatientProfile(
+                  patient,
+                  fiscalCode: result.fiscalCode,
+                  fullName: result.fullName,
+                  alias: _nullableTrimmed(aliasController.text),
+                );
+                _replaceData(
+                  data.copyWith(patient: updatedPatient),
+                  'Assistito aggiornato.',
+                );
+              }
             } on PatientProfileUpdateException catch (e) {
               if (dialogContext.mounted) {
                 setLocalState(() {
@@ -1040,7 +1170,11 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
 
   Future<void> _editCurrentPatientFromMenu() async {
     try {
-      final _PatientDetailData data = await _load();
+      final Future<_PatientDetailData>? currentFuture = _future;
+      if (currentFuture == null) {
+        return;
+      }
+      final _PatientDetailData data = await currentFuture;
       if (!mounted || data.patient == null) {
         return;
       }
@@ -1374,7 +1508,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
               localError = '';
             });
             try {
-              await _familyGroupsRepository.createFamily(
+              final FamilyGroup family = await _familyGroupsRepository.createFamily(
                 name: nameController.text,
                 memberFiscalCodes: <String>[currentCode, ...selectedCodes],
               );
@@ -1384,7 +1518,15 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
               if (!mounted) {
                 return;
               }
-              _refresh("Famiglia creata e collegata all'assistito.");
+              final _PatientFamilyContext familyContext =
+                  await _buildFamilyContextFromFamily(
+                family: family,
+                currentPatient: currentPatient,
+              );
+              _replaceData(
+                data.copyWith(familyContext: familyContext),
+                "Famiglia creata e collegata all'assistito.",
+              );
             } on FamilyMutationException catch (e) {
               if (dialogContext.mounted) {
                 setLocalState(() {
@@ -1641,7 +1783,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
               localError = '';
             });
             try {
-              await _familyGroupsRepository.addMembersToFamily(
+              final FamilyGroup family = await _familyGroupsRepository.addMembersToFamily(
                 familyId: selectedFamilyId!,
                 memberFiscalCodes: <String>[currentCode],
               );
@@ -1651,7 +1793,15 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
               if (!mounted) {
                 return;
               }
-              _refresh('Assistito aggiunto al nucleo familiare.');
+              final _PatientFamilyContext familyContext =
+                  await _buildFamilyContextFromFamily(
+                family: family,
+                currentPatient: currentPatient,
+              );
+              _replaceData(
+                data.copyWith(familyContext: familyContext),
+                'Assistito aggiunto al nucleo familiare.',
+              );
             } on FamilyMutationException catch (e) {
               if (dialogContext.mounted) {
                 setLocalState(() {
@@ -1861,6 +2011,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
   }
 
   Future<void> _openAddFamilyMembersDialog({
+    required _PatientDetailData data,
     required _PatientFamilyContext familyContext,
   }) async {
     final List<Patient> allPatients = await _patientsRepository.getAllPatients();
@@ -1890,17 +2041,25 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
               localError = '';
             });
             try {
-              await _familyGroupsRepository.addMembersToFamily(
+              final FamilyGroup family = await _familyGroupsRepository.addMembersToFamily(
                 familyId: familyContext.family.id,
                 memberFiscalCodes: selectedCodes,
               );
               if (dialogContext.mounted) {
                 Navigator.of(dialogContext).pop();
               }
-              if (!mounted) {
+              if (!mounted || data.patient == null) {
                 return;
               }
-              _refresh('Membri famiglia aggiornati.');
+              final _PatientFamilyContext nextFamilyContext =
+                  await _buildFamilyContextFromFamily(
+                family: family,
+                currentPatient: data.patient!,
+              );
+              _replaceData(
+                data.copyWith(familyContext: nextFamilyContext),
+                'Membri famiglia aggiornati.',
+              );
             } on FamilyMutationException catch (e) {
               if (dialogContext.mounted) {
                 setLocalState(() {
@@ -2108,6 +2267,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
   }
 
   Future<void> _removeFamilyMember({
+    required _PatientDetailData data,
     required _PatientFamilyContext familyContext,
     required _PatientFamilyMember member,
   }) async {
@@ -2135,12 +2295,21 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
       if (!mounted) {
         return;
       }
-      _refresh(
-        result.deletedFamily
-            ? 'Famiglia eliminata: nessun membro residuo.'
-            : member.isCurrentPatient
-                ? 'Assistito rimosso dal nucleo familiare.'
-                : 'Membro rimosso dal nucleo familiare.',
+      final String message = result.deletedFamily
+          ? 'Famiglia eliminata: nessun membro residuo.'
+          : member.isCurrentPatient
+              ? 'Assistito rimosso dal nucleo familiare.'
+              : 'Membro rimosso dal nucleo familiare.';
+      _PatientFamilyContext? nextFamilyContext;
+      if (!result.deletedFamily && !member.isCurrentPatient && result.family != null && data.patient != null) {
+        nextFamilyContext = await _buildFamilyContextFromFamily(
+          family: result.family!,
+          currentPatient: data.patient!,
+        );
+      }
+      _replaceData(
+        data.copyWith(familyContext: nextFamilyContext),
+        message,
       );
     } on FamilyMutationException catch (e) {
       _showTransientError(e.message);
@@ -2192,10 +2361,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
         builder: (_) => PatientDetailPage(fiscalCode: fiscalCode),
       ),
     );
-    if (!mounted) {
-      return;
-    }
-    _refresh();
   }
 
 
@@ -2284,6 +2449,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                 icon: Icons.person_add_alt_1_rounded,
                 label: 'Aggiungi membro',
                 onPressed: () => _openAddFamilyMembersDialog(
+                  data: data,
                   familyContext: familyContext,
                 ),
               ),
@@ -2374,6 +2540,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> with PageAutoRefr
                       : 'Rimuovi membro dal nucleo',
                   child: IconButton(
                     onPressed: () => _removeFamilyMember(
+                      data: data,
                       familyContext: familyContext,
                       member: member,
                     ),
@@ -2693,6 +2860,40 @@ class _PatientDetailData {
     required this.therapeuticAdvice,
     required this.familyContext,
   });
+
+  static const Object _unset = Object();
+
+  _PatientDetailData copyWith({
+    Object? patient = _unset,
+    List<Advance>? advances,
+    List<Debt>? debts,
+    List<Booking>? bookings,
+    List<Prescription>? prescriptions,
+    List<DrivePdfImport>? imports,
+    List<DrivePdfImport>? allImports,
+    AppSettings? settings,
+    String? resolvedDoctorName,
+    Object? therapeuticAdvice = _unset,
+    Object? familyContext = _unset,
+  }) {
+    return _PatientDetailData(
+      patient: identical(patient, _unset) ? this.patient : patient as Patient?,
+      advances: advances ?? this.advances,
+      debts: debts ?? this.debts,
+      bookings: bookings ?? this.bookings,
+      prescriptions: prescriptions ?? this.prescriptions,
+      imports: imports ?? this.imports,
+      allImports: allImports ?? this.allImports,
+      settings: settings ?? this.settings,
+      resolvedDoctorName: resolvedDoctorName ?? this.resolvedDoctorName,
+      therapeuticAdvice: identical(therapeuticAdvice, _unset)
+          ? this.therapeuticAdvice
+          : therapeuticAdvice as TherapeuticAdviceNote?,
+      familyContext: identical(familyContext, _unset)
+          ? this.familyContext
+          : familyContext as _PatientFamilyContext?,
+    );
+  }
 
   double get totalDebt => debts.fold<double>(0, (double sum, Debt item) => sum + item.residualAmount);
 

@@ -42,10 +42,25 @@ class DrivePdfImportsRepository {
     bool includeHidden = false,
   }) async {
     final String normalized = fiscalCode.trim().toUpperCase();
-    final List<DrivePdfImport> all = await getAllImports(includeHidden: includeHidden);
-    final List<DrivePdfImport> filtered = all.where((DrivePdfImport item) {
+    if (normalized.isEmpty) {
+      return const <DrivePdfImport>[];
+    }
+
+    final List<Map<String, dynamic>> maps = await datasource.getCollectionWhereEqual(
+      collectionPath: AppCollections.drivePdfImports,
+      field: 'patientFiscalCode',
+      value: normalized,
+    );
+    List<DrivePdfImport> filtered = maps
+        .map(DrivePdfImport.fromMap)
+        .where((DrivePdfImport item) {
+      if (!includeHidden && item.isHiddenFromFrontend) {
+        return false;
+      }
       return item.patientFiscalCode.trim().toUpperCase() == normalized;
     }).toList();
+
+
     filtered.sort((DrivePdfImport a, DrivePdfImport b) {
       return b.chronologyDate.compareTo(a.chronologyDate);
     });

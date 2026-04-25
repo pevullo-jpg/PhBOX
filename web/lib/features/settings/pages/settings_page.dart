@@ -14,7 +14,6 @@ import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../data/repositories/therapeutic_advice_repository.dart';
-import '../../../shared/mixins/page_auto_refresh_mixin.dart';
 import '../../../shared/navigation/app_navigation.dart';
 import '../../../shared/widgets/floating_page_menu.dart';
 import '../../../shared/widgets/settings_field_card.dart';
@@ -27,8 +26,7 @@ class SettingsPage extends StatefulWidget {
   State<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _SettingsPageState extends State<SettingsPage>
-    with PageAutoRefreshMixin<SettingsPage> {
+class _SettingsPageState extends State<SettingsPage> {
   late final SettingsRepository repository;
   late final BackupExportService _backupExportService;
 
@@ -65,7 +63,6 @@ class _SettingsPageState extends State<SettingsPage>
           TherapeuticAdviceRepository(datasource: datasource),
     );
     _load();
-    startPageAutoRefresh();
   }
 
   @override
@@ -73,15 +70,6 @@ class _SettingsPageState extends State<SettingsPage>
     expiryWarningController.dispose();
     doctorsCatalogController.dispose();
     super.dispose();
-  }
-
-  @override
-  bool get shouldAutoRefresh =>
-      appNavigationIndex.value == 2 && !_hasUnsavedChanges && !isExportingBackup;
-
-  @override
-  void onAutoRefreshTick() {
-    _load();
   }
 
   bool get _hasUnsavedChanges {

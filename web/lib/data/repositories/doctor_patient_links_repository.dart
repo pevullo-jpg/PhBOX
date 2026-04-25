@@ -31,10 +31,30 @@ class DoctorPatientLinksRepository {
 
   Future<List<DoctorPatientLink>> getLinksForPatient(String fiscalCode) async {
     final String normalized = fiscalCode.trim().toUpperCase();
-    final List<DoctorPatientLink> links = await getAllLinks();
-    return links.where((DoctorPatientLink link) {
-      return link.patientFiscalCode == normalized;
+    if (normalized.isEmpty) {
+      return const <DoctorPatientLink>[];
+    }
+    final List<Map<String, dynamic>> maps = await datasource.getCollectionWhereEqual(
+      collectionPath: AppCollections.doctorPatientLinks,
+      field: 'patientFiscalCode',
+      value: normalized,
+    );
+    final List<DoctorPatientLink> links = maps
+        .map(DoctorPatientLink.fromMap)
+        .where((DoctorPatientLink item) {
+      return item.patientFiscalCode == normalized &&
+          item.doctorFullName.trim().isNotEmpty;
     }).toList();
+    links.sort((DoctorPatientLink a, DoctorPatientLink b) {
+      final int typeOrder = _typeRank(a.linkType).compareTo(_typeRank(b.linkType));
+      if (typeOrder != 0) {
+        return typeOrder;
+      }
+      final DateTime aDate = a.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final DateTime bDate = b.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bDate.compareTo(aDate);
+    });
+    return links;
   }
 
   Future<void> saveManualOverride({

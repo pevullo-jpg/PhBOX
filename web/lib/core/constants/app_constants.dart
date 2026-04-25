@@ -11,4 +11,6 @@ class AppCollections {
   static const String prescriptionIntakes = 'prescription_intakes';
   static const String parserReferenceValues = 'parser_reference_values';
   static const String patientTherapeuticAdvice = 'patient_therapeutic_advice';
+  static const String dashboardTotals = 'dashboard_totals';
+  static const String dashboardSummaries = 'dashboard_summaries';
 }

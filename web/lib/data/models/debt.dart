@@ -33,7 +33,7 @@ class Debt {
     required String patientName,
     required String description,
     required double amount,
-    required double initialPaidAmountRaw,
+    double initialPaidAmountRaw = 0,
     required DateTime createdAt,
     DateTime? dueDate,
     String? note,

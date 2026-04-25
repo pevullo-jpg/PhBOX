@@ -16,16 +16,48 @@ abstract class FirestoreDatasource {
     required String documentId,
   });
 
+  Stream<Map<String, dynamic>?> watchDocument({
+    required String collectionPath,
+    required String documentId,
+  });
+
+  Future<void> incrementDocumentFields({
+    required String collectionPath,
+    required String documentId,
+    required Map<String, num> fields,
+    Map<String, dynamic>? extraData,
+  });
+
   Future<List<Map<String, dynamic>>> getCollection({
     required String collectionPath,
     String? orderBy,
     bool descending = false,
+    int? limit,
+  });
+
+  Future<List<Map<String, dynamic>>> getCollectionWhereEqual({
+    required String collectionPath,
+    required String field,
+    required Object value,
+    String? orderBy,
+    bool descending = false,
+    int? limit,
+  });
+
+  Future<List<Map<String, dynamic>>> getCollectionWhereArrayContains({
+    required String collectionPath,
+    required String field,
+    required Object value,
+    String? orderBy,
+    bool descending = false,
+    int? limit,
   });
 
   Future<List<Map<String, dynamic>>> getCollectionGroup({
     required String collectionPath,
     String? orderBy,
     bool descending = false,
+    int? limit,
   });
 
   Future<void> deleteDocument({
@@ -47,6 +79,7 @@ abstract class FirestoreDatasource {
     required String subcollectionPath,
     String? orderBy,
     bool descending = false,
+    int? limit,
   });
 
   Future<void> deleteSubDocument({
