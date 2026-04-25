@@ -1,0 +1,250 @@
+name: Apply Blocco A frontend patch
+
+on:
+  push:
+    branches:
+      - blocco-a-frontend-stability
+
+permissions:
+  contents: write
+
+jobs:
+  apply-patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Apply deterministic patch
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 occurrence, found {count}")
+              return text.replace(old, new, 1)
+
+          def remove_once(text: str, old: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 occurrence, found {count}")
+              return text.replace(old, '', 1)
+
+          # DASHBOARD: cache per firma richiesta + ricette senza legacy inutile.
+          dashboard_path = Path('lib/features/dashboard/pages/dashboard_page.dart')
+          dashboard = dashboard_path.read_text()
+
+          dashboard = replace_once(
+              dashboard,
+              "  _DashboardData _dashboardCache = _DashboardData.empty();\n  bool _dashboardCacheLoaded = false;\n",
+              "  _DashboardData _dashboardCache = _DashboardData.empty();\n  bool _dashboardCacheLoaded = false;\n  String _dashboardCacheSignature = '';\n  final Map<String, _DashboardData> _dashboardCacheBySignature = <String, _DashboardData>{};\n",
+              'dashboard cache fields',
+          )
+
+          dashboard = replace_once(
+              dashboard,
+              "  bool get _hasUserRequestedDashboardData {\n    return _activeCardFilters.isNotEmpty || _searchController.text.trim().length >= 3;\n  }\n",
+              "  bool get _hasUserRequestedDashboardData {\n    return _activeCardFilters.isNotEmpty || _searchController.text.trim().length >= 3;\n  }\n\n  String _dashboardRequestSignature() {\n    final List<String> activeFilters = _activeCardFilters\n        .map((filter) => filter.name)\n        .toList()\n      ..sort();\n    return <String>[\n      _searchController.text.trim().toUpperCase(),\n      activeFilters.join(','),\n      _searchInFlags ? 'FLAGS' : 'BASE',\n    ].join('|');\n  }\n\n  _DashboardData? _cachedDashboardDataForSignature(String signature) {\n    if (signature.isEmpty) {\n      return null;\n    }\n    return _dashboardCacheBySignature[signature];\n  }\n\n  void _activateDashboardCache({\n    required String signature,\n    required _DashboardData data,\n    bool remember = true,\n  }) {\n    _dashboardCache = data;\n    _dashboardCacheLoaded = true;\n    _dashboardCacheSignature = signature;\n    if (remember && signature.isNotEmpty) {\n      _dashboardCacheBySignature[signature] = data;\n    }\n    _future = Future<_DashboardData>.value(data);\n  }\n",
+              'dashboard request signature helpers',
+          )
+
+          dashboard = replace_once(
+              dashboard,
+              "  void _trackRefreshCompletion(Future<_DashboardData> future) {\n    future.then((data) {\n      if (!mounted) {\n        return;\n      }\n      setState(() {\n        _dashboardCache = data;\n        _dashboardCacheLoaded = true;\n        _lastRefreshAt = DateTime.now();\n      });\n    }).catchError((_) {});\n  }\n\n  void _issueLoad({bool force = false}) {\n    if (!force && _dashboardCacheLoaded) {\n      setState(() {\n        _future = Future<_DashboardData>.value(_dashboardCache);\n      });\n      return;\n    }\n    final Future<_DashboardData> nextFuture = _load();\n    _trackRefreshCompletion(nextFuture);\n    setState(() {\n      _future = nextFuture;\n    });\n  }\n",
+              "  void _trackRefreshCompletion(Future<_DashboardData> future, String signature) {\n    future.then((data) {\n      if (!mounted) {\n        return;\n      }\n      _dashboardCacheBySignature[signature] = data;\n      if (signature != _dashboardRequestSignature()) {\n        return;\n      }\n      setState(() {\n        _activateDashboardCache(signature: signature, data: data);\n        _lastRefreshAt = DateTime.now();\n      });\n    }).catchError((_) {});\n  }\n\n  void _issueLoad({bool force = false}) {\n    final String signature = _dashboardRequestSignature();\n    final _DashboardData? cachedData = _cachedDashboardDataForSignature(signature);\n    if (!force && cachedData != null) {\n      setState(() {\n        _activateDashboardCache(signature: signature, data: cachedData);\n      });\n      return;\n    }\n    final Future<_DashboardData> nextFuture = _load();\n    _trackRefreshCompletion(nextFuture, signature);\n    setState(() {\n      _future = nextFuture;\n    });\n  }\n",
+              'dashboard load issue cache',
+          )
+
+          dashboard = replace_once(
+              dashboard,
+              "  void _ensureDashboardCacheForActiveRequest() {\n    if (!_hasUserRequestedDashboardData) {\n      setState(() {\n        _future = Future<_DashboardData>.value(_DashboardData.empty());\n      });\n      return;\n    }\n    if (_dashboardCacheLoaded) {\n      setState(() {\n        _future = Future<_DashboardData>.value(_dashboardCache);\n      });\n      return;\n    }\n    _scheduleUserRequestedDataRefresh();\n  }\n\n  _DashboardData _currentDashboardData() {\n    return _dashboardCacheLoaded ? _dashboardCache : _DashboardData.empty();\n  }\n\n  void _replaceDashboardCache(_DashboardData data) {\n    _dashboardCache = data;\n    _dashboardCacheLoaded = true;\n    _future = Future<_DashboardData>.value(data);\n  }\n",
+              "  void _ensureDashboardCacheForActiveRequest() {\n    if (!_hasUserRequestedDashboardData) {\n      setState(() {\n        _future = Future<_DashboardData>.value(_DashboardData.empty());\n      });\n      return;\n    }\n    final String signature = _dashboardRequestSignature();\n    final _DashboardData? cachedData = _cachedDashboardDataForSignature(signature);\n    if (cachedData != null) {\n      setState(() {\n        _activateDashboardCache(signature: signature, data: cachedData);\n      });\n      return;\n    }\n    _scheduleUserRequestedDataRefresh();\n  }\n\n  _DashboardData _currentDashboardData() {\n    final String signature = _dashboardRequestSignature();\n    final _DashboardData? cachedData = _cachedDashboardDataForSignature(signature);\n    if (cachedData != null) {\n      return cachedData;\n    }\n    if (_dashboardCacheLoaded && _dashboardCacheSignature == signature) {\n      return _dashboardCache;\n    }\n    return _DashboardData.empty();\n  }\n\n  void _replaceDashboardCache(_DashboardData data) {\n    final String signature = _dashboardRequestSignature();\n    _activateDashboardCache(signature: signature, data: data);\n  }\n",
+              'dashboard active request cache',
+          )
+
+          dashboard = replace_once(
+              dashboard,
+              "  void _scheduleUserRequestedDataRefresh() {\n    final List<String> activeFilters = _activeCardFilters\n        .map((filter) => filter.name)\n        .toList()\n      ..sort();\n    final String signature = <String>[\n      _searchController.text.trim().toUpperCase(),\n      activeFilters.join(','),\n      _searchInFlags ? 'FLAGS' : 'BASE',\n    ].join('|');\n    if (signature == _lastUserRequestRefreshSignature && _dashboardCacheLoaded) {\n      setState(() {\n        _future = Future<_DashboardData>.value(_dashboardCache);\n      });\n      return;\n    }\n    _lastUserRequestRefreshSignature = signature;\n    if (_dashboardCacheLoaded) {\n      setState(() {\n        _future = Future<_DashboardData>.value(_dashboardCache);\n      });\n      return;\n    }\n    _userRequestRefreshDebounceTimer?.cancel();\n    _userRequestRefreshDebounceTimer = Timer(_userRequestRefreshDebounceDelay, () {\n      if (!mounted) {\n        return;\n      }\n      _issueLoad();\n    });\n  }\n",
+              "  void _scheduleUserRequestedDataRefresh() {\n    final String signature = _dashboardRequestSignature();\n    final _DashboardData? cachedData = _cachedDashboardDataForSignature(signature);\n    if (cachedData != null) {\n      _lastUserRequestRefreshSignature = signature;\n      setState(() {\n        _activateDashboardCache(signature: signature, data: cachedData);\n      });\n      return;\n    }\n    if (signature == _lastUserRequestRefreshSignature &&\n        _dashboardCacheLoaded &&\n        _dashboardCacheSignature == signature) {\n      setState(() {\n        _future = Future<_DashboardData>.value(_dashboardCache);\n      });\n      return;\n    }\n    _lastUserRequestRefreshSignature = signature;\n    _userRequestRefreshDebounceTimer?.cancel();\n    _userRequestRefreshDebounceTimer = Timer(_userRequestRefreshDebounceDelay, () {\n      if (!mounted) {\n        return;\n      }\n      _issueLoad();\n    });\n  }\n",
+              'dashboard scheduled refresh cache',
+          )
+
+          dashboard = replace_once(
+              dashboard,
+              "    final List<Future<dynamic>> futures = <Future<dynamic>>[\n      if (needsArchive) _drivePdfImportsRepository.getImportsByPatient(cf, includeHidden: true),\n      if (needsArchive) _prescriptionsRepository.getLegacyPatientPrescriptions(cf),\n      if (needsDebts) _debtsRepository.getPatientDebts(cf),\n      if (needsAdvances) _advancesRepository.getPatientAdvances(cf),\n      if (needsBookings) _bookingsRepository.getPatientBookings(cf),\n    ];\n    final List<dynamic> results = await Future.wait<dynamic>(futures);\n\n    int cursor = 0;\n    List<DrivePdfImport>? imports;\n    List<Prescription>? prescriptions;\n    List<Debt>? debts;\n    List<Advance>? advances;\n    List<Booking>? bookings;\n\n    if (needsArchive) {\n      imports = (results[cursor++] as List<DrivePdfImport>)\n          .where((DrivePdfImport item) => !item.isHiddenFromFrontend)\n          .toList();\n      prescriptions = results[cursor++] as List<Prescription>;\n    }\n",
+              "    final Future<List<DrivePdfImport>>? archiveFuture = needsArchive\n        ? _drivePdfImportsRepository.getImportsByPatient(cf, includeHidden: true)\n        : null;\n    final List<Future<dynamic>> futures = <Future<dynamic>>[\n      if (needsDebts) _debtsRepository.getPatientDebts(cf),\n      if (needsAdvances) _advancesRepository.getPatientAdvances(cf),\n      if (needsBookings) _bookingsRepository.getPatientBookings(cf),\n    ];\n    final List<dynamic> results = await Future.wait<dynamic>(futures);\n\n    int cursor = 0;\n    List<DrivePdfImport>? imports;\n    List<Prescription>? prescriptions;\n    List<Debt>? debts;\n    List<Advance>? advances;\n    List<Booking>? bookings;\n\n    if (needsArchive && archiveFuture != null) {\n      final List<DrivePdfImport> allImports = await archiveFuture;\n      imports = allImports\n          .where((DrivePdfImport item) => !item.isHiddenFromFrontend)\n          .toList();\n      prescriptions = allImports.isEmpty\n          ? await _prescriptionsRepository.getLegacyPatientPrescriptions(cf)\n          : imports.map(_prescriptionsRepository.importToPrescription).toList();\n    }\n",
+              'dashboard archive details optimized',
+          )
+
+          dashboard_path.write_text(dashboard)
+
+          # PATIENT DETAIL: parallelizza letture indipendenti.
+          patient_detail_path = Path('lib/features/patients/pages/patient_detail_page.dart')
+          patient_detail = patient_detail_path.read_text()
+
+          old_load = """  Future<_PatientDetailData> _load() async {
+    final patient = await _patientsRepository.getPatientByFiscalCode(_currentFiscalCode);
+    final advances = await _advancesRepository.getPatientAdvances(_currentFiscalCode);
+    final debts = await _debtsRepository.getPatientDebts(_currentFiscalCode);
+    final bookings = await _bookingsRepository.getPatientBookings(_currentFiscalCode);
+    final allImports = await _drivePdfImportsRepository.getImportsByPatient(
+      _currentFiscalCode,
+      includeHidden: true,
+    );
+    final imports = allImports.where((DrivePdfImport item) => !item.isHiddenFromFrontend).toList();
+    final prescriptions = allImports.isNotEmpty
+        ? imports.map(_prescriptionsRepository.importToPrescription).toList()
+        : await _prescriptionsRepository.getLegacyPatientPrescriptions(_currentFiscalCode);
+    final doctorLinks = await _doctorPatientLinksRepository.getLinksForPatient(_currentFiscalCode);
+    final settings = await _settingsRepository.getSettings();
+    final therapeuticAdvice = await _therapeuticAdviceRepository.getByFiscalCode(_currentFiscalCode);
+    final familyContext = await _loadFamilyContext(patient);
+    final doctorName = _resolveDoctor(
+      patient: patient,
+      doctorLinks: doctorLinks,
+      prescriptions: prescriptions,
+      imports: imports,
+    );
+    return _PatientDetailData(
+      patient: patient,
+      advances: advances,
+      debts: debts,
+      bookings: bookings,
+      prescriptions: prescriptions,
+      imports: imports,
+      allImports: allImports,
+      settings: settings,
+      resolvedDoctorName: doctorName,
+      therapeuticAdvice: therapeuticAdvice,
+      familyContext: familyContext,
+    );
+  }
+"""
+          new_load = """  Future<_PatientDetailData> _load() async {
+    final Future<Patient?> patientFuture =
+        _patientsRepository.getPatientByFiscalCode(_currentFiscalCode);
+    final Future<List<Advance>> advancesFuture =
+        _advancesRepository.getPatientAdvances(_currentFiscalCode);
+    final Future<List<Debt>> debtsFuture =
+        _debtsRepository.getPatientDebts(_currentFiscalCode);
+    final Future<List<Booking>> bookingsFuture =
+        _bookingsRepository.getPatientBookings(_currentFiscalCode);
+    final Future<List<DrivePdfImport>> importsFuture =
+        _drivePdfImportsRepository.getImportsByPatient(
+      _currentFiscalCode,
+      includeHidden: true,
+    );
+    final Future<List<DoctorPatientLink>> doctorLinksFuture =
+        _doctorPatientLinksRepository.getLinksForPatient(_currentFiscalCode);
+    final Future<AppSettings> settingsFuture = _settingsRepository.getSettings();
+    final Future<TherapeuticAdviceNote?> therapeuticAdviceFuture =
+        _therapeuticAdviceRepository.getByFiscalCode(_currentFiscalCode);
+
+    final List<dynamic> results = await Future.wait<dynamic>(<Future<dynamic>>[
+      patientFuture,
+      advancesFuture,
+      debtsFuture,
+      bookingsFuture,
+      importsFuture,
+      doctorLinksFuture,
+      settingsFuture,
+      therapeuticAdviceFuture,
+    ]);
+
+    final Patient? patient = results[0] as Patient?;
+    final List<Advance> advances = results[1] as List<Advance>;
+    final List<Debt> debts = results[2] as List<Debt>;
+    final List<Booking> bookings = results[3] as List<Booking>;
+    final List<DrivePdfImport> allImports = results[4] as List<DrivePdfImport>;
+    final List<DoctorPatientLink> doctorLinks = results[5] as List<DoctorPatientLink>;
+    final AppSettings settings = results[6] as AppSettings;
+    final TherapeuticAdviceNote? therapeuticAdvice =
+        results[7] as TherapeuticAdviceNote?;
+
+    final List<DrivePdfImport> imports = allImports
+        .where((DrivePdfImport item) => !item.isHiddenFromFrontend)
+        .toList();
+    final List<Prescription> prescriptions = allImports.isNotEmpty
+        ? imports.map(_prescriptionsRepository.importToPrescription).toList()
+        : await _prescriptionsRepository.getLegacyPatientPrescriptions(
+            _currentFiscalCode,
+          );
+    final _PatientFamilyContext? familyContext = await _loadFamilyContext(patient);
+    final String doctorName = _resolveDoctor(
+      patient: patient,
+      doctorLinks: doctorLinks,
+      prescriptions: prescriptions,
+      imports: imports,
+    );
+    return _PatientDetailData(
+      patient: patient,
+      advances: advances,
+      debts: debts,
+      bookings: bookings,
+      prescriptions: prescriptions,
+      imports: imports,
+      allImports: allImports,
+      settings: settings,
+      resolvedDoctorName: doctorName,
+      therapeuticAdvice: therapeuticAdvice,
+      familyContext: familyContext,
+    );
+  }
+"""
+          patient_detail = replace_once(patient_detail, old_load, new_load, 'patient detail parallel load')
+          patient_detail_path.write_text(patient_detail)
+
+          # SETTINGS: rimuove doppio menu flottante interno.
+          settings_path = Path('lib/features/settings/pages/settings_page.dart')
+          settings = settings_path.read_text()
+          settings = settings.replace("import '../../../shared/navigation/app_navigation.dart';\n", '')
+          settings = settings.replace("import '../../../shared/widgets/floating_page_menu.dart';\n", '')
+          settings = remove_once(
+              settings,
+              "        FloatingPageMenu(\n          currentIndex: appNavigationIndex.value,\n          onSelected: (index) {\n            if (appNavigationIndex.value != index) {\n              appNavigationIndex.value = index;\n            }\n          },\n        ),\n",
+              'settings duplicate floating menu',
+          )
+          settings_path.write_text(settings)
+
+          # FAMILIES: rimuove doppio menu flottante interno.
+          families_path = Path('lib/features/families/pages/families_page.dart')
+          families = families_path.read_text()
+          families = families.replace("import '../../../shared/navigation/app_navigation.dart';\n", '')
+          families = families.replace("import '../../../shared/widgets/floating_page_menu.dart';\n", '')
+          families = remove_once(
+              families,
+              "            FloatingPageMenu(\n              currentIndex: appNavigationIndex.value,\n              onSelected: (index) {\n                if (appNavigationIndex.value != index) {\n                  appNavigationIndex.value = index;\n                }\n              },\n            ),\n",
+              'families duplicate floating menu',
+          )
+          families_path.write_text(families)
+
+          # Remove temporary workflow from final branch state.
+          Path('.github/workflows/apply-blocco-a.yml').unlink(missing_ok=True)
+
+      - name: Validate textual patch
+        run: |
+          test ! -f .github/workflows/apply-blocco-a.yml
+          grep -q "_dashboardCacheBySignature" lib/features/dashboard/pages/dashboard_page.dart
+          grep -q "_dashboardRequestSignature" lib/features/dashboard/pages/dashboard_page.dart
+          grep -q "Future.wait<dynamic>" lib/features/patients/pages/patient_detail_page.dart
+          ! grep -q "FloatingPageMenu" lib/features/settings/pages/settings_page.dart
+          ! grep -q "FloatingPageMenu" lib/features/families/pages/families_page.dart
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/features/dashboard/pages/dashboard_page.dart \
+                  lib/features/patients/pages/patient_detail_page.dart \
+                  lib/features/settings/pages/settings_page.dart \
+                  lib/features/families/pages/families_page.dart \
+                  .github/workflows/apply-blocco-a.yml
+          git diff --cached --check
+          git commit -m "Apply Blocco A frontend stability fixes"
+          git push origin HEAD:blocco-a-frontend-stability
