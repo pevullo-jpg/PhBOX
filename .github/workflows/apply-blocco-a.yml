@@ -248,3 +248,5 @@ jobs:
           git diff --cached --check
           git commit -m "Apply Blocco A frontend stability fixes"
           git push origin HEAD:blocco-a-frontend-stability
+
+# trigger: 2026-04-25T00:00:00Z
