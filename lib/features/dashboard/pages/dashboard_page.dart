@@ -192,6 +192,13 @@ class _DashboardPageState extends State<DashboardPage> {
     _dashboardTotalsSubscription?.cancel();
     _dashboardTotalsSubscription = null;
   }
+
+  bool _canAcceptDashboardTotalsSnapshot(_DashboardTotals snapshotTotals) {
+    if (snapshotTotals.hasAnyValue) {
+      return true;
+    }
+    return !_dashboardTotals.hasAnyValue;
+  }
   void _trackRefreshCompletion(Future<_DashboardData> future) {
     future.then((data) {
       if (!mounted) {

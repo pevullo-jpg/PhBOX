@@ -2458,6 +2458,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
           const SizedBox(height: 14),
           ...familyContext.members.map(
             (_PatientFamilyMember member) => _buildFamilyMemberCard(
+              data: data,
               familyContext: familyContext,
               member: member,
               familyColor: familyColor,
@@ -2469,6 +2470,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   }
 
   Widget _buildFamilyMemberCard({
+    required _PatientDetailData data,
     required _PatientFamilyContext familyContext,
     required _PatientFamilyMember member,
     required Color familyColor,
