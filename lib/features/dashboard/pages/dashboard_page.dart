@@ -63,6 +63,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<_DashboardData>? _future;
   _DashboardData _dashboardCache = _DashboardData.empty();
   bool _dashboardCacheLoaded = false;
+  String _dashboardCacheSignature = '';
   _DashboardTotals _dashboardTotals = _DashboardTotals.empty();
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
@@ -149,6 +150,7 @@ class _DashboardPageState extends State<DashboardPage> {
     _userRequestRefreshDebounceTimer?.cancel();
     _userRequestRefreshDebounceTimer = null;
     _lastUserRequestRefreshSignature = '';
+    _dashboardCacheSignature = '';
     _activeCardFilters.clear();
     _searchInFlags = false;
     if (_searchController.text.isNotEmpty) {
@@ -203,7 +205,24 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     return !_dashboardTotals.hasAnyValue;
   }
-  void _trackRefreshCompletion(Future<_DashboardData> future) {
+  String _activeDashboardRequestSignature() {
+    final List<String> activeFilters = _activeCardFilters
+        .map((filter) => filter.name)
+        .toList()
+      ..sort();
+    return <String>[
+      _searchController.text.trim().toUpperCase(),
+      activeFilters.join(','),
+      _searchInFlags ? 'FLAGS' : 'BASE',
+    ].join('|');
+  }
+
+  bool _isDashboardCacheValidForCurrentRequest() {
+    return _dashboardCacheLoaded &&
+        _dashboardCacheSignature == _activeDashboardRequestSignature();
+  }
+
+  void _trackRefreshCompletion(Future<_DashboardData> future, String requestSignature) {
     future.then((data) {
       if (!mounted) {
         return;
@@ -211,20 +230,22 @@ class _DashboardPageState extends State<DashboardPage> {
       setState(() {
         _dashboardCache = data;
         _dashboardCacheLoaded = true;
+        _dashboardCacheSignature = requestSignature;
         _lastRefreshAt = DateTime.now();
       });
     }).catchError((_) {});
   }
 
   void _issueLoad({bool force = false}) {
-    if (!force && _dashboardCacheLoaded) {
+    final String requestSignature = _activeDashboardRequestSignature();
+    if (!force && _isDashboardCacheValidForCurrentRequest()) {
       setState(() {
         _future = Future<_DashboardData>.value(_dashboardCache);
       });
       return;
     }
     final Future<_DashboardData> nextFuture = _load();
-    _trackRefreshCompletion(nextFuture);
+    _trackRefreshCompletion(nextFuture, requestSignature);
     setState(() {
       _future = nextFuture;
     });
@@ -237,7 +258,7 @@ class _DashboardPageState extends State<DashboardPage> {
       });
       return;
     }
-    if (_dashboardCacheLoaded) {
+    if (_isDashboardCacheValidForCurrentRequest()) {
       setState(() {
         _future = Future<_DashboardData>.value(_dashboardCache);
       });
@@ -253,6 +274,7 @@ class _DashboardPageState extends State<DashboardPage> {
   void _replaceDashboardCache(_DashboardData data) {
     _dashboardCache = data;
     _dashboardCacheLoaded = true;
+    _dashboardCacheSignature = _activeDashboardRequestSignature();
     _future = Future<_DashboardData>.value(data);
   }
 
@@ -417,16 +439,16 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<List<PatientDashboardIndex>> _loadDashboardIndexRows() async {
+    final String query = _searchController.text.trim();
+    if (query.length >= 3) {
+      return _patientDashboardIndexRepository.searchByPrefix(query);
+    }
+
     final _DashboardCardFilter? primaryFilter = _selectPrimaryIndexFilter();
     if (primaryFilter != null) {
       return _patientDashboardIndexRepository.getByFlag(
         flag: _indexFlagForDashboardFilter(primaryFilter),
       );
-    }
-
-    final String query = _searchController.text.trim();
-    if (query.length >= 3) {
-      return _patientDashboardIndexRepository.searchByPrefix(query);
     }
 
     return const <PatientDashboardIndex>[];
@@ -710,28 +732,15 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   void _scheduleUserRequestedDataRefresh() {
-    final List<String> activeFilters = _activeCardFilters
-        .map((filter) => filter.name)
-        .toList()
-      ..sort();
-    final String signature = <String>[
-      _searchController.text.trim().toUpperCase(),
-      activeFilters.join(','),
-      _searchInFlags ? 'FLAGS' : 'BASE',
-    ].join('|');
-    if (signature == _lastUserRequestRefreshSignature && _dashboardCacheLoaded) {
+    final String signature = _activeDashboardRequestSignature();
+    if (signature == _lastUserRequestRefreshSignature &&
+        _isDashboardCacheValidForCurrentRequest()) {
       setState(() {
         _future = Future<_DashboardData>.value(_dashboardCache);
       });
       return;
     }
     _lastUserRequestRefreshSignature = signature;
-    if (_dashboardCacheLoaded) {
-      setState(() {
-        _future = Future<_DashboardData>.value(_dashboardCache);
-      });
-      return;
-    }
     _userRequestRefreshDebounceTimer?.cancel();
     _userRequestRefreshDebounceTimer = Timer(_userRequestRefreshDebounceDelay, () {
       if (!mounted) {
