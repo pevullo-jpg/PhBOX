@@ -271,6 +271,25 @@ class _DashboardPageState extends State<DashboardPage> {
     return _dashboardCacheLoaded ? _dashboardCache : _DashboardData.empty();
   }
 
+  Future<List<String>> _loadDoctorsCatalogForDashboardAction({
+    Iterable<String> extraDoctors = const <String>[],
+  }) async {
+    final Set<String> candidates = <String>{
+      ..._currentDashboardData().doctorsCatalog.map((String item) => item.trim()).where((String item) => item.isNotEmpty && item != '-'),
+      ...extraDoctors.map((String item) => item.trim()).where((String item) => item.isNotEmpty && item != '-'),
+    };
+    try {
+      final AppSettings settings = await _settingsRepository.getSettings();
+      candidates.addAll(
+        settings.doctorsCatalog
+            .map((String item) => item.trim())
+            .where((String item) => item.isNotEmpty && item != '-'),
+      );
+    } catch (_) {}
+    final List<String> result = candidates.toList()..sort();
+    return result;
+  }
+
   void _replaceDashboardCache(_DashboardData data) {
     _dashboardCache = data;
     _dashboardCacheLoaded = true;
@@ -1101,12 +1120,9 @@ class _DashboardPageState extends State<DashboardPage> {
     final drugController = TextEditingController();
     final noteController = TextEditingController();
     String selectedDoctor = summary.doctorName.trim() == '-' ? '' : summary.doctorName.trim();
-    final data = _currentDashboardData();
-    final candidateList = <String>{
-      ...data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty),
-      if (selectedDoctor.isNotEmpty) selectedDoctor,
-    }.toList()
-      ..sort();
+    final List<String> candidateList = await _loadDoctorsCatalogForDashboardAction(
+      extraDoctors: <String>[selectedDoctor],
+    );
     bool saved = false;
 
     try {
@@ -1359,8 +1375,9 @@ class _DashboardPageState extends State<DashboardPage> {
     required _PatientDashboardSummary summary,
     required String key,
   }) async {
-    final data = _currentDashboardData();
-    final doctorsCatalog = data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty).toList()..sort();
+    final List<String> doctorsCatalog = key == 'anticipi'
+        ? await _loadDoctorsCatalogForDashboardAction(extraDoctors: <String>[summary.doctorName])
+        : const <String>[];
 
     final debtDescriptionController = TextEditingController();
     final debtAmountController = TextEditingController();
@@ -1459,6 +1476,12 @@ class _DashboardPageState extends State<DashboardPage> {
                 );
                 await _advancesRepository.saveAdvance(advance);
                 await _dashboardTotalsRepository.applyFrontendManagedDelta(advanceCountDelta: 1);
+                await _doctorPatientLinksRepository.saveManualOverride(
+                  patientFiscalCode: fiscalCode,
+                  patientFullName: patientName,
+                  doctorFullName: doctorName,
+                  city: currentSummary.city == '-' ? null : currentSummary.city,
+                );
                 currentSummary = currentSummary.copyWith(
                   advances: <Advance>[advance, ...currentSummary.advances],
                   doctorName: doctorName,
@@ -1948,7 +1971,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final debtController = TextEditingController();
     final debtDescriptionController = TextEditingController();
     String selectedDoctor = '';
-    final doctorCandidates = data.doctorsCatalog.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList()..sort();
+    final List<String> doctorCandidates = await _loadDoctorsCatalogForDashboardAction();
 
     _PatientDashboardSummary? _findExactPatientByCf(String rawValue) {
       final String normalizedCf = PatientInputNormalizer.normalizeFiscalCode(rawValue);
