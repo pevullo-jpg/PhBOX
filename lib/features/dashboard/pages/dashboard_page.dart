@@ -436,18 +436,17 @@ class _DashboardPageState extends State<DashboardPage> {
       return _DashboardData.empty();
     }
 
+    if (_isGlobalFlagSearchRequest) {
+      return _loadGlobalFlagSearchData();
+    }
+
     final List<PatientDashboardIndex> indexRows = await _loadDashboardIndexRows();
     final List<_PatientDashboardSummary> summaries = indexRows
         .map(_summaryFromIndex)
         .where(_matchesActiveIndexFilters)
         .toList();
 
-    summaries.sort((a, b) {
-      if (a.hasExpiryAlert != b.hasExpiryAlert) {
-        return a.hasExpiryAlert ? -1 : 1;
-      }
-      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
-    });
+    _sortDashboardSummaries(summaries);
 
     return _DashboardData(
       summaries: summaries,
@@ -471,6 +470,227 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     return const <PatientDashboardIndex>[];
+  }
+
+
+  bool get _isGlobalFlagSearchRequest {
+    return _searchInFlags && _searchController.text.trim().length >= 3;
+  }
+
+  Future<_DashboardData> _loadGlobalFlagSearchData() async {
+    final String query = _searchController.text.trim().toLowerCase();
+    if (query.length < 3) {
+      return _DashboardData.empty();
+    }
+
+    final List<dynamic> results = await Future.wait<dynamic>(<Future<dynamic>>[
+      _patientDashboardIndexRepository.getAll(),
+      _patientDashboardIndexRepository.searchByPrefix(query),
+      _drivePdfImportsRepository.getAllImports(),
+      _prescriptionsRepository.getAllLegacyPrescriptions(),
+      _debtsRepository.getAllDebts(),
+      _advancesRepository.getAllAdvances(),
+      _bookingsRepository.getAllBookings(),
+    ]);
+
+    final List<PatientDashboardIndex> allIndexRows = results[0] as List<PatientDashboardIndex>;
+    final List<PatientDashboardIndex> baseSearchRows = results[1] as List<PatientDashboardIndex>;
+    final List<DrivePdfImport> imports = results[2] as List<DrivePdfImport>;
+    final List<Prescription> prescriptions = results[3] as List<Prescription>;
+    final List<Debt> debts = results[4] as List<Debt>;
+    final List<Advance> advances = results[5] as List<Advance>;
+    final List<Booking> bookings = results[6] as List<Booking>;
+
+    final Map<String, PatientDashboardIndex> indexByCf = <String, PatientDashboardIndex>{
+      for (final PatientDashboardIndex item in allIndexRows)
+        if (_normalizeFiscalCode(item.fiscalCode).isNotEmpty) _normalizeFiscalCode(item.fiscalCode): item,
+    };
+
+    final Set<String> matchedCfs = <String>{
+      for (final PatientDashboardIndex item in baseSearchRows) _normalizeFiscalCode(item.fiscalCode),
+    };
+
+    final Map<String, List<DrivePdfImport>> matchedImportsByCf = <String, List<DrivePdfImport>>{};
+    final Map<String, List<Prescription>> matchedPrescriptionsByCf = <String, List<Prescription>>{};
+    final Map<String, List<Debt>> matchedDebtsByCf = <String, List<Debt>>{};
+    final Map<String, List<Advance>> matchedAdvancesByCf = <String, List<Advance>>{};
+    final Map<String, List<Booking>> matchedBookingsByCf = <String, List<Booking>>{};
+
+    void markCf(String fiscalCode) {
+      final String cf = _normalizeFiscalCode(fiscalCode);
+      if (cf.isNotEmpty) {
+        matchedCfs.add(cf);
+      }
+    }
+
+    void addGrouped<T>(Map<String, List<T>> target, String fiscalCode, T item) {
+      final String cf = _normalizeFiscalCode(fiscalCode);
+      if (cf.isEmpty) return;
+      target.putIfAbsent(cf, () => <T>[]).add(item);
+      matchedCfs.add(cf);
+    }
+
+    for (final DrivePdfImport item in imports) {
+      if (_matchesImportFlagQuery(item, query)) {
+        addGrouped<DrivePdfImport>(matchedImportsByCf, item.patientFiscalCode, item);
+      }
+    }
+    for (final Prescription item in prescriptions) {
+      if (_matchesPrescriptionFlagQuery(item, query)) {
+        addGrouped<Prescription>(matchedPrescriptionsByCf, item.patientFiscalCode, item);
+      }
+    }
+    for (final Debt item in debts) {
+      if (_matchesDebtFlagQuery(item, query)) {
+        addGrouped<Debt>(matchedDebtsByCf, item.patientFiscalCode, item);
+      }
+    }
+    for (final Advance item in advances) {
+      if (_matchesAdvanceFlagQuery(item, query)) {
+        addGrouped<Advance>(matchedAdvancesByCf, item.patientFiscalCode, item);
+      }
+    }
+    for (final Booking item in bookings) {
+      if (_matchesBookingFlagQuery(item, query)) {
+        addGrouped<Booking>(matchedBookingsByCf, item.patientFiscalCode, item);
+      }
+    }
+
+    if ('dpc'.contains(query) || query.contains('dpc')) {
+      for (final PatientDashboardIndex item in allIndexRows) {
+        if (item.hasDpc) {
+          markCf(item.fiscalCode);
+        }
+      }
+    }
+
+    final List<_PatientDashboardSummary> summaries = <_PatientDashboardSummary>[];
+    for (final String cf in matchedCfs.where((String item) => item.isNotEmpty)) {
+      final PatientDashboardIndex? index = indexByCf[cf];
+      final _PatientDashboardSummary base = index == null
+          ? _PatientDashboardSummary(
+              patient: _syntheticPatient(
+                fiscalCode: cf,
+                imports: matchedImportsByCf[cf] ?? const <DrivePdfImport>[],
+                prescriptions: matchedPrescriptionsByCf[cf] ?? const <Prescription>[],
+                debts: matchedDebtsByCf[cf] ?? const <Debt>[],
+                advances: matchedAdvancesByCf[cf] ?? const <Advance>[],
+                bookings: matchedBookingsByCf[cf] ?? const <Booking>[],
+              ),
+              doctorName: '-',
+              exemptionCode: '-',
+              city: '-',
+              prescriptions: const <Prescription>[],
+              imports: const <DrivePdfImport>[],
+              debts: const <Debt>[],
+              advances: const <Advance>[],
+              bookings: const <Booking>[],
+              hasDpc: false,
+              recipeCount: 0,
+              hasExpiryAlert: false,
+              familyId: '',
+              familyName: '',
+            )
+          : _summaryFromIndex(index);
+      summaries.add(
+        base.copyWith(
+          imports: matchedImportsByCf[cf] ?? base.imports,
+          prescriptions: matchedPrescriptionsByCf[cf] ?? base.prescriptions,
+          debts: matchedDebtsByCf[cf] ?? base.debts,
+          advances: matchedAdvancesByCf[cf] ?? base.advances,
+          bookings: matchedBookingsByCf[cf] ?? base.bookings,
+        ),
+      );
+    }
+
+    final List<_PatientDashboardSummary> filtered = summaries
+        .where(_matchesActiveIndexFilters)
+        .toList();
+    _sortDashboardSummaries(filtered);
+
+    return _DashboardData(
+      summaries: filtered,
+      doctorsCatalog: const <String>[],
+      families: const <FamilyGroup>[],
+      totals: _dashboardTotals,
+    );
+  }
+
+  bool _matchesImportFlagQuery(DrivePdfImport item, String query) {
+    return _textContainsFlagQuery(<String>[
+      item.fileName,
+      item.patientFullName,
+      item.patientFiscalCode,
+      item.doctorFullName,
+      item.exemptionCode,
+      item.city,
+      item.sourceType,
+      if (item.isDpc) 'dpc',
+      ...item.therapy,
+    ], query);
+  }
+
+  bool _matchesPrescriptionFlagQuery(Prescription item, String query) {
+    return _textContainsFlagQuery(<String>[
+      item.patientName,
+      item.patientFiscalCode,
+      item.doctorName ?? '',
+      item.exemptionCode ?? '',
+      item.city ?? '',
+      item.extractedText ?? '',
+      if (item.dpcFlag) 'dpc',
+      ...item.items.map((prescriptionItem) => prescriptionItem.drugName),
+    ], query);
+  }
+
+  bool _matchesDebtFlagQuery(Debt item, String query) {
+    return _textContainsFlagQuery(<String>[
+      item.patientName,
+      item.patientFiscalCode,
+      item.description,
+      item.note ?? '',
+      item.status,
+    ], query);
+  }
+
+  bool _matchesAdvanceFlagQuery(Advance item, String query) {
+    return _textContainsFlagQuery(<String>[
+      item.patientName,
+      item.patientFiscalCode,
+      item.drugName,
+      item.doctorName,
+      item.note ?? '',
+      item.status,
+    ], query);
+  }
+
+  bool _matchesBookingFlagQuery(Booking item, String query) {
+    return _textContainsFlagQuery(<String>[
+      item.patientName,
+      item.patientFiscalCode,
+      item.drugName,
+      item.note ?? '',
+      item.status,
+    ], query);
+  }
+
+  bool _textContainsFlagQuery(Iterable<String> values, String query) {
+    final String normalizedQuery = query.trim().toLowerCase();
+    if (normalizedQuery.length < 3) {
+      return false;
+    }
+    return values.any((String value) {
+      return value.trim().toLowerCase().contains(normalizedQuery);
+    });
+  }
+
+  void _sortDashboardSummaries(List<_PatientDashboardSummary> summaries) {
+    summaries.sort((a, b) {
+      if (a.hasExpiryAlert != b.hasExpiryAlert) {
+        return a.hasExpiryAlert ? -1 : 1;
+      }
+      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+    });
   }
 
   _DashboardCardFilter? _selectPrimaryIndexFilter() {

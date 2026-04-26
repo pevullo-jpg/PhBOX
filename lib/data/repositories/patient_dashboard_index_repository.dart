@@ -40,6 +40,16 @@ class PatientDashboardIndexRepository {
     return items;
   }
 
+  Future<List<PatientDashboardIndex>> getAll({int limit = 500}) async {
+    final List<Map<String, dynamic>> maps = await datasource.getCollection(
+      collectionPath: AppCollections.patientDashboardIndex,
+      limit: limit,
+    );
+    final List<PatientDashboardIndex> items = maps.map(PatientDashboardIndex.fromMap).toList();
+    _sort(items);
+    return items;
+  }
+
   Future<PatientDashboardIndex?> getByFiscalCode(String fiscalCode) async {
     final String cf = fiscalCode.trim().toUpperCase();
     if (cf.isEmpty) return null;
