@@ -2894,13 +2894,20 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _deleteRecipesFromRow(_PatientDashboardSummary summary) async {
-    if (summary.imports.isEmpty) return;
-    if (summary.imports.length == 1) {
-      final item = summary.imports.first;
+    final _PatientDashboardSummary detailSummary = await _ensureSummaryDetailsForKey(summary, 'ricette');
+    if (!mounted) return;
+    if (detailSummary.imports.isEmpty) {
+      setState(() {
+        _message = 'Nessun PDF ricetta disponibile per la cancellazione.';
+      });
+      return;
+    }
+    if (detailSummary.imports.length == 1) {
+      final item = detailSummary.imports.first;
       final confirmed = await _confirmDeleteRecipe(item);
       if (!confirmed) return;
       await _drivePdfImportsRepository.requestPdfDelete(item.id, fiscalCode: item.patientFiscalCode);
-      _removeRecipeFromCachedSummary(summary, item);
+      _removeRecipeFromCachedSummary(detailSummary, item);
       _refresh();
       return;
     }
@@ -2914,7 +2921,7 @@ class _DashboardPageState extends State<DashboardPage> {
             if (!confirmed) return;
             setLocalState(() => busy = true);
             await _drivePdfImportsRepository.requestPdfDelete(item.id, fiscalCode: item.patientFiscalCode);
-            _removeRecipeFromCachedSummary(summary, item);
+            _removeRecipeFromCachedSummary(detailSummary, item);
             _refresh();
             setLocalState(() => busy = false);
             if (!mounted) return;
@@ -2923,8 +2930,8 @@ class _DashboardPageState extends State<DashboardPage> {
           return Stack(
             children: [
               _buildFlagDialog(
-                title: 'Elimina ricette · ${summary.displayName}',
-                items: summary.imports.map((item) => _FlagItem(
+                title: 'Elimina ricette · ${detailSummary.displayName}',
+                items: detailSummary.imports.map((item) => _FlagItem(
                   title: item.fileName,
                   subtitle: '${_formatDate(item.prescriptionDate ?? item.createdAt)} · ${item.doctorFullName.trim().isEmpty ? '-' : item.doctorFullName.trim()}',
                   onDelete: () => handleDelete(item),
