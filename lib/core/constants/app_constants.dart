@@ -14,4 +14,6 @@ class AppCollections {
   static const String dashboardTotals = 'dashboard_totals';
   static const String dashboardSummaries = 'dashboard_summaries';
   static const String patientDashboardIndex = 'patient_dashboard_index';
+  static const String phboxRuntime = 'phbox_runtime';
+  static const String phboxSignals = 'phbox_signals';
 }

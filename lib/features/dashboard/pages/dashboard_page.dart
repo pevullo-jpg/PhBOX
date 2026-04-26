@@ -931,7 +931,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 onPressed: () async {
                                   final bool confirmed = await _confirmDeleteRecipe(item);
                                   if (!confirmed) return;
-                                  await _drivePdfImportsRepository.requestPdfDelete(item.id);
+                                  await _drivePdfImportsRepository.requestPdfDelete(item.id, targetFiscalCode: item.patientFiscalCode);
                                   _removeRecipeFromCachedSummary(summary, item);
                                   if (mounted) {
                                     Navigator.of(context).pop();
@@ -2422,7 +2422,7 @@ class _DashboardPageState extends State<DashboardPage> {
       }
       final recipeImports = summary.imports;
       for (final importItem in recipeImports) {
-        await _drivePdfImportsRepository.requestPdfDelete(importItem.id);
+        await _drivePdfImportsRepository.requestPdfDelete(importItem.id, targetFiscalCode: importItem.patientFiscalCode);
       }
       await _dashboardTotalsRepository.applyFrontendManagedDelta(
         debtAmountDelta: -summary.totalDebt,
@@ -2899,7 +2899,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final item = summary.imports.first;
       final confirmed = await _confirmDeleteRecipe(item);
       if (!confirmed) return;
-      await _drivePdfImportsRepository.requestPdfDelete(item.id);
+      await _drivePdfImportsRepository.requestPdfDelete(item.id, targetFiscalCode: item.patientFiscalCode);
       _removeRecipeFromCachedSummary(summary, item);
       _refresh();
       return;
@@ -2913,7 +2913,7 @@ class _DashboardPageState extends State<DashboardPage> {
             final confirmed = await _confirmDeleteRecipe(item);
             if (!confirmed) return;
             setLocalState(() => busy = true);
-            await _drivePdfImportsRepository.requestPdfDelete(item.id);
+            await _drivePdfImportsRepository.requestPdfDelete(item.id, targetFiscalCode: item.patientFiscalCode);
             _removeRecipeFromCachedSummary(summary, item);
             _refresh();
             setLocalState(() => busy = false);

@@ -1,11 +1,14 @@
 import '../../core/constants/app_constants.dart';
 import '../datasources/firestore_datasource.dart';
 import '../models/drive_pdf_import.dart';
+import 'runtime_signal_repository.dart';
 
 class DrivePdfImportsRepository {
   final FirestoreDatasource datasource;
 
   const DrivePdfImportsRepository({required this.datasource});
+
+  RuntimeSignalRepository get _runtimeSignalRepository => RuntimeSignalRepository(datasource: datasource);
 
   Future<void> saveImport(DrivePdfImport importItem) {
     throw UnsupportedError(
@@ -60,22 +63,35 @@ class DrivePdfImportsRepository {
       return item.patientFiscalCode.trim().toUpperCase() == normalized;
     }).toList();
 
-
     filtered.sort((DrivePdfImport a, DrivePdfImport b) {
       return b.chronologyDate.compareTo(a.chronologyDate);
     });
     return filtered;
   }
 
-  Future<void> requestPdfDelete(String id) {
-    return datasource.patchDocument(
+  Future<void> requestPdfDelete(
+    String id, {
+    String targetFiscalCode = '',
+  }) async {
+    final String now = DateTime.now().toIso8601String();
+    final String normalizedFiscalCode = targetFiscalCode.trim().toUpperCase();
+    await datasource.patchDocument(
       collectionPath: AppCollections.drivePdfImports,
       documentId: id,
       data: <String, dynamic>{
         'deletePdfRequested': true,
-        'deleteRequestedAt': DateTime.now().toIso8601String(),
+        'deleteRequestedAt': now,
         'deleteRequestedBy': 'frontend',
       },
+    );
+    await _runtimeSignalRepository.emitManualDataSignal(
+      domain: 'deletePdf',
+      operation: 'delete',
+      targetPath: '${AppCollections.drivePdfImports}/$id',
+      targetFiscalCode: normalizedFiscalCode,
+      targetDocumentId: id,
+      requiresTotalsUpdate: true,
+      requiresIndexUpdate: true,
     );
   }
 }

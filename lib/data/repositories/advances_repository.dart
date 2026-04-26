@@ -1,19 +1,32 @@
 import '../../core/constants/app_constants.dart';
 import '../datasources/firestore_datasource.dart';
 import '../models/advance.dart';
+import 'runtime_signal_repository.dart';
 
 class AdvancesRepository {
   final FirestoreDatasource datasource;
 
   const AdvancesRepository({required this.datasource});
 
-  Future<void> saveAdvance(Advance advance) {
-    return datasource.setSubDocument(
+  RuntimeSignalRepository get _runtimeSignalRepository => RuntimeSignalRepository(datasource: datasource);
+
+  Future<void> saveAdvance(Advance advance) async {
+    final String fiscalCode = advance.patientFiscalCode.trim().toUpperCase();
+    await datasource.setSubDocument(
       collectionPath: AppCollections.patients,
-      documentId: advance.patientFiscalCode,
+      documentId: fiscalCode,
       subcollectionPath: AppCollections.advances,
       subDocumentId: advance.id,
       data: advance.toMap(),
+    );
+    await _runtimeSignalRepository.emitManualDataSignal(
+      domain: 'advances',
+      operation: 'sync',
+      targetPath: '${AppCollections.patients}/$fiscalCode/${AppCollections.advances}/${advance.id}',
+      targetFiscalCode: fiscalCode,
+      targetDocumentId: advance.id,
+      requiresTotalsUpdate: true,
+      requiresIndexUpdate: true,
     );
   }
 
@@ -33,13 +46,22 @@ class AdvancesRepository {
     return maps.map(Advance.fromMap).toList();
   }
 
-
-  Future<void> deleteAdvance(String fiscalCode, String id) {
-    return datasource.deleteSubDocument(
+  Future<void> deleteAdvance(String fiscalCode, String id) async {
+    final String normalizedFiscalCode = fiscalCode.trim().toUpperCase();
+    await datasource.deleteSubDocument(
       collectionPath: AppCollections.patients,
-      documentId: fiscalCode,
+      documentId: normalizedFiscalCode,
       subcollectionPath: AppCollections.advances,
       subDocumentId: id,
+    );
+    await _runtimeSignalRepository.emitManualDataSignal(
+      domain: 'advances',
+      operation: 'delete',
+      targetPath: '${AppCollections.patients}/$normalizedFiscalCode/${AppCollections.advances}/$id',
+      targetFiscalCode: normalizedFiscalCode,
+      targetDocumentId: id,
+      requiresTotalsUpdate: true,
+      requiresIndexUpdate: true,
     );
   }
 }

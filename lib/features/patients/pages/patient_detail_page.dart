@@ -1009,7 +1009,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
 
   Future<void> _requestPrescriptionDelete(_PatientDetailData data, DrivePdfImport item) async {
     if (!await _confirmDelete(message: 'Eliminare questa ricetta?')) return;
-    await _drivePdfImportsRepository.requestPdfDelete(item.id);
+    await _drivePdfImportsRepository.requestPdfDelete(item.id, targetFiscalCode: item.patientFiscalCode);
     final DrivePdfImport hiddenItem = item.copyWith(
       deletePdfRequested: true,
       deleteRequestedAt: DateTime.now(),
