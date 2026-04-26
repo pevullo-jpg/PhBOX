@@ -8,7 +8,7 @@ class DrivePdfImportsRepository {
 
   const DrivePdfImportsRepository({required this.datasource});
 
-  RuntimeSignalRepository get _runtimeSignalRepository => RuntimeSignalRepository(datasource: datasource);
+  RuntimeSignalRepository get _runtimeSignals => RuntimeSignalRepository(datasource: datasource);
 
   Future<void> saveImport(DrivePdfImport importItem) {
     throw UnsupportedError(
@@ -69,26 +69,22 @@ class DrivePdfImportsRepository {
     return filtered;
   }
 
-  Future<void> requestPdfDelete(
-    String id, {
-    String targetFiscalCode = '',
-  }) async {
-    final String now = DateTime.now().toIso8601String();
-    final String normalizedFiscalCode = targetFiscalCode.trim().toUpperCase();
+  Future<void> requestPdfDelete(String id, {String? fiscalCode}) async {
     await datasource.patchDocument(
       collectionPath: AppCollections.drivePdfImports,
       documentId: id,
       data: <String, dynamic>{
         'deletePdfRequested': true,
-        'deleteRequestedAt': now,
+        'deleteRequestedAt': DateTime.now().toIso8601String(),
         'deleteRequestedBy': 'frontend',
       },
     );
-    await _runtimeSignalRepository.emitManualDataSignal(
+
+    await _runtimeSignals.emitBestEffort(
       domain: 'deletePdf',
       operation: 'delete',
-      targetPath: '${AppCollections.drivePdfImports}/$id',
-      targetFiscalCode: normalizedFiscalCode,
+      targetPath: 'drive_pdf_imports/$id',
+      targetFiscalCode: fiscalCode ?? '',
       targetDocumentId: id,
       requiresTotalsUpdate: true,
       requiresIndexUpdate: true,

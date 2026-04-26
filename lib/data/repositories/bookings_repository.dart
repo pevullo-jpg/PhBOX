@@ -8,22 +8,21 @@ class BookingsRepository {
 
   const BookingsRepository({required this.datasource});
 
-  RuntimeSignalRepository get _runtimeSignalRepository => RuntimeSignalRepository(datasource: datasource);
+  RuntimeSignalRepository get _runtimeSignals => RuntimeSignalRepository(datasource: datasource);
 
   Future<void> saveBooking(Booking booking) async {
-    final String fiscalCode = booking.patientFiscalCode.trim().toUpperCase();
     await datasource.setSubDocument(
       collectionPath: AppCollections.patients,
-      documentId: fiscalCode,
+      documentId: booking.patientFiscalCode,
       subcollectionPath: AppCollections.bookings,
       subDocumentId: booking.id,
       data: booking.toMap(),
     );
-    await _runtimeSignalRepository.emitManualDataSignal(
+    await _runtimeSignals.emitBestEffort(
       domain: 'bookings',
       operation: 'sync',
-      targetPath: '${AppCollections.patients}/$fiscalCode/${AppCollections.bookings}/${booking.id}',
-      targetFiscalCode: fiscalCode,
+      targetPath: 'patients/${booking.patientFiscalCode}/bookings/${booking.id}',
+      targetFiscalCode: booking.patientFiscalCode,
       targetDocumentId: booking.id,
       requiresTotalsUpdate: true,
       requiresIndexUpdate: true,
@@ -47,18 +46,17 @@ class BookingsRepository {
   }
 
   Future<void> deleteBooking(String fiscalCode, String id) async {
-    final String normalizedFiscalCode = fiscalCode.trim().toUpperCase();
     await datasource.deleteSubDocument(
       collectionPath: AppCollections.patients,
-      documentId: normalizedFiscalCode,
+      documentId: fiscalCode,
       subcollectionPath: AppCollections.bookings,
       subDocumentId: id,
     );
-    await _runtimeSignalRepository.emitManualDataSignal(
+    await _runtimeSignals.emitBestEffort(
       domain: 'bookings',
       operation: 'delete',
-      targetPath: '${AppCollections.patients}/$normalizedFiscalCode/${AppCollections.bookings}/$id',
-      targetFiscalCode: normalizedFiscalCode,
+      targetPath: 'patients/$fiscalCode/bookings/$id',
+      targetFiscalCode: fiscalCode,
       targetDocumentId: id,
       requiresTotalsUpdate: true,
       requiresIndexUpdate: true,

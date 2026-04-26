@@ -8,22 +8,21 @@ class AdvancesRepository {
 
   const AdvancesRepository({required this.datasource});
 
-  RuntimeSignalRepository get _runtimeSignalRepository => RuntimeSignalRepository(datasource: datasource);
+  RuntimeSignalRepository get _runtimeSignals => RuntimeSignalRepository(datasource: datasource);
 
   Future<void> saveAdvance(Advance advance) async {
-    final String fiscalCode = advance.patientFiscalCode.trim().toUpperCase();
     await datasource.setSubDocument(
       collectionPath: AppCollections.patients,
-      documentId: fiscalCode,
+      documentId: advance.patientFiscalCode,
       subcollectionPath: AppCollections.advances,
       subDocumentId: advance.id,
       data: advance.toMap(),
     );
-    await _runtimeSignalRepository.emitManualDataSignal(
+    await _runtimeSignals.emitBestEffort(
       domain: 'advances',
       operation: 'sync',
-      targetPath: '${AppCollections.patients}/$fiscalCode/${AppCollections.advances}/${advance.id}',
-      targetFiscalCode: fiscalCode,
+      targetPath: 'patients/${advance.patientFiscalCode}/advances/${advance.id}',
+      targetFiscalCode: advance.patientFiscalCode,
       targetDocumentId: advance.id,
       requiresTotalsUpdate: true,
       requiresIndexUpdate: true,
@@ -47,18 +46,17 @@ class AdvancesRepository {
   }
 
   Future<void> deleteAdvance(String fiscalCode, String id) async {
-    final String normalizedFiscalCode = fiscalCode.trim().toUpperCase();
     await datasource.deleteSubDocument(
       collectionPath: AppCollections.patients,
-      documentId: normalizedFiscalCode,
+      documentId: fiscalCode,
       subcollectionPath: AppCollections.advances,
       subDocumentId: id,
     );
-    await _runtimeSignalRepository.emitManualDataSignal(
+    await _runtimeSignals.emitBestEffort(
       domain: 'advances',
       operation: 'delete',
-      targetPath: '${AppCollections.patients}/$normalizedFiscalCode/${AppCollections.advances}/$id',
-      targetFiscalCode: normalizedFiscalCode,
+      targetPath: 'patients/$fiscalCode/advances/$id',
+      targetFiscalCode: fiscalCode,
       targetDocumentId: id,
       requiresTotalsUpdate: true,
       requiresIndexUpdate: true,

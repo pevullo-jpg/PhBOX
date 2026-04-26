@@ -8,22 +8,21 @@ class DebtsRepository {
 
   const DebtsRepository({required this.datasource});
 
-  RuntimeSignalRepository get _runtimeSignalRepository => RuntimeSignalRepository(datasource: datasource);
+  RuntimeSignalRepository get _runtimeSignals => RuntimeSignalRepository(datasource: datasource);
 
   Future<void> saveDebt(Debt debt) async {
-    final String fiscalCode = debt.patientFiscalCode.trim().toUpperCase();
     await datasource.setSubDocument(
       collectionPath: AppCollections.patients,
-      documentId: fiscalCode,
+      documentId: debt.patientFiscalCode,
       subcollectionPath: AppCollections.debts,
       subDocumentId: debt.id,
       data: debt.toMap(),
     );
-    await _runtimeSignalRepository.emitManualDataSignal(
+    await _runtimeSignals.emitBestEffort(
       domain: 'debts',
       operation: 'sync',
-      targetPath: '${AppCollections.patients}/$fiscalCode/${AppCollections.debts}/${debt.id}',
-      targetFiscalCode: fiscalCode,
+      targetPath: 'patients/${debt.patientFiscalCode}/debts/${debt.id}',
+      targetFiscalCode: debt.patientFiscalCode,
       targetDocumentId: debt.id,
       requiresTotalsUpdate: true,
       requiresIndexUpdate: true,
@@ -47,18 +46,17 @@ class DebtsRepository {
   }
 
   Future<void> deleteDebt(String fiscalCode, String id) async {
-    final String normalizedFiscalCode = fiscalCode.trim().toUpperCase();
     await datasource.deleteSubDocument(
       collectionPath: AppCollections.patients,
-      documentId: normalizedFiscalCode,
+      documentId: fiscalCode,
       subcollectionPath: AppCollections.debts,
       subDocumentId: id,
     );
-    await _runtimeSignalRepository.emitManualDataSignal(
+    await _runtimeSignals.emitBestEffort(
       domain: 'debts',
       operation: 'delete',
-      targetPath: '${AppCollections.patients}/$normalizedFiscalCode/${AppCollections.debts}/$id',
-      targetFiscalCode: normalizedFiscalCode,
+      targetPath: 'patients/$fiscalCode/debts/$id',
+      targetFiscalCode: fiscalCode,
       targetDocumentId: id,
       requiresTotalsUpdate: true,
       requiresIndexUpdate: true,
