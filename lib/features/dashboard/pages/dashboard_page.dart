@@ -2194,9 +2194,12 @@ class _DashboardPageState extends State<DashboardPage> {
     final List<String> doctorCandidates = await _loadDoctorsCatalogForDashboardAction();
     final Map<String, _PatientDashboardSummary> autocompleteCacheByCf = <String, _PatientDashboardSummary>{};
     final Set<String> pendingAutocompleteQueries = <String>{};
+    final LayerLink autocompleteLayerLink = LayerLink();
     List<_PatientDashboardSummary> autocompleteSuggestions = <_PatientDashboardSummary>[];
+    OverlayEntry? autocompleteOverlayEntry;
     Timer? autocompleteDebounceTimer;
     int autocompleteRequestSerial = 0;
+    int autocompleteSelectedIndex = -1;
     String lastCompletedAutocompleteRequestKey = '';
 
     for (final _PatientDashboardSummary summary in data.summaries) {
@@ -2257,6 +2260,157 @@ class _DashboardPageState extends State<DashboardPage> {
       return allMatches.take(6).toList();
     }
 
+
+    void hidePatientAutocompleteOverlay() {
+      autocompleteOverlayEntry?.remove();
+      autocompleteOverlayEntry = null;
+    }
+
+    late void Function(_PatientDashboardSummary summary, void Function(void Function()) setLocalState) applyPatientSuggestion;
+
+    void showOrUpdatePatientAutocompleteOverlay(void Function(void Function()) setLocalState) {
+      if (autocompleteSuggestions.isEmpty || !fiscalCodeFocusNode.hasFocus) {
+        hidePatientAutocompleteOverlay();
+        return;
+      }
+      if (autocompleteSelectedIndex < 0 || autocompleteSelectedIndex >= autocompleteSuggestions.length) {
+        autocompleteSelectedIndex = 0;
+      }
+      if (autocompleteOverlayEntry != null) {
+        autocompleteOverlayEntry!.markNeedsBuild();
+        return;
+      }
+      final OverlayState? overlay = Overlay.maybeOf(context);
+      if (overlay == null) {
+        return;
+      }
+      autocompleteOverlayEntry = OverlayEntry(
+        builder: (overlayContext) {
+          if (autocompleteSuggestions.isEmpty) {
+            return const SizedBox.shrink();
+          }
+          return Positioned.fill(
+            child: CompositedTransformFollower(
+              link: autocompleteLayerLink,
+              showWhenUnlinked: false,
+              targetAnchor: Alignment.bottomLeft,
+              followerAnchor: Alignment.topLeft,
+              offset: const Offset(0, 6),
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: Material(
+                  color: Colors.transparent,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxWidth: 460,
+                      maxHeight: 220,
+                    ),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: AppColors.panelSoft,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: Colors.white24),
+                        boxShadow: const <BoxShadow>[
+                          BoxShadow(
+                            color: Color(0x99000000),
+                            blurRadius: 18,
+                            offset: Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(14),
+                        child: ListView.separated(
+                          padding: EdgeInsets.zero,
+                          shrinkWrap: true,
+                          itemCount: autocompleteSuggestions.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1, color: Colors.white10),
+                          itemBuilder: (context, index) {
+                            final option = autocompleteSuggestions[index];
+                            final bool selected = index == autocompleteSelectedIndex;
+                            final String normalizedCf = PatientInputNormalizer.normalizeFiscalCode(option.patient.fiscalCode);
+                            final String displayName = PatientInputNormalizer.normalizeFullName(option.patient.fullName).toUpperCase();
+                            return InkWell(
+                              onTap: () => applyPatientSuggestion(option, setLocalState),
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: selected ? Colors.white12 : Colors.transparent,
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(normalizedCf, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                                      const SizedBox(height: 2),
+                                      Text(displayName, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                                      if ((option.patient.alias ?? '').trim().isNotEmpty) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'Alias: ${(option.patient.alias ?? '').trim()}',
+                                          style: const TextStyle(color: Colors.white54, fontSize: 11),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      );
+      overlay.insert(autocompleteOverlayEntry!);
+    }
+
+    KeyEventResult handlePatientAutocompleteKey(KeyEvent event, void Function(void Function()) setLocalState) {
+      if (event is! KeyDownEvent || autocompleteSuggestions.isEmpty) {
+        return KeyEventResult.ignored;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+        setLocalState(() {
+          autocompleteSelectedIndex = autocompleteSelectedIndex < 0
+              ? 0
+              : math.min(autocompleteSelectedIndex + 1, autocompleteSuggestions.length - 1);
+        });
+        showOrUpdatePatientAutocompleteOverlay(setLocalState);
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+        setLocalState(() {
+          autocompleteSelectedIndex = autocompleteSelectedIndex <= 0
+              ? autocompleteSuggestions.length - 1
+              : autocompleteSelectedIndex - 1;
+        });
+        showOrUpdatePatientAutocompleteOverlay(setLocalState);
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+        final int index = autocompleteSelectedIndex < 0 ? 0 : autocompleteSelectedIndex;
+        if (index >= 0 && index < autocompleteSuggestions.length) {
+          applyPatientSuggestion(autocompleteSuggestions[index], setLocalState);
+          return KeyEventResult.handled;
+        }
+      }
+      if (event.logicalKey == LogicalKeyboardKey.escape) {
+        setLocalState(() {
+          autocompleteSuggestions = const <_PatientDashboardSummary>[];
+          autocompleteSelectedIndex = -1;
+        });
+        hidePatientAutocompleteOverlay();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+
     void _applyPatientSuggestion(_PatientDashboardSummary summary, void Function(void Function()) setLocalState) {
       final String normalizedCf = PatientInputNormalizer.normalizeFiscalCode(summary.patient.fiscalCode);
       final List<String> nameParts = PatientInputNormalizer.splitFullName(summary.patient.fullName);
@@ -2279,8 +2433,12 @@ class _DashboardPageState extends State<DashboardPage> {
           selectedDoctor = doctorFromMemory;
         }
         autocompleteSuggestions = const <_PatientDashboardSummary>[];
+        autocompleteSelectedIndex = -1;
       });
+      hidePatientAutocompleteOverlay();
     }
+
+    applyPatientSuggestion = _applyPatientSuggestion;
 
     Future<void> refreshPatientAutocomplete(String rawValue, void Function(void Function()) setLocalState) async {
       final String normalizedCf = PatientInputNormalizer.normalizeFiscalCode(rawValue);
@@ -2289,7 +2447,9 @@ class _DashboardPageState extends State<DashboardPage> {
       if (normalizedCf.length < 3 && normalizedQuery.length < 3) {
         setLocalState(() {
           autocompleteSuggestions = const <_PatientDashboardSummary>[];
+          autocompleteSelectedIndex = -1;
         });
+        hidePatientAutocompleteOverlay();
         return;
       }
       if (requestKey.isEmpty || pendingAutocompleteQueries.contains(requestKey)) {
@@ -2327,8 +2487,10 @@ class _DashboardPageState extends State<DashboardPage> {
         setLocalState(() {
           autocompleteCacheByCf.addAll(nextByCf);
           autocompleteSuggestions = nextByCf.values.take(6).toList();
+          autocompleteSelectedIndex = autocompleteSuggestions.isEmpty ? -1 : 0;
           lastCompletedAutocompleteRequestKey = requestKey;
         });
+        showOrUpdatePatientAutocompleteOverlay(setLocalState);
         final _PatientDashboardSummary? exactSummary = autocompleteCacheByCf[normalizedCf];
         if (exactSummary != null && normalizedCf.length >= 16) {
           _applyPatientSuggestion(exactSummary, setLocalState);
@@ -2352,7 +2514,9 @@ class _DashboardPageState extends State<DashboardPage> {
       if (normalizedCf.length < 3 && normalizedQuery.length < 3) {
         setLocalState(() {
           autocompleteSuggestions = const <_PatientDashboardSummary>[];
+          autocompleteSelectedIndex = -1;
         });
+        hidePatientAutocompleteOverlay();
         return;
       }
 
@@ -2360,7 +2524,9 @@ class _DashboardPageState extends State<DashboardPage> {
       if (localSuggestions.isNotEmpty) {
         setLocalState(() {
           autocompleteSuggestions = localSuggestions;
+          autocompleteSelectedIndex = 0;
         });
+        showOrUpdatePatientAutocompleteOverlay(setLocalState);
         return;
       }
 
@@ -2522,55 +2688,18 @@ class _DashboardPageState extends State<DashboardPage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        _dialogField(
-                          fiscalCodeController,
-                          'Codice fiscale',
-                          focusNode: fiscalCodeFocusNode,
-                          onChanged: (value) => fillFromExistingPatient(value, setLocalState),
-                        ),
-                        if (autocompleteSuggestions.isNotEmpty) ...[
-                          const SizedBox(height: 6),
-                          Container(
-                            width: 460,
-                            decoration: BoxDecoration(
-                              color: AppColors.panelSoft,
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(color: Colors.white24),
-                            ),
-                            child: ListView.separated(
-                              padding: EdgeInsets.zero,
-                              shrinkWrap: true,
-                              itemCount: autocompleteSuggestions.length,
-                              separatorBuilder: (_, __) => const Divider(height: 1, color: Colors.white10),
-                              itemBuilder: (context, index) {
-                                final option = autocompleteSuggestions[index];
-                                final String normalizedCf = PatientInputNormalizer.normalizeFiscalCode(option.patient.fiscalCode);
-                                final String displayName = PatientInputNormalizer.normalizeFullName(option.patient.fullName).toUpperCase();
-                                return InkWell(
-                                  onTap: () => _applyPatientSuggestion(option, setLocalState),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(normalizedCf, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                                        const SizedBox(height: 2),
-                                        Text(displayName, style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                                        if ((option.patient.alias ?? '').trim().isNotEmpty) ...[
-                                          const SizedBox(height: 2),
-                                          Text(
-                                            'Alias: ${(option.patient.alias ?? '').trim()}',
-                                            style: const TextStyle(color: Colors.white54, fontSize: 11),
-                                          ),
-                                        ],
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
+                        Focus(
+                          onKeyEvent: (_, event) => handlePatientAutocompleteKey(event, setLocalState),
+                          child: CompositedTransformTarget(
+                            link: autocompleteLayerLink,
+                            child: _dialogField(
+                              fiscalCodeController,
+                              'Codice fiscale',
+                              focusNode: fiscalCodeFocusNode,
+                              onChanged: (value) => fillFromExistingPatient(value, setLocalState),
                             ),
                           ),
-                        ],
+                        ),
                         const SizedBox(height: 12),
                         _dialogField(nameController, 'Nome'),
                         const SizedBox(height: 12),
@@ -2682,6 +2811,7 @@ class _DashboardPageState extends State<DashboardPage> {
     } finally {
       autocompleteDebounceTimer?.cancel();
       autocompleteDebounceTimer = null;
+      hidePatientAutocompleteOverlay();
       fiscalCodeController.dispose();
       fiscalCodeFocusNode.dispose();
       nameController.dispose();
