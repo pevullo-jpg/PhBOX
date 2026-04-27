@@ -2197,7 +2197,6 @@ class _DashboardPageState extends State<DashboardPage> {
     List<_PatientDashboardSummary> autocompleteSuggestions = <_PatientDashboardSummary>[];
     Timer? autocompleteDebounceTimer;
     int autocompleteRequestSerial = 0;
-    int autocompleteOptionsVersion = 0;
     String lastCompletedAutocompleteRequestKey = '';
 
     for (final _PatientDashboardSummary summary in data.summaries) {
@@ -2289,7 +2288,6 @@ class _DashboardPageState extends State<DashboardPage> {
       if (normalizedCf.length < 3 && normalizedQuery.length < 3) {
         setLocalState(() {
           autocompleteSuggestions = const <_PatientDashboardSummary>[];
-          autocompleteOptionsVersion++;
         });
         return;
       }
@@ -2297,9 +2295,6 @@ class _DashboardPageState extends State<DashboardPage> {
         return;
       }
       if (requestKey == lastCompletedAutocompleteRequestKey) {
-        setLocalState(() {
-          autocompleteOptionsVersion++;
-        });
         return;
       }
       pendingAutocompleteQueries.add(requestKey);
@@ -2331,7 +2326,6 @@ class _DashboardPageState extends State<DashboardPage> {
         setLocalState(() {
           autocompleteCacheByCf.addAll(nextByCf);
           autocompleteSuggestions = nextByCf.values.take(6).toList();
-          autocompleteOptionsVersion++;
           lastCompletedAutocompleteRequestKey = requestKey;
         });
         final _PatientDashboardSummary? exactSummary = autocompleteCacheByCf[normalizedCf];
@@ -2357,7 +2351,6 @@ class _DashboardPageState extends State<DashboardPage> {
       if (normalizedCf.length < 3 && normalizedQuery.length < 3) {
         setLocalState(() {
           autocompleteSuggestions = const <_PatientDashboardSummary>[];
-          autocompleteOptionsVersion++;
         });
         return;
       }
@@ -2366,7 +2359,6 @@ class _DashboardPageState extends State<DashboardPage> {
       if (localSuggestions.isNotEmpty) {
         setLocalState(() {
           autocompleteSuggestions = localSuggestions;
-          autocompleteOptionsVersion++;
         });
         return;
       }
@@ -2530,7 +2522,6 @@ class _DashboardPageState extends State<DashboardPage> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         RawAutocomplete<_PatientDashboardSummary>(
-                          key: ValueKey<int>(autocompleteOptionsVersion),
                           textEditingController: fiscalCodeController,
                           focusNode: fiscalCodeFocusNode,
                           displayStringForOption: (option) => PatientInputNormalizer.normalizeFiscalCode(option.patient.fiscalCode),
