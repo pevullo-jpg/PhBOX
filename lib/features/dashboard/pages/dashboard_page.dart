@@ -2195,7 +2195,20 @@ class _DashboardPageState extends State<DashboardPage> {
     final Map<String, _PatientDashboardSummary> autocompleteCacheByCf = <String, _PatientDashboardSummary>{};
     final Set<String> pendingAutocompleteQueries = <String>{};
     List<_PatientDashboardSummary> autocompleteSuggestions = <_PatientDashboardSummary>[];
+    Timer? autocompleteDebounceTimer;
     int autocompleteRequestSerial = 0;
+    int autocompleteOptionsVersion = 0;
+    String lastCompletedAutocompleteRequestKey = '';
+
+    for (final _PatientDashboardSummary summary in data.summaries) {
+      final String cf = PatientInputNormalizer.normalizeFiscalCode(summary.patient.fiscalCode);
+      if (cf.isEmpty || isTemporaryPatientKey(cf)) continue;
+      autocompleteCacheByCf.putIfAbsent(cf, () => summary);
+    }
+
+    String _autocompleteRequestKey(String rawValue) {
+      return rawValue.trim().toUpperCase().replaceAll(RegExp(r'\s+'), ' ');
+    }
 
     _PatientDashboardSummary? _findExactPatientByCf(String rawValue) {
       final String normalizedCf = PatientInputNormalizer.normalizeFiscalCode(rawValue);
@@ -2221,6 +2234,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final Map<String, _PatientDashboardSummary> byCf = <String, _PatientDashboardSummary>{
         for (final _PatientDashboardSummary summary in autocompleteSuggestions)
           PatientInputNormalizer.normalizeFiscalCode(summary.patient.fiscalCode): summary,
+        ...autocompleteCacheByCf,
       };
       for (final summary in data.summaries) {
         final String patientCf = PatientInputNormalizer.normalizeFiscalCode(summary.patient.fiscalCode);
@@ -2271,45 +2285,54 @@ class _DashboardPageState extends State<DashboardPage> {
     Future<void> refreshPatientAutocomplete(String rawValue, void Function(void Function()) setLocalState) async {
       final String normalizedCf = PatientInputNormalizer.normalizeFiscalCode(rawValue);
       final String normalizedQuery = rawValue.trim();
+      final String requestKey = _autocompleteRequestKey(rawValue);
       if (normalizedCf.length < 3 && normalizedQuery.length < 3) {
         setLocalState(() {
           autocompleteSuggestions = const <_PatientDashboardSummary>[];
+          autocompleteOptionsVersion++;
         });
         return;
       }
-      final String requestKey = normalizedQuery.toUpperCase();
-      if (pendingAutocompleteQueries.contains(requestKey)) {
+      if (requestKey.isEmpty || pendingAutocompleteQueries.contains(requestKey)) {
+        return;
+      }
+      if (requestKey == lastCompletedAutocompleteRequestKey) {
+        setLocalState(() {
+          autocompleteOptionsVersion++;
+        });
         return;
       }
       pendingAutocompleteQueries.add(requestKey);
       final int requestSerial = ++autocompleteRequestSerial;
       try {
-        final List<Future<dynamic>> futures = <Future<dynamic>>[
-          _patientDashboardIndexRepository.searchByPrefix(normalizedQuery, limit: 8),
-        ];
-        if (normalizedCf.length >= 3) {
-          futures.add(_patientDashboardIndexRepository.getByFiscalCode(normalizedCf));
-        }
-        final List<dynamic> results = await Future.wait<dynamic>(futures);
-        final List<PatientDashboardIndex> prefixRows = results[0] as List<PatientDashboardIndex>;
-        final PatientDashboardIndex? exactRow = results.length > 1 ? results[1] as PatientDashboardIndex? : null;
+        final List<PatientDashboardIndex> prefixRows = await _patientDashboardIndexRepository.searchByPrefix(normalizedQuery, limit: 8);
         if (requestSerial != autocompleteRequestSerial) {
           return;
         }
         final Map<String, _PatientDashboardSummary> nextByCf = <String, _PatientDashboardSummary>{};
-        if (exactRow != null) {
-          final _PatientDashboardSummary exactSummary = _summaryFromIndex(exactRow);
-          nextByCf[PatientInputNormalizer.normalizeFiscalCode(exactSummary.patient.fiscalCode)] = exactSummary;
-        }
         for (final PatientDashboardIndex row in prefixRows) {
           final _PatientDashboardSummary summary = _summaryFromIndex(row);
           final String cf = PatientInputNormalizer.normalizeFiscalCode(summary.patient.fiscalCode);
           if (cf.isEmpty || isTemporaryPatientKey(cf)) continue;
           nextByCf.putIfAbsent(cf, () => summary);
         }
+
+        if (normalizedCf.length >= 16 && !nextByCf.containsKey(normalizedCf)) {
+          final PatientDashboardIndex? exactRow = await _patientDashboardIndexRepository.getByFiscalCode(normalizedCf);
+          if (requestSerial != autocompleteRequestSerial) {
+            return;
+          }
+          if (exactRow != null) {
+            final _PatientDashboardSummary exactSummary = _summaryFromIndex(exactRow);
+            nextByCf[PatientInputNormalizer.normalizeFiscalCode(exactSummary.patient.fiscalCode)] = exactSummary;
+          }
+        }
+
         setLocalState(() {
           autocompleteCacheByCf.addAll(nextByCf);
           autocompleteSuggestions = nextByCf.values.take(6).toList();
+          autocompleteOptionsVersion++;
+          lastCompletedAutocompleteRequestKey = requestKey;
         });
         final _PatientDashboardSummary? exactSummary = autocompleteCacheByCf[normalizedCf];
         if (exactSummary != null && normalizedCf.length >= 16) {
@@ -2324,12 +2347,33 @@ class _DashboardPageState extends State<DashboardPage> {
 
     void fillFromExistingPatient(String rawValue, void Function(void Function()) setLocalState) {
       final String normalizedCf = PatientInputNormalizer.normalizeFiscalCode(rawValue);
+      final String normalizedQuery = rawValue.trim();
+      autocompleteDebounceTimer?.cancel();
       final _PatientDashboardSummary? existing = _findExactPatientByCf(normalizedCf);
       if (existing != null) {
         _applyPatientSuggestion(existing, setLocalState);
         return;
       }
-      unawaited(refreshPatientAutocomplete(rawValue, setLocalState));
+      if (normalizedCf.length < 3 && normalizedQuery.length < 3) {
+        setLocalState(() {
+          autocompleteSuggestions = const <_PatientDashboardSummary>[];
+          autocompleteOptionsVersion++;
+        });
+        return;
+      }
+
+      final List<_PatientDashboardSummary> localSuggestions = _findPatientSuggestions(rawValue);
+      if (localSuggestions.isNotEmpty) {
+        setLocalState(() {
+          autocompleteSuggestions = localSuggestions;
+          autocompleteOptionsVersion++;
+        });
+        return;
+      }
+
+      autocompleteDebounceTimer = Timer(_userRequestRefreshDebounceDelay, () {
+        unawaited(refreshPatientAutocomplete(rawValue, setLocalState));
+      });
     }
 
     try {
@@ -2486,6 +2530,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         RawAutocomplete<_PatientDashboardSummary>(
+                          key: ValueKey<int>(autocompleteOptionsVersion),
                           textEditingController: fiscalCodeController,
                           focusNode: fiscalCodeFocusNode,
                           displayStringForOption: (option) => PatientInputNormalizer.normalizeFiscalCode(option.patient.fiscalCode),
@@ -2666,6 +2711,8 @@ class _DashboardPageState extends State<DashboardPage> {
         },
       );
     } finally {
+      autocompleteDebounceTimer?.cancel();
+      autocompleteDebounceTimer = null;
       fiscalCodeController.dispose();
       fiscalCodeFocusNode.dispose();
       nameController.dispose();
