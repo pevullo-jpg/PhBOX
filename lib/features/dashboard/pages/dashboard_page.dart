@@ -2229,7 +2229,7 @@ class _DashboardPageState extends State<DashboardPage> {
     List<_PatientDashboardSummary> _findPatientSuggestions(String rawValue) {
       final String normalizedQuery = PatientInputNormalizer.normalizeFiscalCode(rawValue);
       final String textQuery = rawValue.trim().toLowerCase();
-      if (normalizedQuery.isEmpty && textQuery.isEmpty) return const [];
+      if (normalizedQuery.length < 3 && textQuery.length < 3) return const [];
       final Map<String, _PatientDashboardSummary> byCf = <String, _PatientDashboardSummary>{
         for (final _PatientDashboardSummary summary in autocompleteSuggestions)
           PatientInputNormalizer.normalizeFiscalCode(summary.patient.fiscalCode): summary,
@@ -2278,6 +2278,7 @@ class _DashboardPageState extends State<DashboardPage> {
         if (doctorFromMemory.isNotEmpty && doctorFromMemory != '-') {
           selectedDoctor = doctorFromMemory;
         }
+        autocompleteSuggestions = const <_PatientDashboardSummary>[];
       });
     }
 
@@ -2521,78 +2522,55 @@ class _DashboardPageState extends State<DashboardPage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        RawAutocomplete<_PatientDashboardSummary>(
-                          textEditingController: fiscalCodeController,
+                        _dialogField(
+                          fiscalCodeController,
+                          'Codice fiscale',
                           focusNode: fiscalCodeFocusNode,
-                          displayStringForOption: (option) => PatientInputNormalizer.normalizeFiscalCode(option.patient.fiscalCode),
-                          optionsBuilder: (textEditingValue) {
-                            return _findPatientSuggestions(textEditingValue.text);
-                          },
-                          onSelected: (selection) {
-                            _applyPatientSuggestion(selection, setLocalState);
-                          },
-                          fieldViewBuilder: (context, textEditingController, focusNode, onFieldSubmitted) {
-                            return _dialogField(
-                              textEditingController,
-                              'Codice fiscale',
-                              focusNode: focusNode,
-                              onChanged: (value) => fillFromExistingPatient(value, setLocalState),
-                            );
-                          },
-                          optionsViewBuilder: (context, onSelected, options) {
-                            final List<_PatientDashboardSummary> optionList = options.toList(growable: false);
-                            if (optionList.isEmpty) {
-                              return const SizedBox.shrink();
-                            }
-                            return Align(
-                              alignment: Alignment.topLeft,
-                              child: Material(
-                                color: Colors.transparent,
-                                child: Container(
-                                  width: 460,
-                                  margin: const EdgeInsets.only(top: 6),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.panelSoft,
-                                    borderRadius: BorderRadius.circular(14),
-                                    border: Border.all(color: Colors.white24),
-                                  ),
-                                  child: ListView.separated(
-                                    padding: EdgeInsets.zero,
-                                    shrinkWrap: true,
-                                    itemCount: optionList.length,
-                                    separatorBuilder: (_, __) => const Divider(height: 1, color: Colors.white10),
-                                    itemBuilder: (context, index) {
-                                      final option = optionList[index];
-                                      final String normalizedCf = PatientInputNormalizer.normalizeFiscalCode(option.patient.fiscalCode);
-                                      final String displayName = PatientInputNormalizer.normalizeFullName(option.patient.fullName).toUpperCase();
-                                      return InkWell(
-                                        onTap: () => onSelected(option),
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Text(normalizedCf, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                                              const SizedBox(height: 2),
-                                              Text(displayName, style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                                              if ((option.patient.alias ?? '').trim().isNotEmpty) ...[
-                                                const SizedBox(height: 2),
-                                                Text(
-                                                  'Alias: ${(option.patient.alias ?? '').trim()}',
-                                                  style: const TextStyle(color: Colors.white54, fontSize: 11),
-                                                ),
-                                              ],
-                                            ],
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
+                          onChanged: (value) => fillFromExistingPatient(value, setLocalState),
                         ),
+                        if (autocompleteSuggestions.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Container(
+                            width: 460,
+                            decoration: BoxDecoration(
+                              color: AppColors.panelSoft,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: Colors.white24),
+                            ),
+                            child: ListView.separated(
+                              padding: EdgeInsets.zero,
+                              shrinkWrap: true,
+                              itemCount: autocompleteSuggestions.length,
+                              separatorBuilder: (_, __) => const Divider(height: 1, color: Colors.white10),
+                              itemBuilder: (context, index) {
+                                final option = autocompleteSuggestions[index];
+                                final String normalizedCf = PatientInputNormalizer.normalizeFiscalCode(option.patient.fiscalCode);
+                                final String displayName = PatientInputNormalizer.normalizeFullName(option.patient.fullName).toUpperCase();
+                                return InkWell(
+                                  onTap: () => _applyPatientSuggestion(option, setLocalState),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(normalizedCf, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                                        const SizedBox(height: 2),
+                                        Text(displayName, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                                        if ((option.patient.alias ?? '').trim().isNotEmpty) ...[
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            'Alias: ${(option.patient.alias ?? '').trim()}',
+                                            style: const TextStyle(color: Colors.white54, fontSize: 11),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 12),
                         _dialogField(nameController, 'Nome'),
                         const SizedBox(height: 12),
