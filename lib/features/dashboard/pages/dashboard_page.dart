@@ -2195,6 +2195,8 @@ class _DashboardPageState extends State<DashboardPage> {
     final Map<String, _PatientDashboardSummary> autocompleteCacheByCf = <String, _PatientDashboardSummary>{};
     final Set<String> pendingAutocompleteQueries = <String>{};
     final LayerLink autocompleteLayerLink = LayerLink();
+    final ScrollController autocompleteScrollController = ScrollController();
+    const double autocompleteRowExtent = 64;
     List<_PatientDashboardSummary> autocompleteSuggestions = <_PatientDashboardSummary>[];
     OverlayEntry? autocompleteOverlayEntry;
     Timer? autocompleteDebounceTimer;
@@ -2268,6 +2270,38 @@ class _DashboardPageState extends State<DashboardPage> {
 
     late void Function(_PatientDashboardSummary summary, void Function(void Function()) setLocalState) applyPatientSuggestion;
 
+    void scrollAutocompleteSelectionIntoView() {
+      if (autocompleteSelectedIndex < 0) {
+        return;
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!autocompleteScrollController.hasClients) {
+          return;
+        }
+        final ScrollPosition position = autocompleteScrollController.position;
+        final double viewportHeight = position.viewportDimension;
+        final double rowTop = autocompleteSelectedIndex * autocompleteRowExtent;
+        final double rowBottom = rowTop + autocompleteRowExtent;
+        double targetOffset = position.pixels;
+
+        if (rowTop < position.pixels) {
+          targetOffset = rowTop;
+        } else if (rowBottom > position.pixels + viewportHeight) {
+          targetOffset = rowBottom - viewportHeight;
+        }
+
+        targetOffset = targetOffset.clamp(0.0, position.maxScrollExtent).toDouble();
+        if ((targetOffset - position.pixels).abs() < 1) {
+          return;
+        }
+        autocompleteScrollController.animateTo(
+          targetOffset,
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
+        );
+      });
+    }
+
     void showOrUpdatePatientAutocompleteOverlay(void Function(void Function()) setLocalState) {
       if (autocompleteSuggestions.isEmpty || !fiscalCodeFocusNode.hasFocus) {
         hidePatientAutocompleteOverlay();
@@ -2321,6 +2355,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(14),
                         child: ListView.separated(
+                          controller: autocompleteScrollController,
                           padding: EdgeInsets.zero,
                           shrinkWrap: true,
                           itemCount: autocompleteSuggestions.length,
@@ -2382,6 +2417,7 @@ class _DashboardPageState extends State<DashboardPage> {
               : math.min(autocompleteSelectedIndex + 1, autocompleteSuggestions.length - 1);
         });
         showOrUpdatePatientAutocompleteOverlay(setLocalState);
+        scrollAutocompleteSelectionIntoView();
         return KeyEventResult.handled;
       }
       if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
@@ -2391,6 +2427,7 @@ class _DashboardPageState extends State<DashboardPage> {
               : autocompleteSelectedIndex - 1;
         });
         showOrUpdatePatientAutocompleteOverlay(setLocalState);
+        scrollAutocompleteSelectionIntoView();
         return KeyEventResult.handled;
       }
       if (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) {
@@ -2491,6 +2528,9 @@ class _DashboardPageState extends State<DashboardPage> {
           lastCompletedAutocompleteRequestKey = requestKey;
         });
         showOrUpdatePatientAutocompleteOverlay(setLocalState);
+        if (autocompleteScrollController.hasClients) {
+          autocompleteScrollController.jumpTo(0);
+        }
         final _PatientDashboardSummary? exactSummary = autocompleteCacheByCf[normalizedCf];
         if (exactSummary != null && normalizedCf.length >= 16) {
           _applyPatientSuggestion(exactSummary, setLocalState);
@@ -2527,6 +2567,9 @@ class _DashboardPageState extends State<DashboardPage> {
           autocompleteSelectedIndex = 0;
         });
         showOrUpdatePatientAutocompleteOverlay(setLocalState);
+        if (autocompleteScrollController.hasClients) {
+          autocompleteScrollController.jumpTo(0);
+        }
         return;
       }
 
@@ -2814,6 +2857,7 @@ class _DashboardPageState extends State<DashboardPage> {
       hidePatientAutocompleteOverlay();
       fiscalCodeController.dispose();
       fiscalCodeFocusNode.dispose();
+      autocompleteScrollController.dispose();
       nameController.dispose();
       surnameController.dispose();
       aliasController.dispose();
