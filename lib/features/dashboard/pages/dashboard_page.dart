@@ -2192,9 +2192,18 @@ class _DashboardPageState extends State<DashboardPage> {
     final debtDescriptionController = TextEditingController();
     String selectedDoctor = '';
     final List<String> doctorCandidates = await _loadDoctorsCatalogForDashboardAction();
+    final Map<String, _PatientDashboardSummary> autocompleteCacheByCf = <String, _PatientDashboardSummary>{};
+    final Set<String> pendingAutocompleteQueries = <String>{};
+    List<_PatientDashboardSummary> autocompleteSuggestions = <_PatientDashboardSummary>[];
+    int autocompleteRequestSerial = 0;
 
     _PatientDashboardSummary? _findExactPatientByCf(String rawValue) {
       final String normalizedCf = PatientInputNormalizer.normalizeFiscalCode(rawValue);
+      if (normalizedCf.isEmpty) return null;
+      final _PatientDashboardSummary? cached = autocompleteCacheByCf[normalizedCf];
+      if (cached != null) {
+        return cached;
+      }
       for (final summary in data.summaries) {
         final String patientKey = PatientInputNormalizer.normalizeFiscalCode(summary.patient.fiscalCode);
         if (isTemporaryPatientKey(patientKey)) continue;
@@ -2207,15 +2216,26 @@ class _DashboardPageState extends State<DashboardPage> {
 
     List<_PatientDashboardSummary> _findPatientSuggestions(String rawValue) {
       final String normalizedQuery = PatientInputNormalizer.normalizeFiscalCode(rawValue);
-      if (normalizedQuery.isEmpty) return const [];
-      final List<_PatientDashboardSummary> startsWithMatches = <_PatientDashboardSummary>[];
-      final List<_PatientDashboardSummary> containsMatches = <_PatientDashboardSummary>[];
+      final String textQuery = rawValue.trim().toLowerCase();
+      if (normalizedQuery.isEmpty && textQuery.isEmpty) return const [];
+      final Map<String, _PatientDashboardSummary> byCf = <String, _PatientDashboardSummary>{
+        for (final _PatientDashboardSummary summary in autocompleteSuggestions)
+          PatientInputNormalizer.normalizeFiscalCode(summary.patient.fiscalCode): summary,
+      };
       for (final summary in data.summaries) {
         final String patientCf = PatientInputNormalizer.normalizeFiscalCode(summary.patient.fiscalCode);
         if (patientCf.isEmpty || isTemporaryPatientKey(patientCf)) continue;
-        if (patientCf.startsWith(normalizedQuery)) {
+        byCf.putIfAbsent(patientCf, () => summary);
+      }
+      final List<_PatientDashboardSummary> startsWithMatches = <_PatientDashboardSummary>[];
+      final List<_PatientDashboardSummary> containsMatches = <_PatientDashboardSummary>[];
+      for (final summary in byCf.values) {
+        final String patientCf = PatientInputNormalizer.normalizeFiscalCode(summary.patient.fiscalCode);
+        final String fullName = summary.patient.fullName.toLowerCase();
+        final String alias = (summary.patient.alias ?? '').toLowerCase();
+        if (patientCf.startsWith(normalizedQuery) || fullName.startsWith(textQuery) || alias.startsWith(textQuery)) {
           startsWithMatches.add(summary);
-        } else if (patientCf.contains(normalizedQuery)) {
+        } else if (patientCf.contains(normalizedQuery) || fullName.contains(textQuery) || alias.contains(textQuery)) {
           containsMatches.add(summary);
         }
       }
@@ -2229,6 +2249,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final List<String> nameParts = PatientInputNormalizer.splitFullName(summary.patient.fullName);
       final String doctorFromMemory = summary.doctorName.trim();
       setLocalState(() {
+        autocompleteCacheByCf[normalizedCf] = summary;
         fiscalCodeController.value = fiscalCodeController.value.copyWith(
           text: normalizedCf,
           selection: TextSelection.collapsed(offset: normalizedCf.length),
@@ -2241,25 +2262,74 @@ class _DashboardPageState extends State<DashboardPage> {
           surnameController.text = nameParts.last;
         }
         aliasController.text = summary.patient.alias?.trim() ?? '';
-        if (doctorFromMemory.isNotEmpty && doctorFromMemory != '-' && doctorCandidates.contains(doctorFromMemory)) {
+        if (doctorFromMemory.isNotEmpty && doctorFromMemory != '-') {
           selectedDoctor = doctorFromMemory;
         }
       });
     }
 
+    Future<void> refreshPatientAutocomplete(String rawValue, void Function(void Function()) setLocalState) async {
+      final String normalizedCf = PatientInputNormalizer.normalizeFiscalCode(rawValue);
+      final String normalizedQuery = rawValue.trim();
+      if (normalizedCf.length < 3 && normalizedQuery.length < 3) {
+        setLocalState(() {
+          autocompleteSuggestions = const <_PatientDashboardSummary>[];
+        });
+        return;
+      }
+      final String requestKey = normalizedQuery.toUpperCase();
+      if (pendingAutocompleteQueries.contains(requestKey)) {
+        return;
+      }
+      pendingAutocompleteQueries.add(requestKey);
+      final int requestSerial = ++autocompleteRequestSerial;
+      try {
+        final List<Future<dynamic>> futures = <Future<dynamic>>[
+          _patientDashboardIndexRepository.searchByPrefix(normalizedQuery, limit: 8),
+        ];
+        if (normalizedCf.length >= 3) {
+          futures.add(_patientDashboardIndexRepository.getByFiscalCode(normalizedCf));
+        }
+        final List<dynamic> results = await Future.wait<dynamic>(futures);
+        final List<PatientDashboardIndex> prefixRows = results[0] as List<PatientDashboardIndex>;
+        final PatientDashboardIndex? exactRow = results.length > 1 ? results[1] as PatientDashboardIndex? : null;
+        if (requestSerial != autocompleteRequestSerial) {
+          return;
+        }
+        final Map<String, _PatientDashboardSummary> nextByCf = <String, _PatientDashboardSummary>{};
+        if (exactRow != null) {
+          final _PatientDashboardSummary exactSummary = _summaryFromIndex(exactRow);
+          nextByCf[PatientInputNormalizer.normalizeFiscalCode(exactSummary.patient.fiscalCode)] = exactSummary;
+        }
+        for (final PatientDashboardIndex row in prefixRows) {
+          final _PatientDashboardSummary summary = _summaryFromIndex(row);
+          final String cf = PatientInputNormalizer.normalizeFiscalCode(summary.patient.fiscalCode);
+          if (cf.isEmpty || isTemporaryPatientKey(cf)) continue;
+          nextByCf.putIfAbsent(cf, () => summary);
+        }
+        setLocalState(() {
+          autocompleteCacheByCf.addAll(nextByCf);
+          autocompleteSuggestions = nextByCf.values.take(6).toList();
+        });
+        final _PatientDashboardSummary? exactSummary = autocompleteCacheByCf[normalizedCf];
+        if (exactSummary != null && normalizedCf.length >= 16) {
+          _applyPatientSuggestion(exactSummary, setLocalState);
+        }
+      } catch (_) {
+        // Autocompilazione best-effort: non deve bloccare l'inserimento manuale.
+      } finally {
+        pendingAutocompleteQueries.remove(requestKey);
+      }
+    }
+
     void fillFromExistingPatient(String rawValue, void Function(void Function()) setLocalState) {
       final String normalizedCf = PatientInputNormalizer.normalizeFiscalCode(rawValue);
-      if (fiscalCodeController.text != normalizedCf) {
-        fiscalCodeController.value = fiscalCodeController.value.copyWith(
-          text: normalizedCf,
-          selection: TextSelection.collapsed(offset: normalizedCf.length),
-          composing: TextRange.empty,
-        );
-      }
       final _PatientDashboardSummary? existing = _findExactPatientByCf(normalizedCf);
       if (existing != null) {
         _applyPatientSuggestion(existing, setLocalState);
+        return;
       }
+      unawaited(refreshPatientAutocomplete(rawValue, setLocalState));
     }
 
     try {
@@ -2523,7 +2593,12 @@ class _DashboardPageState extends State<DashboardPage> {
                                 borderSide: const BorderSide(color: Colors.white70),
                               ),
                             ),
-                            items: doctorCandidates.map((item) => DropdownMenuItem<String>(value: item, child: Text(item))).toList(),
+                            items: ((<String>{
+                              ...doctorCandidates,
+                              if (selectedDoctor.trim().isNotEmpty) selectedDoctor.trim(),
+                            }.toList())..sort())
+                                .map((item) => DropdownMenuItem<String>(value: item, child: Text(item)))
+                                .toList(),
                             onChanged: (value) => setLocalState(() => selectedDoctor = value ?? ''),
                           ),
                           const SizedBox(height: 8),
