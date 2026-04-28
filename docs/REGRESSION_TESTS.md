@@ -16,8 +16,11 @@ Checklist regressione funzionale focalizzata sui contratti dati e sulle aree ad 
 - [ ] In caso di errore segnale runtime, il salvataggio dato utente resta riuscito.
 
 ## 3) Contratto `drive_pdf_imports` backend-owned
-- [ ] Verificare che il frontend non scriva `drive_pdf_imports` (`saveImport` deve fallire per contratto).
+- [ ] Verificare che il frontend non crei record import/archive in `drive_pdf_imports`.
+- [ ] Verificare che write stile `saveImport` fallisca per contratto.
+- [ ] Verificare che il frontend non scriva parser/OCR metadata, merge metadata, rename metadata, archive mutation o lifecycle fields backend-owned.
 - [ ] Verificare `requestPdfDelete` imposti `deletePdfRequested` + metadata richiesta.
+- [ ] Verificare che `requestPdfDelete` sia l'unica write frontend consentita su `drive_pdf_imports` (patch delete-request limitata).
 
 ## 4) Contratto ibrido dati prescrizioni
 - [ ] Se esistono import `drive_pdf_imports` per paziente, UI usa quelli come fonte primaria.
@@ -36,4 +39,4 @@ Checklist regressione funzionale focalizzata sui contratti dati e sulle aree ad 
 - Fallback multipli in `PhboxContractUtils`.
 - Pipeline PDF frontend (servizi esistenti) vs blocco write su `drive_pdf_imports`.
 - Coerenza eventuale tra dato utente, index dashboard e totali.
-
+- Assenza backend GAS nel repository: dettagli end-to-end Gmail/Drive/PDF da considerare **DA VERIFICARE**.

@@ -25,8 +25,9 @@ Questo documento descrive l'architettura osservabile dal codice del repository, 
 - Possibile ruolo dedotto: orchestrazione backend per lavorazioni asincrone (totali/indici/cancellazioni PDF) a valle di segnali runtime.
 
 ### Gmail e Drive
-- Frontend chiama direttamente Gmail API (`gmail.googleapis.com`) e Drive API (`www.googleapis.com/drive/v3/...`).
+- Il repository contiene servizi frontend che chiamano Gmail API (`gmail.googleapis.com`) e Drive API (`www.googleapis.com/drive/v3/...`).
 - OAuth scope richiesti nel frontend: Drive e Gmail modify.
+- La pipeline operativa completa Gmail/Drive/PDF può dipendere da backend GAS esterno: dettagli runtime end-to-end **DA VERIFICARE** se il backend non è nel repository.
 
 ## Flussi principali
 
@@ -45,9 +46,14 @@ Questo documento descrive l'architettura osservabile dal codice del repository, 
   - scansione email con allegati PDF,
   - upload file su Drive,
   - parsing testo PDF,
-  - salvataggio import su `drive_pdf_imports`.
-- Tuttavia `DrivePdfImportsRepository.saveImport()` lancia `UnsupportedError`: il frontend non può scrivere `drive_pdf_imports`.
-- Impatto: i workflow che chiamano `saveImport()` dal frontend risultano non eseguibili senza backend.
+  - richieste su archivio `drive_pdf_imports` con confini di ownership.
+- Contratto su `drive_pdf_imports`:
+  - il frontend non deve creare record import/archive;
+  - il frontend non deve eseguire write stile `saveImport()`;
+  - il frontend non deve scrivere metadata parser/OCR, metadata merge/rename, archive mutation o lifecycle fields backend-owned;
+  - il frontend può emettere solo patch limitate di richiesta eliminazione via `DrivePdfImportsRepository.requestPdfDelete()` usando i campi delete-request previsti;
+  - il backend resta proprietario di eliminazione reale, mutazioni Drive, archive lifecycle e final state transition.
+- Impatto: senza backend esterno reale/allegato aggiornato, i dettagli operativi end-to-end Gmail/Drive/PDF restano **DA VERIFICARE**.
 
 ## Aree ad alto rischio regressione
 - Contratto ibrido `drive_pdf_imports` vs legacy `prescriptions`.
@@ -61,4 +67,3 @@ Questo documento descrive l'architettura osservabile dal codice del repository, 
 - `getAllImports()` su `drive_pdf_imports` senza limit.
 - Ricerca dashboard che forza refresh dati completi quando non valida cache locale.
 - Validazione appartenenza famiglia che itera per ogni membro (`arrayContains` ripetuti).
-
