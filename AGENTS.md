@@ -13,6 +13,7 @@
 - Non cambiare contratti frontend/backend/superback senza autorizzazione.
 - Non cambiare data model Firestore senza piano esplicito.
 - Non aumentare letture Firestore senza dichiararlo.
+- Su Gmail/Drive/PDF pipeline: se il backend GAS non è presente nel repository, ogni dettaglio operativo è **DA VERIFICARE** e non va modificato senza codice backend reale o allegato aggiornato.
 
 ## 3) Aree ad alto rischio
 - Gmail ingest

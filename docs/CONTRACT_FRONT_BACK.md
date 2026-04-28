@@ -14,8 +14,12 @@ Il frontend legge/scrive Firestore tramite repository.
 - `patient_dashboard_index` patch “frontend managed”.
 - `dashboard_totals/main` delta “frontend managed” (solo alcuni campi).
 
-### Scritture frontend vietate per contratto
-- `drive_pdf_imports`: `saveImport()` lancia `UnsupportedError` (backend-owned).
+### Scritture frontend limitate per contratto su `drive_pdf_imports`
+- Il frontend non deve creare record import/archive in `drive_pdf_imports`.
+- Il frontend non deve eseguire write stile `saveImport()` (`saveImport()` lancia `UnsupportedError`).
+- Il frontend non deve scrivere parser/OCR metadata, merge metadata, rename metadata, archive mutation o lifecycle fields backend-owned.
+- Il frontend può emettere solo patch limitate di richiesta eliminazione tramite `DrivePdfImportsRepository.requestPdfDelete()`, usando i campi delete-request previsti.
+- Il backend resta proprietario di eliminazione reale, mutazioni Drive, archive lifecycle e final state transition.
 
 ## Confine Frontend ↔ Backend (non presente nel repo)
 Il frontend assume implicitamente un backend che:
@@ -23,6 +27,7 @@ Il frontend assume implicitamente un backend che:
 - consuma segnali runtime,
 - riallinea aggregati dashboard/index.
 
+Il repository può contenere servizi frontend collegati a Gmail/Drive, ma la pipeline operativa completa Gmail/Drive/PDF può dipendere da backend GAS esterno.
 Dettagli implementativi backend: **DA VERIFICARE**.
 
 ## Event contract: `phbox_signals`
@@ -42,4 +47,3 @@ Il frontend non garantisce consegna: usa `emitBestEffort()`.
 - Cambiare nomi campi segnale rompe consumer backend.
 - Cambiare semantica di `requiresTotalsUpdate/requiresIndexUpdate` altera riallineamenti.
 - Rimozione patch frontend su index/totals può peggiorare UX realtime.
-

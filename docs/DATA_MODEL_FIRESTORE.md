@@ -37,6 +37,10 @@
 
 ### Backend-owned (da contratto codice)
 - `drive_pdf_imports/*`
+  - Il frontend non crea record import/archive e non fa write stile `saveImport()`.
+  - Il frontend non scrive parser/OCR metadata, merge metadata, rename metadata, archive mutation o lifecycle fields backend-owned.
+  - Il frontend può emettere solo patch limitate di richiesta eliminazione via `DrivePdfImportsRepository.requestPdfDelete()` con campi delete-request previsti.
+  - Eliminazione reale, mutazioni Drive, archive lifecycle e final state transition restano di proprietà backend.
 
 ## Vincoli chiave
 - `patients` documentId = codice fiscale (normalizzato uppercase).
@@ -53,4 +57,3 @@
 - `dashboard_totals/main` usato come snapshot rapido card dashboard.
 - `patient_dashboard_index/*` usato per filtri flag e ricerca prefissi.
 - `dashboard_summaries` presente ma non centrale nel flusso pagina dashboard corrente.
-
