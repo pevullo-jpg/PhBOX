@@ -40,3 +40,21 @@ Checklist regressione funzionale focalizzata sui contratti dati e sulle aree ad 
 - Pipeline PDF frontend (servizi esistenti) vs blocco write su `drive_pdf_imports`.
 - Coerenza eventuale tra dato utente, index dashboard e totali.
 - Backend GAS presente in `backend_gas/src`: i dettagli end-to-end Gmail/Drive/PDF in produzione sono **DA VERIFICARE** se allineamento GitHub ↔ Apps Script non verificato.
+
+## Stato audit documentazione (micro-PR cleanup)
+- ✅ Micro-PR 1 (scaffold source-of-truth) completata.
+- ✅ Micro-PR 2 (placeholder cleanup) completata.
+- ✅ Micro-PR 3A (dependency hygiene) completata:
+  - `google_sign_in` dichiarata esplicitamente.
+  - `cupertino_icons` rimossa.
+  - `file_picker` rimossa.
+- ✅ Impatto Firestore: nessuno.
+- ✅ Impatto Gmail/Drive/backend GAS: nessuno.
+- ⚠️ GitHub Actions build/deploy: da verificare o già verificate in base all'esito pipeline del branch `docs/update-cleanup-audit-status`.
+
+### Prossime aree candidate
+- repository overlap families
+- dashboard decomposition
+- navigation hardening
+- pubspec.lock policy
+
