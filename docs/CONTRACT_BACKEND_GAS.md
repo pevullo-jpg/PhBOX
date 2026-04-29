@@ -1,34 +1,47 @@
 # CONTRACT_BACKEND_GAS
 
 ## Stato attuale nel repository
-- Non sono presenti file Google Apps Script (`.gs`) o endpoint GAS.
-- Non è possibile documentare API GAS con certezza dal solo codice corrente.
+- Il backend GAS è presente in `backend_gas/src` come copia sorgente versionata; la produzione resta Apps Script e l’allineamento con la versione deployata va verificato.
+- GitHub/`backend_gas` non implica deploy automatico verso Apps Script.
 
-## Elementi che suggeriscono un backend esterno
-- `drive_pdf_imports` marcata “backend-owned”.
-- Presenza di code/segnali runtime (`phbox_signals`, `phbox_runtime`).
-- Nota operativa su rebuild indice nel backend (`rebuildPhboxPatientDashboardIndex()`).
-- Il repository può includere servizi frontend collegati a Gmail/Drive, ma non prova proprietà frontend dell'intera pipeline operativa Gmail/Drive/PDF.
+## Regole vincolanti
+1. Prima di modificare backend, verificare esplicitamente allineamento GitHub ↔ Apps Script produzione.
+2. Se l’allineamento non è verificato, il comportamento produzione resta **DA VERIFICARE**.
+3. Codex non deve mai assumere che una modifica su GitHub sia automaticamente deployata su Apps Script.
+4. Nessun `clasp push`, `clasp deploy` o GitHub Actions verso Apps Script è autorizzato.
+5. Ogni modifica backend deve passare da PR separata.
 
-## Contratto minimo deducibile con GAS (o backend equivalente)
+## Contratto minimo deducibile
+### Input backend
+- `phbox_signals/*`
+- `phbox_runtime/main`
+- Mutazioni utente su `patients/*` e patch delete-request su `drive_pdf_imports/*`.
 
-### Input attesi dal backend
-1. Documenti Firestore scritti dal frontend su:
-   - `phbox_signals/*`
-   - `phbox_runtime/main`
-2. Mutazioni utente su:
-   - `patients/*/debts/*`, `advances`, `bookings`
-   - patch limitate di richiesta cancellazione PDF in `drive_pdf_imports/*` (`deletePdfRequested=true` e campi delete-request previsti).
+### Output backend
+- aggiornamento `dashboard_totals/main`
+- aggiornamento `patient_dashboard_index/*`
+- gestione lifecycle `drive_pdf_imports/*` (parser/OCR, merge/rename, mutazioni archive, delete fisico Drive)
 
-### Output attesi dal backend
-- Aggiornamento `dashboard_totals/main`.
-- Aggiornamento `patient_dashboard_index/*`.
-- Gestione stato archivio `drive_pdf_imports/*` (inclusi metadata parser/OCR, metadata merge/rename, archive mutation, lifecycle fields backend-owned e delete fisico PDF in Drive): **DA VERIFICARE**.
+## Requisiti obbligatori per PR backend
+Ogni PR backend deve includere:
+- diagnosi precisa
+- causa radice
+- file `.gs` modificati
+- funzioni modificate
+- test Apps Script manuali
+- rischio residuo
+- stima letture Firestore/ora
+- istruzioni manuali di applicazione/deploy su Apps Script
 
-## Contratti NON verificabili dal repo
-- Endpoint HTTP GAS, payload REST, autenticazione.
-- Trigger (time-driven / onWrite) e retry policy.
-- Idempotenza e dead-letter handling.
-- Dettaglio operativo end-to-end Gmail/Drive/PDF pipeline senza codice backend reale.
-
-Tutti questi punti: **DA VERIFICARE**.
+## Impatti da dichiarare in ogni modifica backend
+- Gmail ingest
+- Drive/OCR
+- parser
+- manifest runtime
+- merge
+- rename
+- Firestore sync
+- phbox_runtime
+- phbox_signals
+- trigger Apps Script
+- letture/scritture Firestore

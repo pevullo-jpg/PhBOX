@@ -13,7 +13,7 @@ Protocollo minimo di rilascio per ridurre regressioni su contratti dati.
    - frontend non deve scrivere parser/OCR metadata, merge/rename metadata, archive mutation o lifecycle fields backend-owned.
    - frontend può solo inviare patch delete-request limitate via `requestPdfDelete`; eliminazione reale/final state restano backend.
 4. Validare filtri/ricerca dashboard e carichi Firestore.
-5. Se il backend GAS non è presente nel repository, marcare come **DA VERIFICARE** ogni dettaglio operativo Gmail/Drive/PDF e bloccare modifiche pipeline senza codice backend reale o allegato aggiornato.
+5. Verificare allineamento GitHub ↔ Apps Script produzione; se non verificato, marcare **DA VERIFICARE** i dettagli Gmail/Drive/PDF e non assumere deploy automatico da GitHub.
 
 ## Gate di rilascio
 - Gate 1: build app OK.
