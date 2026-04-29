@@ -3,6 +3,14 @@
 ## Obiettivo
 Questo documento descrive l'architettura osservabile dal codice del repository, senza assumere componenti non presenti.
 
+## Scaffold repository (source of truth)
+- L'unica sorgente Dart Flutter operativa è la cartella `lib/` al root del repository.
+- L'unico `pubspec.yaml` applicativo valido è quello al root del repository.
+- La cartella `web/` contiene solo asset Flutter Web statici (`index.html`, `manifest.json`, `icons/`, `favicon.png`).
+- Qualsiasi vecchio scaffold Dart annidato sotto `web/` è legacy e vietato.
+- Qualsiasi vecchio pubspec annidato sotto `web/` è legacy e vietato.
+- I workflow CI/CD devono eseguire build dal root repository, senza spostare il contesto operativo nella sottocartella `web/`.
+
 ## Componenti e confini
 
 ### Frontend (Flutter)
