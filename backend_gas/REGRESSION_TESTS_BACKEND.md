@@ -1,26 +1,30 @@
 # REGRESSION_TESTS_BACKEND
 
 ## Obiettivo
-Definire una checklist minima di validazione manuale da eseguire su Apps Script per ogni futura modifica backend.
+Checklist minima di validazione manuale Apps Script per ogni modifica backend.
 
 ## Prerequisiti
-- File GAS reali presenti e allineati con la PR backend.
-- Revisione completata.
+- Verifica allineamento GitHub ↔ Apps Script produzione completata.
+- PR backend separata aperta.
 - Ambiente Apps Script accessibile.
 
-## Checklist manuale (da adattare al backend reale)
-1. Esecuzione dei trigger/funzioni principali senza errori runtime.
-2. Verifica delle integrazioni Gmail coinvolte (se presenti).
-3. Verifica delle integrazioni Drive/OCR coinvolte (se presenti).
-4. Verifica letture/scritture Firestore coinvolte (se presenti).
-5. Verifica dei contratti API/endpoint backend consumati dal resto del sistema.
-6. Verifica dei log di esecuzione e assenza di regressioni evidenti.
+## Checklist manuale
+1. Esecuzione trigger/funzioni principali senza errori runtime.
+2. Verifica integrazioni Gmail ingest coinvolte.
+3. Verifica integrazioni Drive/OCR coinvolte.
+4. Verifica parser coinvolti.
+5. Verifica manifest runtime, merge, rename.
+6. Verifica Firestore sync, `phbox_runtime`, `phbox_signals`.
+7. Verifica trigger Apps Script.
+8. Verifica letture/scritture Firestore e stima letture/ora.
 
 ## Gate di rilascio
 Una modifica backend è candidata al rilascio solo se:
-- la PR dedicata è approvata,
-- i test manuali Apps Script sono eseguiti e tracciati,
-- non esistono regressioni bloccanti note.
+- PR dedicata approvata,
+- test manuali Apps Script eseguiti e tracciati,
+- rischio residuo esplicitato,
+- incluse istruzioni manuali di applicazione/deploy su Apps Script.
 
 ## Nota di governance
-Nessun deploy automatico verso Apps Script è consentito in questa fase.
+- Il backend GAS è presente in `backend_gas/src` come copia sorgente versionata; la produzione resta Apps Script e l’allineamento con la versione deployata va verificato.
+- Nessun `clasp push`, `clasp deploy` o GitHub Actions verso Apps Script è autorizzato.

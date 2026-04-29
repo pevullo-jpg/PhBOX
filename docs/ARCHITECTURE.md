@@ -25,7 +25,7 @@ Questo documento descrive l'architettura osservabile dal codice del repository, 
 - Collezioni canoniche in `AppCollections`.
 
 ### Backend GAS (Google Apps Script)
-- **DA VERIFICARE**: nel repository non ci sono file `.gs` o endpoint GAS.
+- Il backend GAS è presente in `backend_gas/src` come copia sorgente versionata; la produzione resta Apps Script e l’allineamento con la versione deployata va verificato.
 - Dal codice è però evidente una separazione “backend-owned” su `drive_pdf_imports` e sui segnali runtime (`phbox_signals`, `phbox_runtime`).
 
 ### Superback
@@ -35,7 +35,7 @@ Questo documento descrive l'architettura osservabile dal codice del repository, 
 ### Gmail e Drive
 - Il repository contiene servizi frontend che chiamano Gmail API (`gmail.googleapis.com`) e Drive API (`www.googleapis.com/drive/v3/...`).
 - OAuth scope richiesti nel frontend: Drive e Gmail modify.
-- La pipeline operativa completa Gmail/Drive/PDF può dipendere da backend GAS esterno: dettagli runtime end-to-end **DA VERIFICARE** se il backend non è nel repository.
+- La pipeline operativa Gmail/Drive/PDF dipende dal backend GAS presente in `backend_gas/src`; per comportamento reale produzione va sempre verificato l’allineamento con Apps Script deployato.
 
 ## Flussi principali
 
@@ -47,7 +47,7 @@ Questo documento descrive l'architettura osservabile dal codice del repository, 
 ### Flusso modifica dati operativi (debiti/anticipi/prenotazioni)
 1. Frontend salva su subcollection del paziente.
 2. Frontend emette segnale runtime best-effort in `phbox_signals` + update `phbox_runtime/main`.
-3. Backend esterno (non presente nel repo) dovrebbe riallineare aggregati (totali/indice).
+3. Backend GAS (sorgente in `backend_gas/src`, runtime reale su Apps Script) riallinea aggregati (totali/indice).
 
 ### Flusso PDF da Gmail/Drive
 - Esistono servizi per:
@@ -61,7 +61,7 @@ Questo documento descrive l'architettura osservabile dal codice del repository, 
   - il frontend non deve scrivere metadata parser/OCR, metadata merge/rename, archive mutation o lifecycle fields backend-owned;
   - il frontend può emettere solo patch limitate di richiesta eliminazione via `DrivePdfImportsRepository.requestPdfDelete()` usando i campi delete-request previsti;
   - il backend resta proprietario di eliminazione reale, mutazioni Drive, archive lifecycle e final state transition.
-- Impatto: senza backend esterno reale/allegato aggiornato, i dettagli operativi end-to-end Gmail/Drive/PDF restano **DA VERIFICARE**.
+- Impatto: senza verifica di allineamento GitHub ↔ Apps Script, i dettagli operativi end-to-end Gmail/Drive/PDF in produzione restano **DA VERIFICARE**.
 
 ## Aree ad alto rischio regressione
 - Contratto ibrido `drive_pdf_imports` vs legacy `prescriptions`.

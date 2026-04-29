@@ -39,4 +39,4 @@ Checklist regressione funzionale focalizzata sui contratti dati e sulle aree ad 
 - Fallback multipli in `PhboxContractUtils`.
 - Pipeline PDF frontend (servizi esistenti) vs blocco write su `drive_pdf_imports`.
 - Coerenza eventuale tra dato utente, index dashboard e totali.
-- Assenza backend GAS nel repository: dettagli end-to-end Gmail/Drive/PDF da considerare **DA VERIFICARE**.
+- Backend GAS presente in `backend_gas/src`: i dettagli end-to-end Gmail/Drive/PDF in produzione sono **DA VERIFICARE** se allineamento GitHub ↔ Apps Script non verificato.

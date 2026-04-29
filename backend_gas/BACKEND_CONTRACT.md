@@ -1,18 +1,34 @@
 # BACKEND_CONTRACT
 
 ## Dichiarazioni vincolanti
-1. Il backend Google Apps Script (GAS) di produzione è attualmente esterno a questo repository GitHub.
-2. Finché la migrazione non è formalmente completata, la sorgente operativa di produzione resta Apps Script.
-3. La cartella `backend_gas/` rappresenta la destinazione prevista per la copia sorgente controllata su GitHub.
+1. Il backend GAS è presente in `backend_gas/src` come copia sorgente versionata; la produzione resta Apps Script e l’allineamento con la versione deployata va verificato.
+2. GitHub/`backend_gas` non implica deploy automatico.
+3. Prima di qualsiasi modifica backend è obbligatoria la verifica di allineamento GitHub ↔ Apps Script produzione.
+4. Se l’allineamento non è verificato, il comportamento produzione resta **DA VERIFICARE**.
+5. Codex non deve mai assumere che una modifica su GitHub sia automaticamente deployata su Apps Script.
+6. Nessun `clasp push`, `clasp deploy` o GitHub Actions verso Apps Script è autorizzato.
 
 ## Policy di modifica
-- Codex **non deve intervenire sul backend** senza presenza dei file GAS reali nel repository.
-- Non è autorizzato alcun deploy automatico verso Apps Script da questa repository.
-- Ogni intervento backend deve passare da:
-  - analisi del cambiamento,
-  - PR separata dedicata al backend,
-  - review esplicita,
-  - test manuale su ambiente Apps Script.
+- Ogni intervento backend deve passare da PR separata dedicata al backend.
+- La PR backend deve includere:
+  - diagnosi precisa
+  - causa radice
+  - file `.gs` modificati
+  - funzioni modificate
+  - test Apps Script manuali
+  - rischio residuo
+  - stima letture Firestore/ora
+  - istruzioni manuali di applicazione/deploy su Apps Script
 
-## Limiti di questa fase
-Questa fase è esclusivamente documentale e di scaffolding: nessun comportamento applicativo backend viene modificato.
+## Impatti obbligatori da dichiarare
+- Gmail ingest
+- Drive/OCR
+- parser
+- manifest runtime
+- merge
+- rename
+- Firestore sync
+- phbox_runtime
+- phbox_signals
+- trigger Apps Script
+- letture/scritture Firestore
