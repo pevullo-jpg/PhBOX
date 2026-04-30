@@ -40,6 +40,43 @@ class PatientDashboardIndexRepository {
     return items;
   }
 
+  Future<List<PatientDashboardIndex>> getByFamilyIds(
+    Iterable<String> familyIds, {
+    int maxFamilyIds = 5,
+    int limitPerFamily = 10,
+  }) async {
+    final List<String> normalizedFamilyIds = familyIds
+        .map((String value) => value.trim())
+        .where((String value) => value.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    final List<String> selectedFamilyIds = normalizedFamilyIds.take(maxFamilyIds).toList();
+    if (selectedFamilyIds.isEmpty) {
+      return const <PatientDashboardIndex>[];
+    }
+    final List<PatientDashboardIndex> out = <PatientDashboardIndex>[];
+    final Set<String> seenFiscalCodes = <String>{};
+    for (final String familyId in selectedFamilyIds) {
+      final List<Map<String, dynamic>> maps = await datasource.getCollectionWhereEqual(
+        collectionPath: AppCollections.patientDashboardIndex,
+        field: 'familyId',
+        value: familyId,
+        limit: limitPerFamily,
+      );
+      for (final Map<String, dynamic> map in maps) {
+        final PatientDashboardIndex item = PatientDashboardIndex.fromMap(map);
+        final String cf = item.fiscalCode.trim().toUpperCase();
+        if (cf.isEmpty || !seenFiscalCodes.add(cf)) {
+          continue;
+        }
+        out.add(item);
+      }
+    }
+    _sort(out);
+    return out;
+  }
+
   Future<List<PatientDashboardIndex>> getAll({int limit = 500}) async {
     final List<Map<String, dynamic>> maps = await datasource.getCollection(
       collectionPath: AppCollections.patientDashboardIndex,

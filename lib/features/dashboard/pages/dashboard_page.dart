@@ -440,7 +440,8 @@ class _DashboardPageState extends State<DashboardPage> {
       return _loadGlobalFlagSearchData();
     }
 
-    final List<PatientDashboardIndex> indexRows = await _loadDashboardIndexRows();
+    final _DashboardIndexLoadResult indexLoadResult = await _loadDashboardIndexRows();
+    final List<PatientDashboardIndex> indexRows = indexLoadResult.rows;
     final List<_PatientDashboardSummary> summaries = indexRows
         .map(_summaryFromIndex)
         .where(_matchesActiveIndexFilters)
@@ -453,23 +454,53 @@ class _DashboardPageState extends State<DashboardPage> {
       doctorsCatalog: const <String>[],
       families: const <FamilyGroup>[],
       totals: _dashboardTotals,
+      expandedFamilyCfs: indexLoadResult.expandedFamilyCfs,
     );
   }
 
-  Future<List<PatientDashboardIndex>> _loadDashboardIndexRows() async {
+  Future<_DashboardIndexLoadResult> _loadDashboardIndexRows() async {
     final String query = _searchController.text.trim();
     if (query.length >= 3) {
-      return _patientDashboardIndexRepository.searchByPrefix(query);
+      final List<PatientDashboardIndex> directRows = await _patientDashboardIndexRepository.searchByPrefix(query);
+      final List<String> familyIds = directRows
+          .map((PatientDashboardIndex item) => item.familyId.trim())
+          .where((String familyId) => familyId.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
+      final List<PatientDashboardIndex> expandedRows = await _patientDashboardIndexRepository.getByFamilyIds(
+        familyIds,
+        maxFamilyIds: 5,
+        limitPerFamily: 10,
+      );
+      final Set<String> expandedFamilyCfs = expandedRows
+          .map((PatientDashboardIndex item) => _normalizeFiscalCode(item.fiscalCode))
+          .where((String cf) => cf.isNotEmpty)
+          .toSet();
+      final Map<String, PatientDashboardIndex> mergedByCf = <String, PatientDashboardIndex>{};
+      for (final PatientDashboardIndex item in <PatientDashboardIndex>[...directRows, ...expandedRows]) {
+        final String cf = _normalizeFiscalCode(item.fiscalCode);
+        if (cf.isEmpty || mergedByCf.containsKey(cf)) {
+          continue;
+        }
+        mergedByCf[cf] = item;
+      }
+      return _DashboardIndexLoadResult(
+        rows: mergedByCf.values.toList(),
+        expandedFamilyCfs: expandedFamilyCfs,
+      );
     }
 
     final _DashboardCardFilter? primaryFilter = _selectPrimaryIndexFilter();
     if (primaryFilter != null) {
-      return _patientDashboardIndexRepository.getByFlag(
+      return _DashboardIndexLoadResult(
+        rows: await _patientDashboardIndexRepository.getByFlag(
         flag: _indexFlagForDashboardFilter(primaryFilter),
+        ),
       );
     }
 
-    return const <PatientDashboardIndex>[];
+    return const _DashboardIndexLoadResult(rows: <PatientDashboardIndex>[]);
   }
 
 
@@ -884,7 +915,11 @@ class _DashboardPageState extends State<DashboardPage> {
     });
   }
 
-  List<_PatientDashboardSummary> _applyFilters(List<_PatientDashboardSummary> input, List<FamilyGroup> families) {
+  List<_PatientDashboardSummary> _applyFilters(
+    List<_PatientDashboardSummary> input,
+    List<FamilyGroup> families,
+    _DashboardData data,
+  ) {
     final String rawQuery = _searchController.text.trim();
     final String query = rawQuery.toLowerCase();
     final bool hasSearchThreshold = rawQuery.length >= 3;
@@ -948,6 +983,9 @@ class _DashboardPageState extends State<DashboardPage> {
     };
 
     final Set<String> resultCfs = filtered.where(matchesSearch).map((item) => item.patient.fiscalCode.trim().toUpperCase()).toSet();
+    if (hasSearchThreshold) {
+      resultCfs.addAll(data.expandedFamilyCfs);
+    }
 
     final Set<String> matchingFamilies = <String>{};
     for (final family in families) {
@@ -2955,7 +2993,7 @@ class _DashboardPageState extends State<DashboardPage> {
       builder: (context, snapshot) {
         final data = snapshot.data;
         final allSummaries = data == null || !_hasUserRequestedDashboardData ? const <_PatientDashboardSummary>[] : data.summaries;
-        final summaries = data == null || !_hasUserRequestedDashboardData ? const <_PatientDashboardSummary>[] : _applyFilters(allSummaries, data.families);
+        final summaries = data == null || !_hasUserRequestedDashboardData ? const <_PatientDashboardSummary>[] : _applyFilters(allSummaries, data.families, data);
         final _DashboardTotals totals = _dashboardTotals;
         final familyState = data == null
             ? _DashboardFamilyState.empty()
@@ -3624,12 +3662,14 @@ class _DashboardData {
   final List<String> doctorsCatalog;
   final List<FamilyGroup> families;
   final _DashboardTotals totals;
+  final Set<String> expandedFamilyCfs;
 
   const _DashboardData({
     required this.summaries,
     required this.doctorsCatalog,
     required this.families,
     required this.totals,
+    this.expandedFamilyCfs = const <String>{},
   });
 
   _DashboardData copyWith({
@@ -3637,12 +3677,14 @@ class _DashboardData {
     List<String>? doctorsCatalog,
     List<FamilyGroup>? families,
     _DashboardTotals? totals,
+    Set<String>? expandedFamilyCfs,
   }) {
     return _DashboardData(
       summaries: summaries ?? this.summaries,
       doctorsCatalog: doctorsCatalog ?? this.doctorsCatalog,
       families: families ?? this.families,
       totals: totals ?? this.totals,
+      expandedFamilyCfs: expandedFamilyCfs ?? this.expandedFamilyCfs,
     );
   }
 
@@ -3652,8 +3694,19 @@ class _DashboardData {
       doctorsCatalog: const <String>[],
       families: const <FamilyGroup>[],
       totals: _DashboardTotals.empty(),
+      expandedFamilyCfs: const <String>{},
     );
   }
+}
+
+class _DashboardIndexLoadResult {
+  final List<PatientDashboardIndex> rows;
+  final Set<String> expandedFamilyCfs;
+
+  const _DashboardIndexLoadResult({
+    required this.rows,
+    this.expandedFamilyCfs = const <String>{},
+  });
 }
 
 class _PatientDashboardSummary {
