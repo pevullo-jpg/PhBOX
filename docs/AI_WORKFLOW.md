@@ -28,3 +28,16 @@ La parte intelligente è euristica/regole:
 ## Rischi di incremento letture Firestore
 - Caricamento reference values completo ad ogni scansione/import.
 - Poll/refresh di intakes e dataset globali senza finestra incrementale.
+
+
+## Protocollo PR safety (obbligatorio)
+1. Ogni PR applicativa deve partire da `main`.
+2. Vietato usare branch `work` per PR finali.
+3. Ogni PR deve dichiarare `HEAD SHA`, base branch e files changed.
+4. La review Codex deve confermare l'`HEAD SHA` revisionato.
+5. Se la review riguarda un commit vecchio, la review è invalida.
+6. Vietato cambiare semantica di helper condivisi senza helper dedicato.
+7. Ogni PR deve elencare pattern vietati specifici del bug.
+8. Ogni PR deve dichiarare impatto Firestore `reads/hour`.
+9. Se la PR diventa confusa, chiuderla senza merge e rifarla pulita da `main`.
+10. Merge consentito solo dopo review su ultimo HEAD e Actions verdi.

@@ -58,3 +58,15 @@ Checklist regressione funzionale focalizzata sui contratti dati e sulle aree ad 
 - navigation hardening
 - pubspec.lock policy
 
+
+
+## 7) Gate anti-regressione PR
+- [ ] PR applicativa creata da branch derivato da `main` (non da `work`).
+- [ ] PR include `HEAD SHA`, `base branch`, `files changed`.
+- [ ] Review Codex conferma lo stesso `HEAD SHA` dell'ultimo commit in PR.
+- [ ] Nessuna review approvata su SHA precedente (se presente: invalida e da rifare).
+- [ ] Nessun cambio semantico a helper condivisi senza helper dedicato.
+- [ ] Sezione “pattern vietati specifici del bug” presente e compilata.
+- [ ] Impatto Firestore `reads/hour` dichiarato esplicitamente.
+- [ ] In caso PR confusa/non verificabile: chiusa senza merge e riaperta pulita da `main`.
+- [ ] Merge effettuabile solo con review su ultimo HEAD e Actions verdi.
