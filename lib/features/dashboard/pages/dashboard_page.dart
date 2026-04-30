@@ -12,6 +12,7 @@ import '../../../core/utils/patient_identity_utils.dart';
 import '../../../core/utils/family_group_color_utils.dart';
 import '../../../core/utils/patient_input_normalizer.dart';
 import '../../../core/utils/phbox_contract_utils.dart';
+import '../../../core/utils/pending_pdf_delete_storage.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
 import '../../../data/models/app_settings.dart';
@@ -59,6 +60,7 @@ class _DashboardPageState extends State<DashboardPage> {
   late final SettingsRepository _settingsRepository;
   late final DashboardTotalsRepository _dashboardTotalsRepository;
   late final PatientDashboardIndexRepository _patientDashboardIndexRepository;
+  late final PendingPdfDeleteStore _pendingPdfDeleteStore;
 
   Future<_DashboardData>? _future;
   _DashboardData _dashboardCache = _DashboardData.empty();
@@ -93,6 +95,7 @@ class _DashboardPageState extends State<DashboardPage> {
     _settingsRepository = SettingsRepository(datasource: datasource);
     _dashboardTotalsRepository = DashboardTotalsRepository(datasource: datasource);
     _patientDashboardIndexRepository = PatientDashboardIndexRepository(datasource: datasource);
+    _pendingPdfDeleteStore = const PendingPdfDeleteStore();
     _future = Future<_DashboardData>.value(_DashboardData.empty());
     _startDashboardTotalsListener();
     _searchController.addListener(_handleSearchChanged);
@@ -451,8 +454,16 @@ class _DashboardPageState extends State<DashboardPage> {
 
     final _DashboardIndexLoadResult indexLoadResult = await _loadDashboardIndexRows();
     final List<PatientDashboardIndex> indexRows = indexLoadResult.rows;
+    final Map<String, int> pendingCountsByCf = _pendingPdfDeleteStore.pendingCountsByFiscalCode();
     final List<_PatientDashboardSummary> summaries = indexRows
-        .map(_summaryFromIndex)
+        .map((PatientDashboardIndex item) {
+          final _PatientDashboardSummary summary = _summaryFromIndex(item);
+          final int pendingCount =
+              pendingCountsByCf[_normalizeFiscalCode(summary.patient.fiscalCode)] ?? 0;
+          return summary.copyWith(
+            recipeCount: math.max(0, summary.recipeCount - pendingCount),
+          );
+        })
         .where(_matchesActiveIndexFilters)
         .toList();
 
@@ -536,6 +547,8 @@ class _DashboardPageState extends State<DashboardPage> {
     final List<PatientDashboardIndex> allIndexRows = results[0] as List<PatientDashboardIndex>;
     final List<PatientDashboardIndex> baseSearchRows = results[1] as List<PatientDashboardIndex>;
     final List<DrivePdfImport> imports = results[2] as List<DrivePdfImport>;
+    await _pendingPdfDeleteStore.cleanupWithImports(imports);
+    final Set<String> pendingImportIds = _pendingPdfDeleteStore.pendingImportIds();
     final List<Prescription> prescriptions = results[3] as List<Prescription>;
     final List<Debt> debts = results[4] as List<Debt>;
     final List<Advance> advances = results[5] as List<Advance>;
@@ -571,6 +584,9 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     for (final DrivePdfImport item in imports) {
+      if (pendingImportIds.contains(item.id)) {
+        continue;
+      }
       if (_matchesImportFlagQuery(item, query)) {
         addGrouped<DrivePdfImport>(matchedImportsByCf, item.patientFiscalCode, item);
       }
@@ -1199,6 +1215,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   final bool confirmed = await _confirmDeleteRecipe(item);
                                   if (!confirmed) return;
                                   await _drivePdfImportsRepository.requestPdfDelete(item.id, fiscalCode: item.patientFiscalCode);
+                                  await _pendingPdfDeleteStore.add(importId: item.id, fiscalCode: item.patientFiscalCode);
                                   _removeRecipeFromCachedSummary(summary, item);
                                   if (mounted) {
                                     Navigator.of(context).pop();
@@ -2955,6 +2972,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final recipeImports = summary.imports;
       for (final importItem in recipeImports) {
         await _drivePdfImportsRepository.requestPdfDelete(importItem.id, fiscalCode: importItem.patientFiscalCode);
+        await _pendingPdfDeleteStore.add(importId: importItem.id, fiscalCode: importItem.patientFiscalCode);
       }
       await _dashboardTotalsRepository.applyFrontendManagedDelta(
         debtAmountDelta: -summary.totalDebt,
@@ -3439,6 +3457,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final confirmed = await _confirmDeleteRecipe(item);
       if (!confirmed) return;
       await _drivePdfImportsRepository.requestPdfDelete(item.id, fiscalCode: item.patientFiscalCode);
+      await _pendingPdfDeleteStore.add(importId: item.id, fiscalCode: item.patientFiscalCode);
       _removeRecipeFromCachedSummary(detailSummary, item);
       _refresh();
       return;
@@ -3453,6 +3472,7 @@ class _DashboardPageState extends State<DashboardPage> {
             if (!confirmed) return;
             setLocalState(() => busy = true);
             await _drivePdfImportsRepository.requestPdfDelete(item.id, fiscalCode: item.patientFiscalCode);
+            await _pendingPdfDeleteStore.add(importId: item.id, fiscalCode: item.patientFiscalCode);
             _removeRecipeFromCachedSummary(detailSummary, item);
             _refresh();
             setLocalState(() => busy = false);
