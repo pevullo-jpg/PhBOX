@@ -68,6 +68,7 @@ class _DashboardPageState extends State<DashboardPage> {
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
   bool _searchInFlags = false;
+  Set<String> _expandedSearchFamilyCfs = <String>{};
   bool _isRouteCovered = false;
   Timer? _inactiveFilterResetTimer;
   Timer? _userRequestRefreshDebounceTimer;
@@ -459,8 +460,37 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<List<PatientDashboardIndex>> _loadDashboardIndexRows() async {
     final String query = _searchController.text.trim();
     if (query.length >= 3) {
-      return _patientDashboardIndexRepository.searchByPrefix(query);
+      final List<PatientDashboardIndex> directRows =
+          await _patientDashboardIndexRepository.searchByPrefix(query);
+      final List<String> familyIds = directRows
+          .map((PatientDashboardIndex item) => item.familyId.trim().toUpperCase())
+          .where((String familyId) => familyId.isNotEmpty)
+          .toList();
+      final List<PatientDashboardIndex> familyRows =
+          await _patientDashboardIndexRepository.getByFamilyIds(
+        familyIds,
+        maxFamilyIds: 5,
+        limitPerFamily: 10,
+      );
+      final Map<String, PatientDashboardIndex> byCf = <String, PatientDashboardIndex>{};
+      for (final PatientDashboardIndex item in <PatientDashboardIndex>[
+        ...directRows,
+        ...familyRows,
+      ]) {
+        final String cf = _normalizeFiscalCode(item.fiscalCode);
+        if (cf.isEmpty) {
+          continue;
+        }
+        byCf[cf] = item;
+      }
+      final Set<String> directCfs = directRows
+          .map((PatientDashboardIndex item) => _normalizeFiscalCode(item.fiscalCode))
+          .where((String cf) => cf.isNotEmpty)
+          .toSet();
+      _expandedSearchFamilyCfs = byCf.keys.where((String cf) => !directCfs.contains(cf)).toSet();
+      return byCf.values.toList();
     }
+    _expandedSearchFamilyCfs = <String>{};
 
     final _DashboardCardFilter? primaryFilter = _selectPrimaryIndexFilter();
     if (primaryFilter != null) {
@@ -930,6 +960,10 @@ class _DashboardPageState extends State<DashboardPage> {
           item.familyName.toLowerCase().contains(query) ||
           item.patientAlias.toLowerCase().contains(query);
       if (baseMatch) {
+        return true;
+      }
+      final String cf = _normalizeFiscalCode(item.patient.fiscalCode);
+      if (cf.isNotEmpty && _expandedSearchFamilyCfs.contains(cf)) {
         return true;
       }
       if (_searchInFlags) {

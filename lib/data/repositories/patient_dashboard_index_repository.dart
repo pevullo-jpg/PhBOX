@@ -61,6 +61,40 @@ class PatientDashboardIndexRepository {
     return PatientDashboardIndex.fromMap(map);
   }
 
+  Future<List<PatientDashboardIndex>> getByFamilyIds(
+    Iterable<String> familyIds, {
+    int maxFamilyIds = 5,
+    int limitPerFamily = 10,
+  }) async {
+    final List<String> normalizedFamilyIds = familyIds
+        .map((String value) => value.trim().toUpperCase())
+        .where((String value) => value.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    if (normalizedFamilyIds.isEmpty || maxFamilyIds <= 0 || limitPerFamily <= 0) {
+      return const <PatientDashboardIndex>[];
+    }
+    final List<String> boundedFamilyIds = normalizedFamilyIds.take(maxFamilyIds).toList();
+    final List<Future<List<Map<String, dynamic>>>> requests = boundedFamilyIds
+        .map(
+          (String familyId) => datasource.getCollectionWhereEqual(
+            collectionPath: AppCollections.patientDashboardIndex,
+            field: 'familyId',
+            value: familyId,
+            limit: limitPerFamily,
+          ),
+        )
+        .toList();
+    final List<List<Map<String, dynamic>>> rowsByFamily = await Future.wait(requests);
+    final List<PatientDashboardIndex> items = rowsByFamily
+        .expand((List<Map<String, dynamic>> maps) => maps)
+        .map(PatientDashboardIndex.fromMap)
+        .toList();
+    _sort(items);
+    return items;
+  }
+
   Future<void> patchFrontendManagedState({
     required String fiscalCode,
     required String fullName,
