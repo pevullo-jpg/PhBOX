@@ -325,6 +325,12 @@ class _DashboardPageState extends State<DashboardPage> {
     unawaited(_syncPatientDashboardIndex(nextSummary));
   }
 
+
+  Future<void> _replaceCachedSummaryAwaitingIndex(_PatientDashboardSummary nextSummary) async {
+    _replaceCachedSummary(nextSummary);
+    await _syncPatientDashboardIndex(nextSummary);
+  }
+
   Future<void> _syncPatientDashboardIndex(_PatientDashboardSummary summary) async {
     try {
       await _patientDashboardIndexRepository.patchFrontendManagedState(
@@ -1294,7 +1300,7 @@ class _DashboardPageState extends State<DashboardPage> {
               );
               await _debtsRepository.saveDebt(debt);
               await _dashboardTotalsRepository.applyFrontendManagedDelta(debtAmountDelta: amount);
-              _replaceCachedSummary(summary.copyWith(debts: <Debt>[debt, ...summary.debts]));
+              await _replaceCachedSummaryAwaitingIndex(summary.copyWith(debts: <Debt>[debt, ...summary.debts]));
               saved = true;
               if (dialogContext.mounted) {
                 Navigator.of(dialogContext).pop();
@@ -1415,7 +1421,7 @@ class _DashboardPageState extends State<DashboardPage> {
               );
               await _advancesRepository.saveAdvance(advance);
               await _dashboardTotalsRepository.applyFrontendManagedDelta(advanceCountDelta: 1);
-              _replaceCachedSummary(summary.copyWith(
+              await _replaceCachedSummaryAwaitingIndex(summary.copyWith(
                 advances: <Advance>[advance, ...summary.advances],
                 doctorName: doctorName,
               ));
@@ -1579,7 +1585,7 @@ class _DashboardPageState extends State<DashboardPage> {
       );
       await _bookingsRepository.saveBooking(booking);
       await _dashboardTotalsRepository.applyFrontendManagedDelta(bookingCountDelta: 1);
-      _replaceCachedSummary(summary.copyWith(bookings: <Booking>[booking, ...summary.bookings]));
+      await _replaceCachedSummaryAwaitingIndex(summary.copyWith(bookings: <Booking>[booking, ...summary.bookings]));
       _refresh();
       return true;
     } catch (e) {
@@ -1599,7 +1605,7 @@ class _DashboardPageState extends State<DashboardPage> {
       await _debtsRepository.deleteDebt(summary.patient.fiscalCode, item.id);
     }
     await _dashboardTotalsRepository.applyFrontendManagedDelta(debtAmountDelta: debtDelta);
-    _replaceCachedSummary(summary.copyWith(debts: const <Debt>[]));
+    await _replaceCachedSummaryAwaitingIndex(summary.copyWith(debts: const <Debt>[]));
     _refresh();
     return true;
   }
@@ -1611,7 +1617,7 @@ class _DashboardPageState extends State<DashboardPage> {
       await _advancesRepository.deleteAdvance(summary.patient.fiscalCode, item.id);
     }
     await _dashboardTotalsRepository.applyFrontendManagedDelta(advanceCountDelta: advanceDelta);
-    _replaceCachedSummary(summary.copyWith(advances: const <Advance>[]));
+    await _replaceCachedSummaryAwaitingIndex(summary.copyWith(advances: const <Advance>[]));
     _refresh();
     return true;
   }
@@ -1623,7 +1629,7 @@ class _DashboardPageState extends State<DashboardPage> {
       await _bookingsRepository.deleteBooking(summary.patient.fiscalCode, item.id);
     }
     await _dashboardTotalsRepository.applyFrontendManagedDelta(bookingCountDelta: bookingDelta);
-    _replaceCachedSummary(summary.copyWith(bookings: const <Booking>[]));
+    await _replaceCachedSummaryAwaitingIndex(summary.copyWith(bookings: const <Booking>[]));
     _refresh();
     return true;
   }
@@ -1714,7 +1720,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 await _debtsRepository.saveDebt(debt);
                 await _dashboardTotalsRepository.applyFrontendManagedDelta(debtAmountDelta: amount);
                 currentSummary = currentSummary.copyWith(debts: <Debt>[debt, ...currentSummary.debts]);
-                _replaceCachedSummary(currentSummary);
+                await _replaceCachedSummaryAwaitingIndex(currentSummary);
               } else if (key == 'anticipi') {
                 final drugName = advanceDrugController.text.trim();
                 final doctorName = selectedDoctor.trim();
@@ -1744,7 +1750,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   advances: <Advance>[advance, ...currentSummary.advances],
                   doctorName: doctorName,
                 );
-                _replaceCachedSummary(currentSummary);
+                await _replaceCachedSummaryAwaitingIndex(currentSummary);
               } else {
                 final drugName = bookingDrugController.text.trim();
                 final quantity = int.tryParse(bookingQuantityController.text.trim()) ?? 1;
@@ -1765,7 +1771,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 await _bookingsRepository.saveBooking(booking);
                 await _dashboardTotalsRepository.applyFrontendManagedDelta(bookingCountDelta: 1);
                 currentSummary = currentSummary.copyWith(bookings: <Booking>[booking, ...currentSummary.bookings]);
-                _replaceCachedSummary(currentSummary);
+                await _replaceCachedSummaryAwaitingIndex(currentSummary);
               }
 
               _refresh();
@@ -1794,7 +1800,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             currentSummary = currentSummary.copyWith(
                               debts: currentSummary.debts.where((Debt debt) => debt.id != item.id).toList(),
                             );
-                            _replaceCachedSummary(currentSummary);
+                            await _replaceCachedSummaryAwaitingIndex(currentSummary);
                             _refresh();
                           });
                         },
@@ -1813,7 +1819,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             currentSummary = currentSummary.copyWith(
                               advances: currentSummary.advances.where((Advance advance) => advance.id != item.id).toList(),
                             );
-                            _replaceCachedSummary(currentSummary);
+                            await _replaceCachedSummaryAwaitingIndex(currentSummary);
                             _refresh();
                           });
                         },
@@ -1831,7 +1837,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           currentSummary = currentSummary.copyWith(
                             bookings: currentSummary.bookings.where((Booking booking) => booking.id != item.id).toList(),
                           );
-                          _replaceCachedSummary(currentSummary);
+                          await _replaceCachedSummaryAwaitingIndex(currentSummary);
                           _refresh();
                         });
                       },
@@ -2001,7 +2007,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 }
                                 await _dashboardTotalsRepository.applyFrontendManagedDelta(debtAmountDelta: debtDelta);
                                 currentSummary = currentSummary.copyWith(debts: const <Debt>[]);
-                                _replaceCachedSummary(currentSummary);
+                                await _replaceCachedSummaryAwaitingIndex(currentSummary);
                               } else if (key == 'anticipi') {
                                 int advanceDelta = 0;
                                 for (final item in currentSummary.advances) {
@@ -2010,7 +2016,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 }
                                 await _dashboardTotalsRepository.applyFrontendManagedDelta(advanceCountDelta: advanceDelta);
                                 currentSummary = currentSummary.copyWith(advances: const <Advance>[]);
-                                _replaceCachedSummary(currentSummary);
+                                await _replaceCachedSummaryAwaitingIndex(currentSummary);
                               } else {
                                 int bookingDelta = 0;
                                 for (final item in currentSummary.bookings) {
@@ -2019,7 +2025,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 }
                                 await _dashboardTotalsRepository.applyFrontendManagedDelta(bookingCountDelta: bookingDelta);
                                 currentSummary = currentSummary.copyWith(bookings: const <Booking>[]);
-                                _replaceCachedSummary(currentSummary);
+                                await _replaceCachedSummaryAwaitingIndex(currentSummary);
                               }
                               _refresh();
                             }),
