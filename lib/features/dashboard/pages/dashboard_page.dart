@@ -459,7 +459,33 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<List<PatientDashboardIndex>> _loadDashboardIndexRows() async {
     final String query = _searchController.text.trim();
     if (query.length >= 3) {
-      return _patientDashboardIndexRepository.searchByPrefix(query);
+      final List<PatientDashboardIndex> matchedRows =
+          await _patientDashboardIndexRepository.searchByPrefix(query);
+      final Set<String> familyIds = matchedRows
+          .map((PatientDashboardIndex item) => item.familyId.trim())
+          .where((String item) => item.isNotEmpty)
+          .toSet();
+      if (familyIds.isEmpty) {
+        return matchedRows;
+      }
+      final List<PatientDashboardIndex> familyRows =
+          await _patientDashboardIndexRepository.getByFamilyIds(familyIds);
+      final Map<String, PatientDashboardIndex> deduplicatedByCf =
+          <String, PatientDashboardIndex>{
+        for (final PatientDashboardIndex item in matchedRows)
+          if (_normalizeFiscalCode(item.fiscalCode).isNotEmpty)
+            _normalizeFiscalCode(item.fiscalCode): item,
+      };
+      for (final PatientDashboardIndex item in familyRows) {
+        final String cf = _normalizeFiscalCode(item.fiscalCode);
+        if (cf.isEmpty || deduplicatedByCf.containsKey(cf)) {
+          continue;
+        }
+        deduplicatedByCf[cf] = item;
+      }
+      final List<PatientDashboardIndex> expandedRows =
+          deduplicatedByCf.values.toList();
+      return expandedRows;
     }
 
     final _DashboardCardFilter? primaryFilter = _selectPrimaryIndexFilter();
