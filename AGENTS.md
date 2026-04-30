@@ -86,3 +86,16 @@ Dopo ogni modifica Codex deve produrre:
   - rischio residuo
   - stima letture Firestore/ora
   - istruzioni manuali di applicazione/deploy su Apps Script
+
+
+## 7) Protocollo obbligatorio anti-regressione PR (Codex)
+- Ogni PR applicativa deve partire da `main` (branch base tecnico e storico unico).
+- È vietato usare branch `work` per PR finali.
+- Ogni PR deve dichiarare esplicitamente: `HEAD SHA`, `base branch`, `files changed`.
+- La review Codex deve confermare in chiaro l'`HEAD SHA` revisionato.
+- Se la review riguarda un commit vecchio (SHA diverso dall'ultimo HEAD), la review è invalida e va rifatta.
+- È vietato cambiare la semantica di helper condivisi senza introdurre/helper dedicato approvato per il nuovo comportamento.
+- Ogni PR deve elencare i pattern vietati specifici del bug che intende prevenire.
+- Ogni PR deve dichiarare l'impatto stimato su Firestore (`reads/hour`).
+- Se durante lavorazione o review la PR diventa confusa/non verificabile, va chiusa senza merge e rifatta pulita partendo da `main`.
+- Merge consentito solo dopo review sull'ultimo `HEAD SHA` e GitHub Actions verdi.
