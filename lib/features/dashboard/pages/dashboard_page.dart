@@ -3231,12 +3231,12 @@ class _DashboardPageState extends State<DashboardPage> {
                                               onPressed: () => _openPatient(item),
                                               child: Row(
                                                 children: [
-                                                  if (item.familyId.isNotEmpty && familyState.hasMultipleActive(item.familyId)) ...[
+                                                  if (item.familyId.isNotEmpty || item.familyName.trim().isNotEmpty) ...[
                                                     Container(
                                                       width: 14,
                                                       height: 14,
                                                       decoration: BoxDecoration(
-                                                        color: familyState.colorFor(item.familyId),
+                                                        color: FamilyGroupColorUtils.colorForIndex(item.familyColorIndex),
                                                         borderRadius: BorderRadius.circular(4),
                                                       ),
                                                     ),
