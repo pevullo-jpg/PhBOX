@@ -3915,6 +3915,7 @@ class _PatientDashboardSummary {
     final bool hasExpiryAlert = expiryCandidates.any(hasExpiringDate);
     String familyId = '';
     String familyName = '';
+    int familyColorIndex = 0;
     for (final FamilyGroup family in families) {
       final bool isMember = family.memberFiscalCodes
           .map((String e) => e.trim().toUpperCase())
@@ -3922,6 +3923,7 @@ class _PatientDashboardSummary {
       if (isMember) {
         familyId = family.id;
         familyName = family.name.trim();
+        familyColorIndex = family.colorIndex;
         break;
       }
     }
@@ -3940,7 +3942,7 @@ class _PatientDashboardSummary {
       hasExpiryAlert: hasExpiryAlert,
       familyId: familyId,
       familyName: familyName,
-      familyColorIndex: 0,
+      familyColorIndex: familyColorIndex,
       indexedDebtAmount: debts.fold<double>(0, (sum, item) => sum + item.residualAmount),
       indexedDebtCount: debts.length,
       indexedAdvanceCount: advances.length,
