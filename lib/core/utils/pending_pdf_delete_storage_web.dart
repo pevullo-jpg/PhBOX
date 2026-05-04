@@ -5,6 +5,26 @@ import 'pending_pdf_delete_storage.dart';
 
 const String _storageKey = 'phbox_pending_pdf_delete_v1';
 
+String _readRawStorageValue() {
+  try {
+    return html.window.localStorage[_storageKey] ?? '';
+  } catch (_) {
+    return '';
+  }
+}
+
+void _writeRawStorageValue(String raw) {
+  try {
+    html.window.localStorage[_storageKey] = raw;
+  } catch (_) {}
+}
+
+void _removeStorageValue() {
+  try {
+    html.window.localStorage.remove(_storageKey);
+  } catch (_) {}
+}
+
 Future<void> upsertEntry(PendingPdfDeleteEntry entry) async {
   final List<PendingPdfDeleteEntry> entries = await loadEntries();
   final Map<String, PendingPdfDeleteEntry> byId = <String, PendingPdfDeleteEntry>{
@@ -15,7 +35,7 @@ Future<void> upsertEntry(PendingPdfDeleteEntry entry) async {
 }
 
 Future<List<PendingPdfDeleteEntry>> loadEntries() async {
-  final String raw = html.window.localStorage[_storageKey] ?? '';
+  final String raw = _readRawStorageValue();
   if (raw.isEmpty) return const <PendingPdfDeleteEntry>[];
   try {
     final dynamic parsed = jsonDecode(raw);
@@ -40,14 +60,14 @@ Future<List<PendingPdfDeleteEntry>> loadEntries() async {
 
 Future<void> replaceEntries(List<PendingPdfDeleteEntry> entries) async {
   if (entries.isEmpty) {
-    html.window.localStorage.remove(_storageKey);
+    _removeStorageValue();
     return;
   }
-  html.window.localStorage[_storageKey] = jsonEncode(entries.map((e) => {
+  _writeRawStorageValue(jsonEncode(entries.map((e) => {
     'importId': e.importId,
     'fiscalCode': e.fiscalCode,
     'requestedAt': e.requestedAt.toUtc().toIso8601String(),
-  }).toList());
+  }).toList()));
 }
 
 Future<void> removeByImportIds(Set<String> importIds) async {
