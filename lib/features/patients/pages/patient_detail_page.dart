@@ -10,6 +10,7 @@ import '../../../core/utils/family_group_color_utils.dart';
 import '../../../core/utils/patient_identity_utils.dart';
 import '../../../core/utils/patient_input_normalizer.dart';
 import '../../../core/utils/phbox_contract_utils.dart';
+import '../../../core/utils/pending_pdf_delete_storage.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
 import '../../../data/models/app_settings.dart';
@@ -92,6 +93,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     final String previousFiscalCode =
         PatientInputNormalizer.normalizeFiscalCode(oldWidget.fiscalCode);
     if (nextFiscalCode != previousFiscalCode) {
+      unawaited(removePendingPdfDeletesByFiscalCode(previousFiscalCode));
       _currentFiscalCode = nextFiscalCode;
       _future = _load();
     }
@@ -124,7 +126,20 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       _currentFiscalCode,
       includeHidden: true,
     );
-    final imports = allImports.where((DrivePdfImport item) => !item.isHiddenFromFrontend).toList();
+    final Map<String, PendingPdfDeleteEntry> pendingByImportId = await loadPendingPdfDeletesByImportId();
+    final imports = allImports.where((DrivePdfImport item) {
+      if (item.isHiddenFromFrontend) return false;
+      final PendingPdfDeleteEntry? pending = pendingByImportId[item.id];
+      if (pending == null) return true;
+      final String status = item.status.trim().toLowerCase();
+      final bool removePending = item.pdfDeleted || status == 'deleted_pdf' || status == 'rejected' || status == 'cancelled' || status == 'delete_rejected' || status == 'delete_cancelled';
+      if (removePending) {
+        unawaited(removePendingPdfDeleteByImportId(item.id));
+        return true;
+      }
+      if (!item.deletePdfRequested) return true;
+      return false;
+    }).toList();
     final prescriptions = allImports.isNotEmpty
         ? imports.map(_prescriptionsRepository.importToPrescription).toList()
         : await _prescriptionsRepository.getLegacyPatientPrescriptions(_currentFiscalCode);
@@ -1010,6 +1025,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   Future<void> _requestPrescriptionDelete(_PatientDetailData data, DrivePdfImport item) async {
     if (!await _confirmDelete(message: 'Eliminare questa ricetta?')) return;
     await _drivePdfImportsRepository.requestPdfDelete(item.id, fiscalCode: item.patientFiscalCode);
+    await savePendingPdfDelete(importId: item.id, fiscalCode: item.patientFiscalCode);
     final DrivePdfImport hiddenItem = item.copyWith(
       deletePdfRequested: true,
       deleteRequestedAt: DateTime.now(),
