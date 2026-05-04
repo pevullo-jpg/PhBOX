@@ -552,9 +552,6 @@ class _DashboardPageState extends State<DashboardPage> {
         unawaited(removePendingPdfDeleteByImportId(item.id));
         return true;
       }
-      if (!item.deletePdfRequested) {
-        return true;
-      }
       return false;
     }).toList();
 

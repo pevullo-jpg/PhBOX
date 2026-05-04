@@ -1,0 +1,78 @@
+--- a/lib/features/dashboard/pages/dashboard_page.dart
++++ b/lib/features/dashboard/pages/dashboard_page.dart
+@@ -550,9 +550,6 @@
+       final bool shouldRemovePending = item.pdfDeleted || status == 'deleted_pdf' || status == 'rejected' || status == 'cancelled' || status == 'delete_rejected' || status == 'delete_cancelled';
+       if (shouldRemovePending) {
+         unawaited(removePendingPdfDeleteByImportId(item.id));
+-        return true;
+-      }
+-      if (!item.deletePdfRequested) {
+         return true;
+       }
+       return false;
+--- a/lib/features/patients/pages/patient_detail_page.dart
++++ b/lib/features/patients/pages/patient_detail_page.dart
+@@ -136,7 +136,6 @@
+         unawaited(removePendingPdfDeleteByImportId(item.id));
+         return true;
+       }
+-      if (!item.deletePdfRequested) return true;
+       return false;
+     }).toList();
+     final prescriptions = allImports.isNotEmpty
+--- a/lib/core/utils/pending_pdf_delete_storage_web.dart
++++ b/lib/core/utils/pending_pdf_delete_storage_web.dart
+@@ -4,6 +4,26 @@
+ import 'pending_pdf_delete_storage.dart';
+ 
+ const String _storageKey = 'phbox_pending_pdf_delete_v1';
++
++String _readRawStorageValue() {
++  try {
++    return html.window.localStorage[_storageKey] ?? '';
++  } catch (_) {
++    return '';
++  }
++}
++
++void _writeRawStorageValue(String raw) {
++  try {
++    html.window.localStorage[_storageKey] = raw;
++  } catch (_) {}
++}
++
++void _removeStorageValue() {
++  try {
++    html.window.localStorage.remove(_storageKey);
++  } catch (_) {}
++}
+ 
+ Future<void> upsertEntry(PendingPdfDeleteEntry entry) async {
+   final List<PendingPdfDeleteEntry> entries = await loadEntries();
+@@ -15,7 +35,7 @@
+ }
+ 
+ Future<List<PendingPdfDeleteEntry>> loadEntries() async {
+-  final String raw = html.window.localStorage[_storageKey] ?? '';
++  final String raw = _readRawStorageValue();
+   if (raw.isEmpty) return const <PendingPdfDeleteEntry>[];
+   try {
+     final dynamic parsed = jsonDecode(raw);
+@@ -40,14 +60,14 @@
+ 
+ Future<void> replaceEntries(List<PendingPdfDeleteEntry> entries) async {
+   if (entries.isEmpty) {
+-    html.window.localStorage.remove(_storageKey);
++    _removeStorageValue();
+     return;
+   }
+-  html.window.localStorage[_storageKey] = jsonEncode(entries.map((e) => {
++  _writeRawStorageValue(jsonEncode(entries.map((e) => {
+     'importId': e.importId,
+     'fiscalCode': e.fiscalCode,
+     'requestedAt': e.requestedAt.toUtc().toIso8601String(),
+-  }).toList());
++  }).toList()));
+ }
+ 
+ Future<void> removeByImportIds(Set<String> importIds) async {

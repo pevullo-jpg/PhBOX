@@ -136,7 +136,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         unawaited(removePendingPdfDeleteByImportId(item.id));
         return true;
       }
-      if (!item.deletePdfRequested) return true;
       return false;
     }).toList();
     final prescriptions = allImports.isNotEmpty
