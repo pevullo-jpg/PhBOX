@@ -107,12 +107,17 @@ class PendingPdfDeleteStore {
     for (final PendingPdfDeleteEntry entry in activeById.values) {
       final DrivePdfImport? current = importsById[entry.importId];
       if (current == null) {
-        changed = true;
+        nextById[entry.importId] = entry;
         continue;
       }
       final String status = current.status.trim().toLowerCase();
       final bool deleteSettled =
-          current.pdfDeleted == true || status == 'deleted_pdf' || status == 'rejected' || status == 'cancelled';
+          current.pdfDeleted == true ||
+          status == 'deleted_pdf' ||
+          status == 'rejected' ||
+          status == 'cancelled' ||
+          status == 'delete_rejected' ||
+          status == 'delete_cancelled';
       if (deleteSettled) {
         changed = true;
         continue;
