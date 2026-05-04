@@ -3635,7 +3635,7 @@ class _DashboardTotals {
     int dpcCount = 0;
     final Set<String> expiringPatientKeys = <String>{};
 
-    for (final DrivePdfImport item in imports) {
+    for (final DrivePdfImport item in visibleImports) {
       recipeCount += item.prescriptionCount > 0 ? item.prescriptionCount : 1;
       if (item.isDpc) {
         dpcCount += 1;
