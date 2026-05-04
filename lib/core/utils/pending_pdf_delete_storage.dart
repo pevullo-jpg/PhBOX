@@ -96,7 +96,12 @@ class PendingPdfDeleteStore {
         .toSet();
   }
 
-  Future<void> cleanupWithImports(Iterable<DrivePdfImport> imports, {DateTime? now}) async {
+  Future<void> cleanupWithImports(
+    Iterable<DrivePdfImport> imports, {
+    DateTime? now,
+    PendingPdfDeleteCleanupScope scope = PendingPdfDeleteCleanupScope.partial,
+    String? fiscalCode,
+  }) async {
     final DateTime effectiveNow = now ?? DateTime.now();
     final Map<String, DrivePdfImport> importsById = <String, DrivePdfImport>{
       for (final DrivePdfImport item in imports) if (item.id.trim().isNotEmpty) item.id.trim(): item,
@@ -107,6 +112,15 @@ class PendingPdfDeleteStore {
     for (final PendingPdfDeleteEntry entry in activeById.values) {
       final DrivePdfImport? current = importsById[entry.importId];
       if (current == null) {
+        final bool canCleanupMissing =
+            scope == PendingPdfDeleteCleanupScope.globalComplete ||
+            (scope == PendingPdfDeleteCleanupScope.fiscalCodeComplete &&
+                fiscalCode != null &&
+                fiscalCode.trim().toUpperCase() == entry.fiscalCode);
+        if (canCleanupMissing) {
+          changed = true;
+          continue;
+        }
         nextById[entry.importId] = entry;
         continue;
       }
@@ -169,4 +183,10 @@ class PendingPdfDeleteStore {
     }
     return impl.savePendingPdfDeletePayload(jsonEncode(entries.map((item) => item.toMap()).toList()));
   }
+}
+
+enum PendingPdfDeleteCleanupScope {
+  partial,
+  fiscalCodeComplete,
+  globalComplete,
 }

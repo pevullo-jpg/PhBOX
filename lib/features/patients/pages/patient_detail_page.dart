@@ -127,7 +127,11 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       _currentFiscalCode,
       includeHidden: true,
     );
-    await _pendingPdfDeleteStore.cleanupWithImports(allImports);
+    await _pendingPdfDeleteStore.cleanupWithImports(
+      allImports,
+      scope: PendingPdfDeleteCleanupScope.fiscalCodeComplete,
+      fiscalCode: _currentFiscalCode,
+    );
     final Set<String> pendingIds = _pendingPdfDeleteStore.pendingIdsForFiscalCode(_currentFiscalCode);
     final imports = allImports
         .where((DrivePdfImport item) => !item.isHiddenFromFrontend && !pendingIds.contains(item.id))

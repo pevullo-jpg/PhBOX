@@ -547,7 +547,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final List<PatientDashboardIndex> allIndexRows = results[0] as List<PatientDashboardIndex>;
     final List<PatientDashboardIndex> baseSearchRows = results[1] as List<PatientDashboardIndex>;
     final List<DrivePdfImport> imports = results[2] as List<DrivePdfImport>;
-    await _pendingPdfDeleteStore.cleanupWithImports(imports);
+    await _pendingPdfDeleteStore.cleanupWithImports(imports, scope: PendingPdfDeleteCleanupScope.partial);
     final Set<String> pendingImportIds = _pendingPdfDeleteStore.pendingImportIds();
     final List<Prescription> prescriptions = results[3] as List<Prescription>;
     final List<Debt> debts = results[4] as List<Debt>;
