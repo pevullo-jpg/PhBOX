@@ -93,7 +93,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     final String previousFiscalCode =
         PatientInputNormalizer.normalizeFiscalCode(oldWidget.fiscalCode);
     if (nextFiscalCode != previousFiscalCode) {
-      unawaited(removePendingPdfDeletesByFiscalCode(previousFiscalCode));
       _currentFiscalCode = nextFiscalCode;
       _future = _load();
     }

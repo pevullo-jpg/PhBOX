@@ -587,7 +587,7 @@ class _DashboardPageState extends State<DashboardPage> {
       matchedCfs.add(cf);
     }
 
-    for (final DrivePdfImport item in imports) {
+    for (final DrivePdfImport item in visibleImports) {
       if (_matchesImportFlagQuery(item, query)) {
         addGrouped<DrivePdfImport>(matchedImportsByCf, item.patientFiscalCode, item);
       }
