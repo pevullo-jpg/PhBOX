@@ -19,6 +19,7 @@ import '../../../data/models/app_settings.dart';
 import '../../../data/models/booking.dart';
 import '../../../data/models/debt.dart';
 import '../../../data/models/dashboard_totals_snapshot.dart';
+import '../../../data/models/dashboard_expiring_recipes_snapshot.dart';
 import '../../../data/models/doctor_patient_link.dart';
 import '../../../data/models/drive_pdf_import.dart';
 import '../../../data/models/family_group.dart';
@@ -29,6 +30,7 @@ import '../../../data/repositories/advances_repository.dart';
 import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
 import '../../../data/repositories/dashboard_totals_repository.dart';
+import '../../../data/repositories/dashboard_expiring_recipes_repository.dart';
 import '../../../data/repositories/doctor_patient_links_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/family_groups_repository.dart';
@@ -59,6 +61,7 @@ class _DashboardPageState extends State<DashboardPage> {
   late final FamilyGroupsRepository _familyGroupsRepository;
   late final SettingsRepository _settingsRepository;
   late final DashboardTotalsRepository _dashboardTotalsRepository;
+  late final DashboardExpiringRecipesRepository _dashboardExpiringRecipesRepository;
   late final PatientDashboardIndexRepository _patientDashboardIndexRepository;
 
   Future<_DashboardData>? _future;
@@ -75,6 +78,10 @@ class _DashboardPageState extends State<DashboardPage> {
   String _lastUserRequestRefreshSignature = '';
   DateTime? _lastRefreshAt;
   StreamSubscription<DashboardTotalsSnapshot?>? _dashboardTotalsSubscription;
+  List<DashboardExpiringRecipe> _expiringRecipes = const <DashboardExpiringRecipe>[];
+  String _expiringRecipesSignature = '';
+  bool _expiringRecipesLoading = false;
+  String _expiringRecipesMessage = '';
 
   static const Duration _inactiveFilterResetDelay = Duration(minutes: 2);
   static const Duration _userRequestRefreshDebounceDelay = Duration(milliseconds: 450);
@@ -93,6 +100,7 @@ class _DashboardPageState extends State<DashboardPage> {
     _familyGroupsRepository = FamilyGroupsRepository(datasource: datasource);
     _settingsRepository = SettingsRepository(datasource: datasource);
     _dashboardTotalsRepository = DashboardTotalsRepository(datasource: datasource);
+    _dashboardExpiringRecipesRepository = DashboardExpiringRecipesRepository(datasource: datasource);
     _patientDashboardIndexRepository = PatientDashboardIndexRepository(datasource: datasource);
     _future = Future<_DashboardData>.value(_DashboardData.empty());
     _startDashboardTotalsListener();
@@ -183,6 +191,7 @@ class _DashboardPageState extends State<DashboardPage> {
           _dashboardTotals = snapshotTotals;
           _lastRefreshAt = snapshot.updatedAt ?? DateTime.now();
         });
+        unawaited(_loadExpiringRecipesSectionIfNeeded(snapshotTotals));
       },
       onError: (Object error) {
         if (!mounted) {
@@ -206,6 +215,113 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     return !_dashboardTotals.hasAnyValue;
   }
+
+  bool get _shouldShowExpiringRecipesSection {
+    return _dashboardTotals.expiringCount > 0 ||
+        _expiringRecipesLoading ||
+        _expiringRecipes.isNotEmpty ||
+        _expiringRecipesMessage.isNotEmpty;
+  }
+
+  String _expiringRecipesSignatureForTotals(_DashboardTotals totals) {
+    return totals.expiringCount.toString();
+  }
+
+  Future<void> _loadExpiringRecipesSectionIfNeeded(
+    _DashboardTotals totals, {
+    bool force = false,
+  }) async {
+    if (!mounted) {
+      return;
+    }
+    if (totals.expiringCount <= 0) {
+      if (_expiringRecipes.isEmpty &&
+          !_expiringRecipesLoading &&
+          _expiringRecipesMessage.isEmpty &&
+          _expiringRecipesSignature.isEmpty) {
+        return;
+      }
+      setState(() {
+        _expiringRecipes = const <DashboardExpiringRecipe>[];
+        _expiringRecipesLoading = false;
+        _expiringRecipesMessage = '';
+        _expiringRecipesSignature = '';
+      });
+      return;
+    }
+
+    final String signature = _expiringRecipesSignatureForTotals(totals);
+    if (!force && (_expiringRecipesLoading || _expiringRecipesSignature == signature)) {
+      return;
+    }
+
+    setState(() {
+      _expiringRecipesLoading = true;
+      _expiringRecipesMessage = '';
+    });
+
+    try {
+      final DashboardExpiringRecipesSnapshot? snapshot =
+          await _dashboardExpiringRecipesRepository.getMainSnapshot();
+      final List<DashboardExpiringRecipe> visibleItems =
+          await _filterPendingExpiringRecipes(snapshot?.items ?? const <DashboardExpiringRecipe>[]);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _expiringRecipes = visibleItems;
+        _expiringRecipesSignature = signature;
+        _expiringRecipesLoading = false;
+        _expiringRecipesMessage = visibleItems.isEmpty && totals.expiringCount > 0
+            ? 'Scadenze segnalate dai totali, ma nessuna ricetta visibile nell’indice dedicato.'
+            : '';
+      });
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _expiringRecipesLoading = false;
+        _expiringRecipesMessage = 'Errore caricamento ricette in scadenza: $e';
+      });
+    }
+  }
+
+  Future<List<DashboardExpiringRecipe>> _filterPendingExpiringRecipes(
+    List<DashboardExpiringRecipe> items,
+  ) async {
+    if (items.isEmpty) {
+      return const <DashboardExpiringRecipe>[];
+    }
+    final Map<String, PendingPdfDeleteEntry> pendingByImportId = await loadPendingPdfDeletesByImportId();
+    if (pendingByImportId.isEmpty) {
+      return items;
+    }
+    return items.where((DashboardExpiringRecipe item) {
+      return !pendingByImportId.containsKey(item.importId);
+    }).toList();
+  }
+
+  Future<void> _openExpiringRecipePdf(DashboardExpiringRecipe item) async {
+    final String directLink = item.effectiveViewLink.trim();
+    final String fallbackLink = item.driveFileId.trim().isNotEmpty
+        ? 'https://drive.google.com/file/d/${item.driveFileId.trim()}/view'
+        : '';
+    final String url = directLink.isNotEmpty ? directLink : fallbackLink;
+    if (url.isEmpty) {
+      setState(() {
+        _message = 'Link PDF assente nell’indice ricette in scadenza.';
+      });
+      return;
+    }
+    await launchUrl(
+      Uri.parse(url),
+      mode: LaunchMode.platformDefault,
+      webOnlyWindowName: '_blank',
+    );
+  }
+
+
   String _activeDashboardRequestSignature() {
     final List<String> activeFilters = _activeCardFilters
         .map((filter) => filter.name)
@@ -3097,13 +3213,27 @@ class _DashboardPageState extends State<DashboardPage> {
                                   value: totals.expiringCount.toString(),
                                   icon: Icons.warning_amber_rounded,
                                   accent: AppColors.coral,
-                                  isSelected: _activeCardFilters.contains(_DashboardCardFilter.scadenze),
-                                  onTap: () => _toggleCardFilter(_DashboardCardFilter.scadenze),
+                                  isSelected: false,
+                                  onTap: () => unawaited(
+                                    _loadExpiringRecipesSectionIfNeeded(
+                                      _dashboardTotals,
+                                      force: true,
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
                           ),
                         ),
+                        if (_shouldShowExpiringRecipesSection) ...[
+                          const SizedBox(height: 12),
+                          Center(
+                            child: SizedBox(
+                              width: cardsBlockWidth,
+                              child: _buildExpiringRecipesSection(),
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 12),
                         Center(
                           child: SizedBox(
@@ -3496,6 +3626,144 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+
+
+  Widget _buildExpiringRecipesSection() {
+    final List<DashboardExpiringRecipe> items = _expiringRecipes;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF211600),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.amber),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: AppColors.yellow),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Ricette in scadenza',
+                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
+                ),
+              ),
+              if (_expiringRecipesLoading)
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                TextButton.icon(
+                  onPressed: () => unawaited(
+                    _loadExpiringRecipesSectionIfNeeded(
+                      _dashboardTotals,
+                      force: true,
+                    ),
+                  ),
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('Aggiorna'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Sezione automatica backend-owned. La card resta indicativa; questa lista non altera i filtri paziente.',
+            style: const TextStyle(color: Colors.white60, fontSize: 13),
+          ),
+          if (_expiringRecipesMessage.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              _expiringRecipesMessage,
+              style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+          ],
+          if (items.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 300),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: items.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (context, index) => _buildExpiringRecipeTile(items[index]),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExpiringRecipeTile(DashboardExpiringRecipe item) {
+    final String patient = item.displayPatient;
+    final String cf = item.patientFiscalCode.trim();
+    final String doctor = item.doctorFullName.trim().isEmpty ? '-' : item.doctorFullName.trim();
+    final String dateLabel = _formatDate(item.prescriptionDate);
+    final String expiryDateLabel = _formatDate(item.expiryDate);
+    final String fileName = item.fileName.trim().isEmpty ? item.importId : item.fileName.trim();
+    final String therapy = item.therapy.take(3).join(', ');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2A1B00),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  patient,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  [
+                    if (cf.isNotEmpty) cf,
+                    'Ricetta $dateLabel',
+                    'Scadenza $expiryDateLabel',
+                    item.expiryLabel,
+                    if (item.isDpc) 'DPC',
+                  ].join(' · '),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  [
+                    fileName,
+                    'Medico: $doctor',
+                    if (therapy.isNotEmpty) therapy,
+                  ].join(' · '),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white54, fontSize: 12.5),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          IconButton(
+            tooltip: 'Apri PDF',
+            onPressed: () => unawaited(_openExpiringRecipePdf(item)),
+            icon: const Icon(Icons.open_in_new, color: Colors.white70),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _dialogField(
     TextEditingController controller,
