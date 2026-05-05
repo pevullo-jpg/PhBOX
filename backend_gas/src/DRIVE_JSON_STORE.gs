@@ -107,7 +107,9 @@ function buildEmptyRuntimeIndex_(cfg) {
       patients: {},
       doctorLinks: {},
       dashboardTotals: '',
-      dashboardTotalsData: null
+      dashboardTotalsData: null,
+      dashboardExpiringRecipes: '',
+      dashboardExpiringRecipesData: null
     },
     meta: {
       legacyMigratedAt: null
@@ -134,6 +136,11 @@ function ensureRuntimeIndexShape_(index, cfg) {
   if (out.publishState.dashboardTotalsData !== null &&
       (!out.publishState.dashboardTotalsData || typeof out.publishState.dashboardTotalsData !== 'object' || Array.isArray(out.publishState.dashboardTotalsData))) {
     out.publishState.dashboardTotalsData = null;
+  }
+  if (typeof out.publishState.dashboardExpiringRecipes !== 'string') out.publishState.dashboardExpiringRecipes = '';
+  if (out.publishState.dashboardExpiringRecipesData !== null &&
+      (!out.publishState.dashboardExpiringRecipesData || typeof out.publishState.dashboardExpiringRecipesData !== 'object' || Array.isArray(out.publishState.dashboardExpiringRecipesData))) {
+    out.publishState.dashboardExpiringRecipesData = null;
   }
   if (!out.meta || typeof out.meta !== 'object') out.meta = {};
   if (!Object.prototype.hasOwnProperty.call(out.meta, 'legacyMigratedAt')) out.meta.legacyMigratedAt = null;
