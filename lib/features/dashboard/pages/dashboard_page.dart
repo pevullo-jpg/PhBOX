@@ -457,6 +457,10 @@ class _DashboardPageState extends State<DashboardPage> {
         .where(_matchesActiveIndexFilters)
         .toList();
 
+    if (summaries.isEmpty && _shouldUseExpiryFallback()) {
+      return _loadExpiryFallbackData();
+    }
+
     _sortDashboardSummaries(summaries);
 
     return _DashboardData(
@@ -465,6 +469,132 @@ class _DashboardPageState extends State<DashboardPage> {
       families: const <FamilyGroup>[],
       totals: _dashboardTotals,
       expandedFamilyCfs: indexLoadResult.expandedFamilyCfs,
+    );
+  }
+
+  bool _shouldUseExpiryFallback() {
+    return _searchController.text.trim().isEmpty &&
+        _activeCardFilters.length == 1 &&
+        _activeCardFilters.contains(_DashboardCardFilter.scadenze) &&
+        _dashboardTotals.expiringCount > 0;
+  }
+
+  Future<List<DrivePdfImport>> _applyPendingPdfDeleteMask(List<DrivePdfImport> imports) async {
+    final Map<String, PendingPdfDeleteEntry> pendingByImportId = await loadPendingPdfDeletesByImportId();
+    return imports.where((DrivePdfImport item) {
+      final PendingPdfDeleteEntry? pending = pendingByImportId[item.id];
+      if (pending == null) return true;
+      if (_isTerminalPdfDeleteState(item)) {
+        unawaited(removePendingPdfDeleteByImportId(item.id));
+        return true;
+      }
+      return false;
+    }).toList();
+  }
+
+  bool _isTerminalPdfDeleteState(DrivePdfImport item) {
+    final String status = item.status.trim().toLowerCase();
+    return item.pdfDeleted ||
+        status == 'deleted_pdf' ||
+        status == 'rejected' ||
+        status == 'cancelled' ||
+        status == 'delete_rejected' ||
+        status == 'delete_cancelled';
+  }
+
+  Future<_DashboardData> _loadExpiryFallbackData() async {
+    final List<dynamic> results = await Future.wait<dynamic>(<Future<dynamic>>[
+      _drivePdfImportsRepository.getAllImports(),
+      _prescriptionsRepository.getAllLegacyPrescriptions(),
+    ]);
+    final List<DrivePdfImport> imports =
+        await _applyPendingPdfDeleteMask(results[0] as List<DrivePdfImport>);
+    final List<Prescription> legacyPrescriptions = results[1] as List<Prescription>;
+
+    final Map<String, List<DrivePdfImport>> expiringImportsByCf = <String, List<DrivePdfImport>>{};
+    final Set<String> importPatientCfs = <String>{};
+    for (final DrivePdfImport item in imports) {
+      final String cf = _normalizeFiscalCode(item.patientFiscalCode);
+      if (cf.isEmpty) continue;
+      importPatientCfs.add(cf);
+      final DateTime baseDate = item.prescriptionDate ?? item.createdAt;
+      if (_DashboardTotals._isExpiryAlert(baseDate.add(const Duration(days: 30)))) {
+        expiringImportsByCf.putIfAbsent(cf, () => <DrivePdfImport>[]).add(item);
+      }
+    }
+
+    final Map<String, List<Prescription>> expiringLegacyByCf = <String, List<Prescription>>{};
+    for (final Prescription item in legacyPrescriptions) {
+      final String cf = _normalizeFiscalCode(item.patientFiscalCode);
+      if (cf.isEmpty || importPatientCfs.contains(cf)) continue;
+      final DateTime expiryDate =
+          item.expiryDate ?? item.prescriptionDate.add(const Duration(days: 30));
+      if (_DashboardTotals._isExpiryAlert(expiryDate)) {
+        expiringLegacyByCf.putIfAbsent(cf, () => <Prescription>[]).add(item);
+      }
+    }
+
+    final List<String> fiscalCodes = <String>{
+      ...expiringImportsByCf.keys,
+      ...expiringLegacyByCf.keys,
+    }.toList()
+      ..sort();
+
+    final List<_PatientDashboardSummary> summaries = <_PatientDashboardSummary>[];
+    for (final String cf in fiscalCodes) {
+      final List<DrivePdfImport> patientImports =
+          expiringImportsByCf[cf] ?? const <DrivePdfImport>[];
+      final List<Prescription> patientPrescriptions =
+          expiringLegacyByCf[cf] ?? const <Prescription>[];
+      final Patient patient = _syntheticPatient(
+        fiscalCode: cf,
+        imports: patientImports,
+        prescriptions: patientPrescriptions,
+        debts: const <Debt>[],
+        advances: const <Advance>[],
+        bookings: const <Booking>[],
+      );
+      final int recipeCount = patientImports.isNotEmpty
+          ? patientImports.fold<int>(
+              0,
+              (int sum, DrivePdfImport item) =>
+                  sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1),
+            )
+          : patientPrescriptions.fold<int>(
+              0,
+              (int sum, Prescription item) =>
+                  sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1),
+            );
+      final bool hasDpc = patientImports.any((DrivePdfImport item) => item.isDpc) ||
+          patientPrescriptions.any((Prescription item) => item.dpcFlag);
+      summaries.add(
+        _PatientDashboardSummary(
+          patient: patient,
+          doctorName: patient.doctorFullName ?? '-',
+          exemptionCode: patient.primaryExemption.isEmpty ? '-' : patient.primaryExemption,
+          city: (patient.city ?? '').trim().isEmpty ? '-' : patient.city!.trim(),
+          prescriptions: patientPrescriptions,
+          imports: patientImports,
+          debts: const <Debt>[],
+          advances: const <Advance>[],
+          bookings: const <Booking>[],
+          hasDpc: hasDpc,
+          recipeCount: recipeCount,
+          hasExpiryAlert: true,
+          familyId: '',
+          familyName: '',
+        ),
+      );
+    }
+
+    _sortDashboardSummaries(summaries);
+
+    return _DashboardData(
+      summaries: summaries,
+      doctorsCatalog: const <String>[],
+      families: const <FamilyGroup>[],
+      totals: _dashboardTotals,
+      expandedFamilyCfs: const <String>{},
     );
   }
 
@@ -542,18 +672,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final List<Advance> advances = results[5] as List<Advance>;
     final List<Booking> bookings = results[6] as List<Booking>;
 
-    final Map<String, PendingPdfDeleteEntry> pendingByImportId = await loadPendingPdfDeletesByImportId();
-    final List<DrivePdfImport> visibleImports = imports.where((DrivePdfImport item) {
-      final PendingPdfDeleteEntry? pending = pendingByImportId[item.id];
-      if (pending == null) return true;
-      final String status = item.status.trim().toLowerCase();
-      final bool shouldRemovePending = item.pdfDeleted || status == 'deleted_pdf' || status == 'rejected' || status == 'cancelled' || status == 'delete_rejected' || status == 'delete_cancelled';
-      if (shouldRemovePending) {
-        unawaited(removePendingPdfDeleteByImportId(item.id));
-        return true;
-      }
-      return false;
-    }).toList();
+    final List<DrivePdfImport> visibleImports = await _applyPendingPdfDeleteMask(imports);
 
     final Map<String, PatientDashboardIndex> indexByCf = <String, PatientDashboardIndex>{
       for (final PatientDashboardIndex item in allIndexRows)
