@@ -12,6 +12,7 @@ import '../../../core/utils/patient_identity_utils.dart';
 import '../../../core/utils/family_group_color_utils.dart';
 import '../../../core/utils/patient_input_normalizer.dart';
 import '../../../core/utils/phbox_contract_utils.dart';
+import '../../../core/utils/pending_pdf_delete_storage.dart';
 import '../../../data/datasources/firestore_firebase_datasource.dart';
 import '../../../data/models/advance.dart';
 import '../../../data/models/app_settings.dart';
@@ -541,6 +542,19 @@ class _DashboardPageState extends State<DashboardPage> {
     final List<Advance> advances = results[5] as List<Advance>;
     final List<Booking> bookings = results[6] as List<Booking>;
 
+    final Map<String, PendingPdfDeleteEntry> pendingByImportId = await loadPendingPdfDeletesByImportId();
+    final List<DrivePdfImport> visibleImports = imports.where((DrivePdfImport item) {
+      final PendingPdfDeleteEntry? pending = pendingByImportId[item.id];
+      if (pending == null) return true;
+      final String status = item.status.trim().toLowerCase();
+      final bool shouldRemovePending = item.pdfDeleted || status == 'deleted_pdf' || status == 'rejected' || status == 'cancelled' || status == 'delete_rejected' || status == 'delete_cancelled';
+      if (shouldRemovePending) {
+        unawaited(removePendingPdfDeleteByImportId(item.id));
+        return true;
+      }
+      return false;
+    }).toList();
+
     final Map<String, PatientDashboardIndex> indexByCf = <String, PatientDashboardIndex>{
       for (final PatientDashboardIndex item in allIndexRows)
         if (_normalizeFiscalCode(item.fiscalCode).isNotEmpty) _normalizeFiscalCode(item.fiscalCode): item,
@@ -570,7 +584,7 @@ class _DashboardPageState extends State<DashboardPage> {
       matchedCfs.add(cf);
     }
 
-    for (final DrivePdfImport item in imports) {
+    for (final DrivePdfImport item in visibleImports) {
       if (_matchesImportFlagQuery(item, query)) {
         addGrouped<DrivePdfImport>(matchedImportsByCf, item.patientFiscalCode, item);
       }
@@ -1199,6 +1213,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   final bool confirmed = await _confirmDeleteRecipe(item);
                                   if (!confirmed) return;
                                   await _drivePdfImportsRepository.requestPdfDelete(item.id, fiscalCode: item.patientFiscalCode);
+                                  await savePendingPdfDelete(importId: item.id, fiscalCode: item.patientFiscalCode);
                                   _removeRecipeFromCachedSummary(summary, item);
                                   if (mounted) {
                                     Navigator.of(context).pop();
@@ -2955,6 +2970,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final recipeImports = summary.imports;
       for (final importItem in recipeImports) {
         await _drivePdfImportsRepository.requestPdfDelete(importItem.id, fiscalCode: importItem.patientFiscalCode);
+        await savePendingPdfDelete(importId: importItem.id, fiscalCode: importItem.patientFiscalCode);
       }
       await _dashboardTotalsRepository.applyFrontendManagedDelta(
         debtAmountDelta: -summary.totalDebt,
@@ -3439,6 +3455,7 @@ class _DashboardPageState extends State<DashboardPage> {
       final confirmed = await _confirmDeleteRecipe(item);
       if (!confirmed) return;
       await _drivePdfImportsRepository.requestPdfDelete(item.id, fiscalCode: item.patientFiscalCode);
+      await savePendingPdfDelete(importId: item.id, fiscalCode: item.patientFiscalCode);
       _removeRecipeFromCachedSummary(detailSummary, item);
       _refresh();
       return;
@@ -3453,6 +3470,7 @@ class _DashboardPageState extends State<DashboardPage> {
             if (!confirmed) return;
             setLocalState(() => busy = true);
             await _drivePdfImportsRepository.requestPdfDelete(item.id, fiscalCode: item.patientFiscalCode);
+            await savePendingPdfDelete(importId: item.id, fiscalCode: item.patientFiscalCode);
             _removeRecipeFromCachedSummary(detailSummary, item);
             _refresh();
             setLocalState(() => busy = false);
