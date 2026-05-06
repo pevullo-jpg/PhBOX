@@ -220,11 +220,14 @@ class _DashboardPageState extends State<DashboardPage> {
     return !_dashboardTotals.hasAnyValue;
   }
 
-  bool get _shouldShowExpiringRecipesSection {
-    return _dashboardTotals.expiringCount > 0 ||
-        _expiringRecipesLoading ||
-        _expiringRecipes.isNotEmpty ||
-        _expiringRecipesMessage.isNotEmpty;
+  bool get _isDashboardAtZeroPosition {
+    return _activeCardFilters.isEmpty &&
+        _searchController.text.trim().isEmpty &&
+        !_searchInFlags;
+  }
+
+  bool get _shouldShowForcedExpiringRows {
+    return _isDashboardAtZeroPosition && _expiringRecipes.isNotEmpty;
   }
 
   String _expiringRecipesSignatureForTotals(_DashboardTotals totals) {
@@ -397,25 +400,36 @@ class _DashboardPageState extends State<DashboardPage> {
     }).toList();
   }
 
-  Future<void> _openExpiringRecipePdf(DashboardExpiringRecipe item) async {
-    final String directLink = item.effectiveViewLink.trim();
-    final String fallbackLink = item.driveFileId.trim().isNotEmpty
-        ? 'https://drive.google.com/file/d/${item.driveFileId.trim()}/view'
-        : '';
-    final String url = directLink.isNotEmpty ? directLink : fallbackLink;
-    if (url.isEmpty) {
-      setState(() {
-        _message = 'Link PDF assente nell’indice ricette in scadenza.';
-      });
-      return;
+  List<_ExpiringPatientDashboardRow> _expiringPatientRowsForZeroPosition() {
+    if (!_shouldShowForcedExpiringRows) {
+      return const <_ExpiringPatientDashboardRow>[];
     }
-    await launchUrl(
-      Uri.parse(url),
-      mode: LaunchMode.platformDefault,
-      webOnlyWindowName: '_blank',
-    );
+    final Map<String, List<DashboardExpiringRecipe>> grouped = <String, List<DashboardExpiringRecipe>>{};
+    for (final DashboardExpiringRecipe item in _expiringRecipes) {
+      final String cf = _normalizeFiscalCode(item.patientFiscalCode);
+      final String key = cf.isNotEmpty ? cf : item.importId.trim();
+      if (key.isEmpty) {
+        continue;
+      }
+      grouped.putIfAbsent(key, () => <DashboardExpiringRecipe>[]).add(item);
+    }
+    final List<_ExpiringPatientDashboardRow> rows = grouped.entries
+        .map((MapEntry<String, List<DashboardExpiringRecipe>> entry) {
+          entry.value.sort((DashboardExpiringRecipe a, DashboardExpiringRecipe b) {
+            final int byDays = a.daysToExpiry.compareTo(b.daysToExpiry);
+            if (byDays != 0) return byDays;
+            return a.displayPatient.toLowerCase().compareTo(b.displayPatient.toLowerCase());
+          });
+          return _ExpiringPatientDashboardRow.fromItems(entry.key, entry.value);
+        })
+        .toList()
+      ..sort((_ExpiringPatientDashboardRow a, _ExpiringPatientDashboardRow b) {
+        final int byDays = a.daysToExpiry.compareTo(b.daysToExpiry);
+        if (byDays != 0) return byDays;
+        return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+      });
+    return rows;
   }
-
 
   String _activeDashboardRequestSignature() {
     final List<String> activeFilters = _activeCardFilters
@@ -613,6 +627,14 @@ class _DashboardPageState extends State<DashboardPage> {
 
   void _manualRefreshRequestedData() {
     if (!_hasUserRequestedDashboardData) {
+      if (_isDashboardAtZeroPosition && _dashboardTotals.expiringCount > 0) {
+        unawaited(_loadExpiringRecipesSectionIfNeeded(_dashboardTotals, force: true));
+        setState(() {
+          _future = Future<_DashboardData>.value(_DashboardData.empty());
+          _message = 'Aggiornamento ricette in scadenza richiesto.';
+        });
+        return;
+      }
       setState(() {
         _future = Future<_DashboardData>.value(_DashboardData.empty());
         _message = 'Nessun reload dati: seleziona una card o cerca almeno 3 caratteri.';
@@ -963,7 +985,6 @@ class _DashboardPageState extends State<DashboardPage> {
       _DashboardCardFilter.debiti,
       _DashboardCardFilter.anticipi,
       _DashboardCardFilter.prenotazioni,
-      _DashboardCardFilter.scadenze,
       _DashboardCardFilter.dpc,
       _DashboardCardFilter.ricette,
     ];
@@ -987,8 +1008,6 @@ class _DashboardPageState extends State<DashboardPage> {
         return PatientDashboardIndexFlag.advance;
       case _DashboardCardFilter.prenotazioni:
         return PatientDashboardIndexFlag.booking;
-      case _DashboardCardFilter.scadenze:
-        return PatientDashboardIndexFlag.expiry;
     }
   }
 
@@ -1009,9 +1028,6 @@ class _DashboardPageState extends State<DashboardPage> {
           break;
         case _DashboardCardFilter.prenotazioni:
           if (!item.hasBooking) return false;
-          break;
-        case _DashboardCardFilter.scadenze:
-          if (!item.hasExpiryAlert) return false;
           break;
       }
     }
@@ -1180,9 +1196,6 @@ class _DashboardPageState extends State<DashboardPage> {
             break;
           case _DashboardCardFilter.prenotazioni:
             if (!item.hasBooking) return false;
-            break;
-          case _DashboardCardFilter.scadenze:
-            if (!item.hasExpiryAlert) return false;
             break;
         }
       }
@@ -3201,6 +3214,14 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   void _openPatient(_PatientDashboardSummary summary) {
+    _openPatientFiscalCode(summary.patient.fiscalCode);
+  }
+
+  void _openPatientFiscalCode(String fiscalCode) {
+    final String normalizedCf = _normalizeFiscalCode(fiscalCode);
+    if (normalizedCf.isEmpty) {
+      return;
+    }
     _stopDashboardTotalsListener();
     setState(() {
       _isRouteCovered = true;
@@ -3208,7 +3229,7 @@ class _DashboardPageState extends State<DashboardPage> {
     Navigator.of(context)
         .push(
           MaterialPageRoute<void>(
-            builder: (_) => PatientDetailPage(fiscalCode: summary.patient.fiscalCode),
+            builder: (_) => PatientDetailPage(fiscalCode: normalizedCf),
           ),
         )
         .whenComplete(() {
@@ -3230,6 +3251,7 @@ class _DashboardPageState extends State<DashboardPage> {
         final data = snapshot.data;
         final allSummaries = data == null || !_hasUserRequestedDashboardData ? const <_PatientDashboardSummary>[] : data.summaries;
         final summaries = data == null || !_hasUserRequestedDashboardData ? const <_PatientDashboardSummary>[] : _applyFilters(allSummaries, data.families, data);
+        final List<_ExpiringPatientDashboardRow> forcedExpiringRows = _expiringPatientRowsForZeroPosition();
         final _DashboardTotals totals = _dashboardTotals;
         final familyState = data == null
             ? _DashboardFamilyState.empty()
@@ -3308,30 +3330,13 @@ class _DashboardPageState extends State<DashboardPage> {
                                   value: totals.expiringCount.toString(),
                                   icon: Icons.warning_amber_rounded,
                                   accent: AppColors.coral,
-                                  isSelected: _activeCardFilters.contains(_DashboardCardFilter.scadenze),
-                                  onTap: () {
-                                    _toggleCardFilter(_DashboardCardFilter.scadenze);
-                                    unawaited(
-                                      _loadExpiringRecipesSectionIfNeeded(
-                                        _dashboardTotals,
-                                        force: true,
-                                      ),
-                                    );
-                                  },
+                                  isSelected: false,
+                                  onTap: null,
                                 ),
                               ],
                             ),
                           ),
                         ),
-                        if (_shouldShowExpiringRecipesSection) ...[
-                          const SizedBox(height: 12),
-                          Center(
-                            child: SizedBox(
-                              width: cardsBlockWidth,
-                              child: _buildExpiringRecipesSection(),
-                            ),
-                          ),
-                        ],
                         const SizedBox(height: 12),
                         Center(
                           child: SizedBox(
@@ -3431,7 +3436,7 @@ class _DashboardPageState extends State<DashboardPage> {
                             child: Text(
                               _showSearchThresholdHint
                                   ? 'Dashboard a riposo: aggiorno solo le cards. La ricerca dati si attiva da 3 lettere.'
-                                  : 'Dashboard a riposo: nessun reload dati. Seleziona una card o cerca almeno 3 lettere.',
+                                  : 'Dashboard a riposo: il refresh aggiorna eventuali ricette in scadenza.',
                               textAlign: TextAlign.center,
                               style: const TextStyle(color: Colors.white54, fontSize: 13.5, fontWeight: FontWeight.w600),
                             ),
@@ -3495,14 +3500,22 @@ class _DashboardPageState extends State<DashboardPage> {
                                 if (a.hasExpiryAlert == b.hasExpiryAlert) return 0;
                                 return a.hasExpiryAlert ? -1 : 1;
                               });
-                              if (orderedSummaries.isEmpty) {
+                              final int forcedExpiringCount = forcedExpiringRows.length;
+                              final int rowCount = forcedExpiringCount + orderedSummaries.length;
+                              if (rowCount == 0) {
+                                if (_isDashboardAtZeroPosition && _expiringRecipesLoading) {
+                                  return const Center(child: CircularProgressIndicator());
+                                }
                                 return Center(child: Text(_isCompactDashboardMode ? 'Nessun dato richiesto.' : 'Nessun assistito.', style: const TextStyle(color: Colors.white70, fontSize: 18)));
                               }
                               return ListView.separated(
-                                itemCount: orderedSummaries.length,
+                                itemCount: rowCount,
                                 separatorBuilder: (_, __) => const SizedBox(height: 10),
                                 itemBuilder: (context, index) {
-                                    final item = orderedSummaries[index];
+                                    if (index < forcedExpiringCount) {
+                                      return _buildExpiringPatientListRow(forcedExpiringRows[index]);
+                                    }
+                                    final item = orderedSummaries[index - forcedExpiringCount];
                                     return Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
                                       decoration: BoxDecoration(
@@ -3726,138 +3739,89 @@ class _DashboardPageState extends State<DashboardPage> {
 
 
 
-  Widget _buildExpiringRecipesSection() {
-    final List<DashboardExpiringRecipe> items = _expiringRecipes;
+  Widget _buildExpiringPatientListRow(_ExpiringPatientDashboardRow item) {
+    final String visibleCf = visiblePatientFiscalCode(item.fiscalCode);
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
       decoration: BoxDecoration(
-        color: const Color(0xFF211600),
+        color: const Color(0x332A1B00),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.amber),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.warning_amber_rounded, color: AppColors.yellow),
-              const SizedBox(width: 10),
-              const Expanded(
-                child: Text(
-                  'Ricette in scadenza',
-                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
-                ),
-              ),
-              if (_expiringRecipesLoading)
-                const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              else
-                TextButton.icon(
-                  onPressed: () => unawaited(
-                    _loadExpiringRecipesSectionIfNeeded(
-                      _dashboardTotals,
-                      force: true,
-                    ),
-                  ),
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text('Aggiorna'),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Sezione automatica backend-owned. La card resta indicativa; questa lista non altera i filtri paziente.',
-            style: const TextStyle(color: Colors.white60, fontSize: 13),
-          ),
-          if (_expiringRecipesMessage.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              _expiringRecipesMessage,
-              style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w700),
-            ),
-          ],
-          if (items.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 300),
-              child: ListView.separated(
-                shrinkWrap: true,
-                itemCount: items.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 8),
-                itemBuilder: (context, index) => _buildExpiringRecipeTile(items[index]),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildExpiringRecipeTile(DashboardExpiringRecipe item) {
-    final String patient = item.displayPatient;
-    final String cf = item.patientFiscalCode.trim();
-    final String doctor = item.doctorFullName.trim().isEmpty ? '-' : item.doctorFullName.trim();
-    final String dateLabel = _formatDate(item.prescriptionDate);
-    final String expiryDateLabel = _formatDate(item.expiryDate);
-    final String fileName = item.fileName.trim().isEmpty ? item.importId : item.fileName.trim();
-    final String therapy = item.therapy.take(3).join(', ');
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF2A1B00),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white12),
+        border: Border.all(color: AppColors.amber, width: 1.6),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          SizedBox(
+            width: 180,
+            child: TextButton(
+              style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
+              onPressed: item.fiscalCode.isEmpty ? null : () => _openPatientFiscalCode(item.fiscalCode),
+              child: Text(
+                item.displayName,
+                textAlign: TextAlign.left,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white, fontSize: 18.2, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 220,
+            child: Row(
               children: [
-                Text(
-                  patient,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
+                Expanded(
+                  child: TextButton(
+                    style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
+                    onPressed: item.fiscalCode.isEmpty ? null : () => _openPatientFiscalCode(item.fiscalCode),
+                    child: Text(
+                      visibleCf,
+                      textAlign: TextAlign.left,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: AppColors.yellow, fontSize: 18.2, fontWeight: FontWeight.w800),
+                    ),
+                  ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  [
-                    if (cf.isNotEmpty) cf,
-                    'Ricetta $dateLabel',
-                    'Scadenza $expiryDateLabel',
-                    item.expiryLabel,
-                    if (item.isDpc) 'DPC',
-                  ].join(' · '),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white70, fontSize: 13),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  [
-                    fileName,
-                    'Medico: $doctor',
-                    if (therapy.isNotEmpty) therapy,
-                  ].join(' · '),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white54, fontSize: 12.5),
-                ),
+                if (item.fiscalCode.isNotEmpty)
+                  IconButton(
+                    tooltip: 'Copia CF',
+                    onPressed: () => _copyToClipboard(
+                      visibleCf,
+                      message: 'CF copiato negli appunti.',
+                    ),
+                    icon: const Icon(Icons.copy_rounded, color: Colors.white70, size: 18),
+                  ),
               ],
             ),
           ),
-          const SizedBox(width: 12),
-          IconButton(
-            tooltip: 'Apri PDF',
-            onPressed: () => unawaited(_openExpiringRecipePdf(item)),
-            icon: const Icon(Icons.open_in_new, color: Colors.white70),
+          SizedBox(
+            width: 240,
+            child: Text(
+              item.doctorNameUpper,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white, fontSize: 18.2, fontWeight: FontWeight.w700),
+            ),
           ),
+          SizedBox(
+            width: 120,
+            child: Text(item.exemptionCode, style: const TextStyle(color: Colors.white70, fontSize: 18.2)),
+          ),
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _ReadOnlyFlagChip(
+                  label: item.recipeCount == 1 ? 'in scadenza 1' : 'in scadenza ${item.recipeCount}',
+                  color: AppColors.amber,
+                ),
+                if (item.hasDpc) const _ReadOnlyFlagChip(label: 'DPC', color: AppColors.coral),
+                _ReadOnlyFlagChip(label: item.expiryLabel, color: AppColors.wine),
+              ],
+            ),
+          ),
+          const SizedBox(width: 52),
         ],
       ),
     );
@@ -4459,7 +4423,7 @@ class _SummaryCard extends StatelessWidget {
   final IconData icon;
   final Color accent;
   final bool isSelected;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   const _SummaryCard({
     required this.title,
@@ -4472,24 +4436,18 @@ class _SummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: accent,
-      borderRadius: BorderRadius.circular(24),
-      child: InkWell(
-        onTap: onTap,
+    final Widget card = Container(
+      width: 220,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
-        child: Container(
-          width: 220,
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: isSelected ? Colors.white : Colors.transparent,
-              width: 2,
-            ),
-          ),
-          child: Row(
-            children: [
+        border: Border.all(
+          color: isSelected ? Colors.white : Colors.transparent,
+          width: 2,
+        ),
+      ),
+      child: Row(
+        children: [
               Container(
                 width: 44,
                 height: 44,
@@ -4520,15 +4478,111 @@ class _SummaryCard extends StatelessWidget {
                   ],
                 ),
               ),
-            ],
-          ),
-        ),
+        ],
       ),
+    );
+    return Material(
+      color: accent,
+      borderRadius: BorderRadius.circular(24),
+      child: onTap == null
+          ? card
+          : InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(24),
+              child: card,
+            ),
     );
   }
 }
 
-enum _DashboardCardFilter { ricette, dpc, debiti, anticipi, prenotazioni, scadenze }
+enum _DashboardCardFilter { ricette, dpc, debiti, anticipi, prenotazioni }
+
+class _ExpiringPatientDashboardRow {
+  final String key;
+  final String fiscalCode;
+  final String displayName;
+  final String doctorName;
+  final String exemptionCode;
+  final int recipeCount;
+  final bool hasDpc;
+  final int daysToExpiry;
+  final DateTime? expiryDate;
+
+  const _ExpiringPatientDashboardRow({
+    required this.key,
+    required this.fiscalCode,
+    required this.displayName,
+    required this.doctorName,
+    required this.exemptionCode,
+    required this.recipeCount,
+    required this.hasDpc,
+    required this.daysToExpiry,
+    required this.expiryDate,
+  });
+
+  factory _ExpiringPatientDashboardRow.fromItems(
+    String key,
+    List<DashboardExpiringRecipe> items,
+  ) {
+    final DashboardExpiringRecipe first = items.first;
+    int recipeCount = 0;
+    bool hasDpc = false;
+    for (final DashboardExpiringRecipe item in items) {
+      recipeCount += item.prescriptionCount > 0 ? item.prescriptionCount : 1;
+      if (item.isDpc) {
+        hasDpc = true;
+      }
+    }
+    return _ExpiringPatientDashboardRow(
+      key: key,
+      fiscalCode: first.patientFiscalCode.trim().toUpperCase(),
+      displayName: first.displayPatient,
+      doctorName: first.doctorFullName.trim().isEmpty ? '-' : first.doctorFullName.trim(),
+      exemptionCode: first.exemptionCode.trim().isEmpty ? '-' : first.exemptionCode.trim(),
+      recipeCount: recipeCount,
+      hasDpc: hasDpc,
+      daysToExpiry: first.daysToExpiry,
+      expiryDate: first.expiryDate,
+    );
+  }
+
+  String get doctorNameUpper => doctorName.trim().isEmpty ? '-' : doctorName.trim().toUpperCase();
+
+  String get expiryLabel {
+    if (expiryDate == null) {
+      return 'scadenza';
+    }
+    if (daysToExpiry < 0) {
+      return 'scaduta ${daysToExpiry.abs()}g';
+    }
+    if (daysToExpiry == 0) {
+      return 'scade oggi';
+    }
+    return 'scade ${daysToExpiry}g';
+  }
+}
+
+class _ReadOnlyFlagChip extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _ReadOnlyFlagChip({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5),
+      ),
+    );
+  }
+}
 
 class _FilterToggle extends StatelessWidget {
   final String label;
