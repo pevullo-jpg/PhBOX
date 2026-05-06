@@ -5,6 +5,7 @@ class DashboardTotalsSnapshot {
   final int advanceCount;
   final int bookingCount;
   final int expiringCount;
+  final String expiringRecipesSignature;
   final DateTime? updatedAt;
 
   const DashboardTotalsSnapshot({
@@ -14,6 +15,7 @@ class DashboardTotalsSnapshot {
     required this.advanceCount,
     required this.bookingCount,
     required this.expiringCount,
+    this.expiringRecipesSignature = '',
     this.updatedAt,
   });
 
@@ -62,9 +64,27 @@ class DashboardTotalsSnapshot {
         'expiringRecipesCount',
         'scadenze',
       ]),
+      expiringRecipesSignature: _readStringFirst(map, const <String>[
+        'expiringRecipesSignature',
+        'expiringRecipesHash',
+        'expiringIndexSignature',
+        'expiringIndexHash',
+      ]),
       updatedAt: _readDate(map['updatedAt'] ?? map['generatedAt'] ?? map['createdAt']),
     );
   }
+
+  static String _readStringFirst(Map<String, dynamic> map, List<String> keys) {
+    for (final String key in keys) {
+      final String value = _readString(map[key]);
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+    return '';
+  }
+
+  static String _readString(dynamic value) => value == null ? '' : value.toString().trim();
 
   static int _readIntFirst(Map<String, dynamic> map, List<String> keys) {
     for (final String key in keys) {
