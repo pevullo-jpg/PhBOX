@@ -230,9 +230,12 @@ function syncRuntimeIndexToFirestore_(options) {
     patients: plan.meta.patientWrites,
     doctorLinks: plan.meta.doctorLinkWrites,
     dashboardTotals: plan.meta.dashboardTotalsWrites || 0,
+    dashboardExpiringRecipes: plan.meta.dashboardExpiringRecipesWrites || 0,
     patientDashboardIndex: plan.meta.patientDashboardIndexWrites || 0,
     dashboardTotalsSkipped: !!plan.meta.dashboardTotalsSkipped,
     dashboardTotalsError: plan.meta.dashboardTotalsError || '',
+    dashboardExpiringRecipesSkipped: !!plan.meta.dashboardExpiringRecipesSkipped,
+    dashboardExpiringRecipesError: plan.meta.dashboardExpiringRecipesError || '',
     writes: 0,
     synced: 0,
     forcedResync: false,
@@ -314,10 +317,15 @@ function buildFirestorePublishPlan_(runtimeIndex, cfg, maxWrites) {
   var importHashDeletes = [];
   var dashboardTotalsHashUpdate = '';
   var dashboardTotalsDataUpdate = null;
+  var dashboardExpiringRecipesHashUpdate = '';
+  var dashboardExpiringRecipesDataUpdate = null;
   var dashboardTotalsWrites = 0;
+  var dashboardExpiringRecipesWrites = 0;
   var patientDashboardIndexWrites = 0;
   var dashboardTotalsSkipped = false;
   var dashboardTotalsError = '';
+  var dashboardExpiringRecipesSkipped = false;
+  var dashboardExpiringRecipesError = '';
   var importWrites = 0;
   var patientWrites = 0;
   var doctorLinkWrites = 0;
@@ -406,19 +414,41 @@ function buildFirestorePublishPlan_(runtimeIndex, cfg, maxWrites) {
     else doctorHashDeletes.push(doctorDocId);
   }
 
-  var dashboardTotalsCandidate = buildDashboardTotalsWriteCandidate_(runtimeIndex, cfg);
-  if (dashboardTotalsCandidate && dashboardTotalsCandidate.error) {
-    dashboardTotalsSkipped = true;
-    dashboardTotalsError = dashboardTotalsCandidate.error;
-  } else if (dashboardTotalsCandidate && dashboardTotalsCandidate.write) {
+  var dashboardExpiringRecipesCandidate = buildDashboardExpiringRecipesWriteCandidate_(runtimeIndex, cfg);
+  if (dashboardExpiringRecipesCandidate && dashboardExpiringRecipesCandidate.error) {
+    dashboardExpiringRecipesSkipped = true;
+    dashboardExpiringRecipesError = dashboardExpiringRecipesCandidate.error;
+  } else if (dashboardExpiringRecipesCandidate && dashboardExpiringRecipesCandidate.write) {
     if (writes.length < maxWrites) {
-      writes.push(dashboardTotalsCandidate.write);
-      dashboardTotalsWrites = 1;
-      dashboardTotalsHashUpdate = dashboardTotalsCandidate.hash;
-      dashboardTotalsDataUpdate = dashboardTotalsCandidate.data;
+      writes.push(dashboardExpiringRecipesCandidate.write);
+      dashboardExpiringRecipesWrites = 1;
+      dashboardExpiringRecipesHashUpdate = dashboardExpiringRecipesCandidate.hash;
+      dashboardExpiringRecipesDataUpdate = dashboardExpiringRecipesCandidate.data;
     } else {
+      dashboardExpiringRecipesSkipped = true;
+      dashboardExpiringRecipesError = 'max_writes_reached';
+    }
+  }
+
+  var dashboardTotalsCandidate = null;
+  if (dashboardExpiringRecipesSkipped) {
+    dashboardTotalsSkipped = true;
+    dashboardTotalsError = 'blocked_by_dashboard_expiring_recipes:' + dashboardExpiringRecipesError;
+  } else {
+    dashboardTotalsCandidate = buildDashboardTotalsWriteCandidate_(runtimeIndex, cfg);
+    if (dashboardTotalsCandidate && dashboardTotalsCandidate.error) {
       dashboardTotalsSkipped = true;
-      dashboardTotalsError = 'max_writes_reached';
+      dashboardTotalsError = dashboardTotalsCandidate.error;
+    } else if (dashboardTotalsCandidate && dashboardTotalsCandidate.write) {
+      if (writes.length < maxWrites) {
+        writes.push(dashboardTotalsCandidate.write);
+        dashboardTotalsWrites = 1;
+        dashboardTotalsHashUpdate = dashboardTotalsCandidate.hash;
+        dashboardTotalsDataUpdate = dashboardTotalsCandidate.data;
+      } else {
+        dashboardTotalsSkipped = true;
+        dashboardTotalsError = 'max_writes_reached';
+      }
     }
   }
 
@@ -435,6 +465,8 @@ function buildFirestorePublishPlan_(runtimeIndex, cfg, maxWrites) {
     importHashDeletes: importHashDeletes,
     dashboardTotalsHashUpdate: dashboardTotalsHashUpdate,
     dashboardTotalsDataUpdate: dashboardTotalsDataUpdate,
+    dashboardExpiringRecipesHashUpdate: dashboardExpiringRecipesHashUpdate,
+    dashboardExpiringRecipesDataUpdate: dashboardExpiringRecipesDataUpdate,
     patientHashDeletes: patientHashDeletes,
     doctorHashDeletes: doctorHashDeletes,
     meta: {
@@ -446,9 +478,12 @@ function buildFirestorePublishPlan_(runtimeIndex, cfg, maxWrites) {
       patientWrites: patientWrites,
       doctorLinkWrites: doctorLinkWrites,
       dashboardTotalsWrites: dashboardTotalsWrites,
+      dashboardExpiringRecipesWrites: dashboardExpiringRecipesWrites,
       patientDashboardIndexWrites: patientDashboardIndexWrites,
       dashboardTotalsSkipped: dashboardTotalsSkipped,
-      dashboardTotalsError: dashboardTotalsError
+      dashboardTotalsError: dashboardTotalsError,
+      dashboardExpiringRecipesSkipped: dashboardExpiringRecipesSkipped,
+      dashboardExpiringRecipesError: dashboardExpiringRecipesError
     }
   };
 }
@@ -566,6 +601,10 @@ function applyFirestorePublishPlanSuccess_(runtimeIndex, plan) {
   if (plan.dashboardTotalsHashUpdate) {
     runtimeIndex.publishState.dashboardTotals = plan.dashboardTotalsHashUpdate;
     runtimeIndex.publishState.dashboardTotalsData = plan.dashboardTotalsDataUpdate || null;
+  }
+  if (plan.dashboardExpiringRecipesHashUpdate) {
+    runtimeIndex.publishState.dashboardExpiringRecipes = plan.dashboardExpiringRecipesHashUpdate;
+    runtimeIndex.publishState.dashboardExpiringRecipesData = plan.dashboardExpiringRecipesDataUpdate || null;
   }
 
   removeDirtyImportIds_(runtimeIndex, (plan.selectedImportIds || []).concat(plan.noopImportIds || []));
