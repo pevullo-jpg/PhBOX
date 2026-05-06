@@ -23,6 +23,7 @@ var PHBOX_CONFIG = {
   scanSubfolders: true,
   verboseLogs: true,
   dashboardTotalsUseDebtAggregation: false,
+  dashboardExpiringRecipesLimit: 80,
   parserVersion: 18,
   mergedCfFolderName: '_phbox_merged_cf'
 };
@@ -129,6 +130,11 @@ function readPhboxConfigFromProperties_() {
   var dashboardTotalsUseDebtAggregation = props.getProperty('PHBOX_DASHBOARD_TOTALS_USE_DEBT_AGGREGATION');
   if (dashboardTotalsUseDebtAggregation != null) {
     cfg.dashboardTotalsUseDebtAggregation = /^true$/i.test(String(dashboardTotalsUseDebtAggregation));
+  }
+
+  var dashboardExpiringRecipesLimit = parseInt(props.getProperty('PHBOX_DASHBOARD_EXPIRING_RECIPES_LIMIT') || '', 10);
+  if (!isNaN(dashboardExpiringRecipesLimit) && dashboardExpiringRecipesLimit > 0) {
+    cfg.dashboardExpiringRecipesLimit = dashboardExpiringRecipesLimit;
   }
 
   var parserVersion = parseInt(props.getProperty('PHBOX_PARSER_VERSION') || '', 10);
