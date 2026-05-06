@@ -19,6 +19,7 @@ import '../../../data/models/app_settings.dart';
 import '../../../data/models/booking.dart';
 import '../../../data/models/debt.dart';
 import '../../../data/models/dashboard_totals_snapshot.dart';
+import '../../../data/models/dashboard_expiring_recipes_snapshot.dart';
 import '../../../data/models/doctor_patient_link.dart';
 import '../../../data/models/drive_pdf_import.dart';
 import '../../../data/models/family_group.dart';
@@ -29,6 +30,7 @@ import '../../../data/repositories/advances_repository.dart';
 import '../../../data/repositories/bookings_repository.dart';
 import '../../../data/repositories/debts_repository.dart';
 import '../../../data/repositories/dashboard_totals_repository.dart';
+import '../../../data/repositories/dashboard_expiring_recipes_repository.dart';
 import '../../../data/repositories/doctor_patient_links_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/family_groups_repository.dart';
@@ -59,6 +61,7 @@ class _DashboardPageState extends State<DashboardPage> {
   late final FamilyGroupsRepository _familyGroupsRepository;
   late final SettingsRepository _settingsRepository;
   late final DashboardTotalsRepository _dashboardTotalsRepository;
+  late final DashboardExpiringRecipesRepository _dashboardExpiringRecipesRepository;
   late final PatientDashboardIndexRepository _patientDashboardIndexRepository;
 
   Future<_DashboardData>? _future;
@@ -75,6 +78,13 @@ class _DashboardPageState extends State<DashboardPage> {
   String _lastUserRequestRefreshSignature = '';
   DateTime? _lastRefreshAt;
   StreamSubscription<DashboardTotalsSnapshot?>? _dashboardTotalsSubscription;
+  List<_PatientDashboardSummary> _forcedExpiringSummaries = const <_PatientDashboardSummary>[];
+  String _expiringRecipesSignature = '';
+  String _expiringRecipesRequestedSignature = '';
+  int _expiringRecipesRequestSerial = 0;
+  bool _expiringRecipesLoading = false;
+  _DashboardTotals? _queuedExpiringRecipesTotals;
+  bool _queuedExpiringRecipesForce = false;
 
   static const Duration _inactiveFilterResetDelay = Duration(minutes: 2);
   static const Duration _userRequestRefreshDebounceDelay = Duration(milliseconds: 450);
@@ -93,6 +103,7 @@ class _DashboardPageState extends State<DashboardPage> {
     _familyGroupsRepository = FamilyGroupsRepository(datasource: datasource);
     _settingsRepository = SettingsRepository(datasource: datasource);
     _dashboardTotalsRepository = DashboardTotalsRepository(datasource: datasource);
+    _dashboardExpiringRecipesRepository = DashboardExpiringRecipesRepository(datasource: datasource);
     _patientDashboardIndexRepository = PatientDashboardIndexRepository(datasource: datasource);
     _future = Future<_DashboardData>.value(_DashboardData.empty());
     _startDashboardTotalsListener();
@@ -183,6 +194,7 @@ class _DashboardPageState extends State<DashboardPage> {
           _dashboardTotals = snapshotTotals;
           _lastRefreshAt = snapshot.updatedAt ?? DateTime.now();
         });
+        unawaited(_loadExpiringRecipesSectionIfNeeded(snapshotTotals));
       },
       onError: (Object error) {
         if (!mounted) {
@@ -206,6 +218,211 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     return !_dashboardTotals.hasAnyValue;
   }
+
+  bool get _isDashboardZeroPosition {
+    return _activeCardFilters.isEmpty &&
+        _searchController.text.trim().isEmpty &&
+        !_searchInFlags;
+  }
+
+  bool get _shouldUseForcedExpiringRows {
+    return _isDashboardZeroPosition && _forcedExpiringSummaries.isNotEmpty;
+  }
+
+  String _expiringRecipesSignatureForTotals(_DashboardTotals totals) {
+    return <String>[
+      totals.expiringCount.toString(),
+      totals.expiringRecipesSignature,
+    ].join('|');
+  }
+
+  Future<void> _loadExpiringRecipesSectionIfNeeded(
+    _DashboardTotals totals, {
+    bool force = false,
+  }) async {
+    if (!mounted) {
+      return;
+    }
+    if (totals.expiringCount <= 0) {
+      _queuedExpiringRecipesTotals = null;
+      _queuedExpiringRecipesForce = false;
+      final int requestSerial = ++_expiringRecipesRequestSerial;
+      _expiringRecipesRequestedSignature = '';
+      if (_forcedExpiringSummaries.isEmpty &&
+          !_expiringRecipesLoading &&
+          _expiringRecipesSignature.isEmpty) {
+        return;
+      }
+      setState(() {
+        if (requestSerial != _expiringRecipesRequestSerial) {
+          return;
+        }
+        _forcedExpiringSummaries = const <_PatientDashboardSummary>[];
+        _expiringRecipesLoading = false;
+        _expiringRecipesSignature = '';
+      });
+      return;
+    }
+
+    final String signature = _expiringRecipesSignatureForTotals(totals);
+    if (_expiringRecipesLoading) {
+      if (force || _expiringRecipesRequestedSignature != signature) {
+        _queuedExpiringRecipesTotals = totals;
+        _queuedExpiringRecipesForce = _queuedExpiringRecipesForce || force;
+      }
+      return;
+    }
+    if (!force && _expiringRecipesSignature == signature) {
+      return;
+    }
+
+    final int requestSerial = ++_expiringRecipesRequestSerial;
+    _expiringRecipesRequestedSignature = signature;
+
+    setState(() {
+      _expiringRecipesLoading = true;
+    });
+
+    try {
+      final DashboardExpiringRecipesSnapshot? snapshot =
+          await _dashboardExpiringRecipesRepository.getMainSnapshot();
+      final String snapshotSignature = snapshot?.expiringRecipesSignature.trim() ?? '';
+      final String expectedSnapshotSignature = totals.expiringRecipesSignature.trim();
+      final bool snapshotMatchesTotals = snapshot != null &&
+          snapshot.totalExpiringCount == totals.expiringCount &&
+          snapshotSignature == expectedSnapshotSignature;
+      final List<DashboardExpiringRecipe> visibleItems = snapshotMatchesTotals
+          ? await _filterPendingExpiringRecipes(snapshot.items)
+          : const <DashboardExpiringRecipe>[];
+      final List<_PatientDashboardSummary> forcedSummaries = snapshotMatchesTotals
+          ? await _buildForcedExpiringSummaries(visibleItems)
+          : const <_PatientDashboardSummary>[];
+      if (!mounted) {
+        return;
+      }
+      final String queuedSignature = _queuedExpiringRecipesTotals == null
+          ? ''
+          : _expiringRecipesSignatureForTotals(_queuedExpiringRecipesTotals!);
+      final bool hasNewerQueuedSignature =
+          queuedSignature.isNotEmpty && queuedSignature != signature;
+      if (hasNewerQueuedSignature ||
+          requestSerial != _expiringRecipesRequestSerial ||
+          signature != _expiringRecipesRequestedSignature) {
+        return;
+      }
+      setState(() {
+        final String queuedSignatureInSetState = _queuedExpiringRecipesTotals == null
+            ? ''
+            : _expiringRecipesSignatureForTotals(_queuedExpiringRecipesTotals!);
+        final bool hasNewerQueuedSignatureInSetState =
+            queuedSignatureInSetState.isNotEmpty && queuedSignatureInSetState != signature;
+        if (hasNewerQueuedSignatureInSetState ||
+            requestSerial != _expiringRecipesRequestSerial ||
+            signature != _expiringRecipesRequestedSignature) {
+          return;
+        }
+        if (!snapshotMatchesTotals) {
+          _forcedExpiringSummaries = const <_PatientDashboardSummary>[];
+          _expiringRecipesSignature = '';
+          _expiringRecipesLoading = false;
+          return;
+        }
+        _forcedExpiringSummaries = forcedSummaries;
+        _expiringRecipesSignature = signature;
+        _expiringRecipesLoading = false;
+      });
+      _runQueuedExpiringRecipesLoadIfNeeded();
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      final String queuedSignature = _queuedExpiringRecipesTotals == null
+          ? ''
+          : _expiringRecipesSignatureForTotals(_queuedExpiringRecipesTotals!);
+      final bool hasNewerQueuedSignature =
+          queuedSignature.isNotEmpty && queuedSignature != signature;
+      if (hasNewerQueuedSignature ||
+          requestSerial != _expiringRecipesRequestSerial ||
+          signature != _expiringRecipesRequestedSignature) {
+        return;
+      }
+      setState(() {
+        final String queuedSignatureInSetState = _queuedExpiringRecipesTotals == null
+            ? ''
+            : _expiringRecipesSignatureForTotals(_queuedExpiringRecipesTotals!);
+        final bool hasNewerQueuedSignatureInSetState =
+            queuedSignatureInSetState.isNotEmpty && queuedSignatureInSetState != signature;
+        if (hasNewerQueuedSignatureInSetState ||
+            requestSerial != _expiringRecipesRequestSerial ||
+            signature != _expiringRecipesRequestedSignature) {
+          return;
+        }
+        _expiringRecipesLoading = false;
+      });
+      _runQueuedExpiringRecipesLoadIfNeeded();
+    }
+  }
+
+  void _runQueuedExpiringRecipesLoadIfNeeded() {
+    final _DashboardTotals? queuedTotals = _queuedExpiringRecipesTotals;
+    final bool queuedForce = _queuedExpiringRecipesForce;
+    _queuedExpiringRecipesTotals = null;
+    _queuedExpiringRecipesForce = false;
+    if (!mounted || queuedTotals == null) {
+      return;
+    }
+    final String queuedSignature = _expiringRecipesSignatureForTotals(queuedTotals);
+    if (!queuedForce && queuedSignature == _expiringRecipesSignature) {
+      return;
+    }
+    unawaited(_loadExpiringRecipesSectionIfNeeded(queuedTotals, force: true));
+  }
+
+  Future<List<DashboardExpiringRecipe>> _filterPendingExpiringRecipes(
+    List<DashboardExpiringRecipe> items,
+  ) async {
+    if (items.isEmpty) {
+      return const <DashboardExpiringRecipe>[];
+    }
+    final Map<String, PendingPdfDeleteEntry> pendingByImportId = await loadPendingPdfDeletesByImportId();
+    if (pendingByImportId.isEmpty) {
+      return items;
+    }
+    return items.where((DashboardExpiringRecipe item) {
+      return !pendingByImportId.containsKey(item.importId);
+    }).toList();
+  }
+
+  Future<List<_PatientDashboardSummary>> _buildForcedExpiringSummaries(
+    List<DashboardExpiringRecipe> items,
+  ) async {
+    if (items.isEmpty) {
+      return const <_PatientDashboardSummary>[];
+    }
+    final Map<String, DashboardExpiringRecipe> firstItemByCf = <String, DashboardExpiringRecipe>{};
+    for (final DashboardExpiringRecipe item in items) {
+      final String cf = _normalizeFiscalCode(item.patientFiscalCode);
+      if (cf.isEmpty || firstItemByCf.containsKey(cf)) {
+        continue;
+      }
+      firstItemByCf[cf] = item;
+    }
+    if (firstItemByCf.isEmpty) {
+      return const <_PatientDashboardSummary>[];
+    }
+    final List<_PatientDashboardSummary> out = <_PatientDashboardSummary>[];
+    for (final String cf in firstItemByCf.keys.toList()..sort()) {
+      final PatientDashboardIndex? index = await _patientDashboardIndexRepository.getByFiscalCode(cf);
+      if (index == null) {
+        continue;
+      }
+      out.add(_summaryFromIndex(index).copyWith(hasExpiryAlert: true));
+    }
+    _sortDashboardSummaries(out);
+    return out;
+  }
+
+
   String _activeDashboardRequestSignature() {
     final List<String> activeFilters = _activeCardFilters
         .map((filter) => filter.name)
@@ -402,6 +619,10 @@ class _DashboardPageState extends State<DashboardPage> {
 
   void _manualRefreshRequestedData() {
     if (!_hasUserRequestedDashboardData) {
+      if (_isDashboardZeroPosition) {
+        unawaited(_loadExpiringRecipesSectionIfNeeded(_dashboardTotals, force: true));
+        return;
+      }
       setState(() {
         _future = Future<_DashboardData>.value(_DashboardData.empty());
         _message = 'Nessun reload dati: seleziona una card o cerca almeno 3 caratteri.';
@@ -751,9 +972,7 @@ class _DashboardPageState extends State<DashboardPage> {
     const List<_DashboardCardFilter> priority = <_DashboardCardFilter>[
       _DashboardCardFilter.debiti,
       _DashboardCardFilter.anticipi,
-      _DashboardCardFilter.prenotazioni,
-      _DashboardCardFilter.scadenze,
-      _DashboardCardFilter.dpc,
+      _DashboardCardFilter.prenotazioni,      _DashboardCardFilter.dpc,
       _DashboardCardFilter.ricette,
     ];
     for (final _DashboardCardFilter filter in priority) {
@@ -775,10 +994,7 @@ class _DashboardPageState extends State<DashboardPage> {
       case _DashboardCardFilter.anticipi:
         return PatientDashboardIndexFlag.advance;
       case _DashboardCardFilter.prenotazioni:
-        return PatientDashboardIndexFlag.booking;
-      case _DashboardCardFilter.scadenze:
-        return PatientDashboardIndexFlag.expiry;
-    }
+        return PatientDashboardIndexFlag.booking;}
   }
 
   bool _matchesActiveIndexFilters(_PatientDashboardSummary item) {
@@ -798,11 +1014,7 @@ class _DashboardPageState extends State<DashboardPage> {
           break;
         case _DashboardCardFilter.prenotazioni:
           if (!item.hasBooking) return false;
-          break;
-        case _DashboardCardFilter.scadenze:
-          if (!item.hasExpiryAlert) return false;
-          break;
-      }
+          break;}
     }
     return true;
   }
@@ -969,11 +1181,7 @@ class _DashboardPageState extends State<DashboardPage> {
             break;
           case _DashboardCardFilter.prenotazioni:
             if (!item.hasBooking) return false;
-            break;
-          case _DashboardCardFilter.scadenze:
-            if (!item.hasExpiryAlert) return false;
-            break;
-        }
+            break;}
       }
       return true;
     }
@@ -3017,12 +3225,19 @@ class _DashboardPageState extends State<DashboardPage> {
       future: _future,
       builder: (context, snapshot) {
         final data = snapshot.data;
-        final allSummaries = data == null || !_hasUserRequestedDashboardData ? const <_PatientDashboardSummary>[] : data.summaries;
-        final summaries = data == null || !_hasUserRequestedDashboardData ? const <_PatientDashboardSummary>[] : _applyFilters(allSummaries, data.families, data);
+        final bool useForcedExpiringRows = _shouldUseForcedExpiringRows;
+        final allSummaries = useForcedExpiringRows
+            ? _forcedExpiringSummaries
+            : data == null || !_hasUserRequestedDashboardData
+                ? const <_PatientDashboardSummary>[]
+                : data.summaries;
+        final summaries = useForcedExpiringRows
+            ? _forcedExpiringSummaries
+            : data == null || !_hasUserRequestedDashboardData
+                ? const <_PatientDashboardSummary>[]
+                : _applyFilters(allSummaries, data.families, data);
         final _DashboardTotals totals = _dashboardTotals;
-        final familyState = data == null
-            ? _DashboardFamilyState.empty()
-            : _DashboardFamilyState.fromSummaries(data.summaries);
+        final familyState = _DashboardFamilyState.fromSummaries(allSummaries);
         return Scaffold(
           backgroundColor: AppColors.background,
           body: Padding(
@@ -3097,8 +3312,8 @@ class _DashboardPageState extends State<DashboardPage> {
                                   value: totals.expiringCount.toString(),
                                   icon: Icons.warning_amber_rounded,
                                   accent: AppColors.coral,
-                                  isSelected: _activeCardFilters.contains(_DashboardCardFilter.scadenze),
-                                  onTap: () => _toggleCardFilter(_DashboardCardFilter.scadenze),
+                                  isSelected: false,
+                                  onTap: null,
                                 ),
                               ],
                             ),
@@ -3401,6 +3616,9 @@ class _DashboardPageState extends State<DashboardPage> {
     final widgets = <Widget>[
       _QuickEditFlag(onTap: () => _handleFlagTap(item, 'quick-edit')),
     ];
+    if (item.hasExpiryAlert) {
+      widgets.add(_FlagChip(label: 'in scadenza', color: AppColors.amber, onTap: () {}));
+    }
     if (item.recipeCount > 0) {
       widgets.add(
         Container(
@@ -3497,6 +3715,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
 
+
   Widget _dialogField(
     TextEditingController controller,
     String label, {
@@ -3573,6 +3792,7 @@ class _DashboardTotals {
   final int advanceCount;
   final int bookingCount;
   final int expiringCount;
+  final String expiringRecipesSignature;
 
   const _DashboardTotals({
     required this.recipeCount,
@@ -3581,6 +3801,7 @@ class _DashboardTotals {
     required this.advanceCount,
     required this.bookingCount,
     required this.expiringCount,
+    this.expiringRecipesSignature = '',
   });
 
   factory _DashboardTotals.empty() {
@@ -3591,6 +3812,7 @@ class _DashboardTotals {
       advanceCount: 0,
       bookingCount: 0,
       expiringCount: 0,
+      expiringRecipesSignature: '',
     );
   }
 
@@ -3602,6 +3824,7 @@ class _DashboardTotals {
       advanceCount: snapshot.advanceCount,
       bookingCount: snapshot.bookingCount,
       expiringCount: snapshot.expiringCount,
+      expiringRecipesSignature: snapshot.expiringRecipesSignature,
     );
   }
 
@@ -3659,6 +3882,8 @@ class _DashboardTotals {
       }
     }
 
+    final List<String> expiringSignatureKeys = expiringPatientKeys.toList()..sort();
+
     return _DashboardTotals(
       recipeCount: recipeCount,
       dpcCount: dpcCount,
@@ -3666,6 +3891,7 @@ class _DashboardTotals {
       advanceCount: advances.length,
       bookingCount: bookings.length,
       expiringCount: expiringPatientKeys.length,
+      expiringRecipesSignature: expiringSignatureKeys.join('|'),
     );
   }
 
@@ -4086,7 +4312,7 @@ class _SummaryCard extends StatelessWidget {
   final IconData icon;
   final Color accent;
   final bool isSelected;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   const _SummaryCard({
     required this.title,
@@ -4155,7 +4381,7 @@ class _SummaryCard extends StatelessWidget {
   }
 }
 
-enum _DashboardCardFilter { ricette, dpc, debiti, anticipi, prenotazioni, scadenze }
+enum _DashboardCardFilter { ricette, dpc, debiti, anticipi, prenotazioni }
 
 class _FilterToggle extends StatelessWidget {
   final String label;
