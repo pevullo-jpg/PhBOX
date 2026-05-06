@@ -29,6 +29,7 @@ function buildDashboardTotalsWriteCandidate_(runtimeIndex, cfg) {
       advanceCount: appTotals.advanceCount,
       bookingCount: appTotals.bookingCount,
       expiringCount: archiveTotals.expiringCount,
+      expiringRecipesSignature: archiveTotals.expiringRecipesSignature || '',
       archiveUpdatedAt: runtimeIndex.updatedAt || null,
       appManagedTotalsReadOk: !!appTotalsResult.ok,
       appManagedTotalsSource: appTotalsResult.source || '',
@@ -85,6 +86,7 @@ function isActiveVisibleManifestForDashboardTotals_(manifest) {
 
 function buildArchiveDashboardTotalsFromManifests_(manifests, source) {
   var expiringPatientKeys = {};
+  var expiringRecipeFingerprints = [];
   var recipeCount = 0;
   var dpcCount = 0;
 
@@ -96,14 +98,29 @@ function buildArchiveDashboardTotalsFromManifests_(manifests, source) {
     var baseDate = parseDashboardTotalsDate_(manifest && (manifest.prescriptionDate || manifest.createdAt));
     var expiryDate = baseDate ? addDaysForDashboardTotals_(baseDate, 30) : null;
     if (isDashboardExpiryAlert_(expiryDate)) {
-      expiringPatientKeys[key || String((manifest && (manifest.driveFileId || manifest.id)) || '')] = true;
+      var fallbackKey = String((manifest && (manifest.driveFileId || manifest.id)) || '').trim();
+      expiringPatientKeys[key || fallbackKey] = true;
+      expiringRecipeFingerprints.push([
+        fallbackKey,
+        key || '',
+        normalizeCf_(manifest && manifest.patientFiscalCode),
+        String((manifest && manifest.patientFullName) || '').trim(),
+        baseDate ? baseDate.toISOString() : '',
+        expiryDate ? expiryDate.toISOString() : '',
+        String((manifest && manifest.fileName) || '').trim(),
+        manifest && manifest.isDpc ? '1' : '0',
+        String(resolveManifestPrescriptionCount_(manifest) || 0)
+      ].join('|'));
     }
   });
+
+  expiringRecipeFingerprints.sort();
 
   return {
     recipeCount: recipeCount,
     dpcCount: dpcCount,
     expiringCount: Object.keys(expiringPatientKeys).length,
+    expiringRecipesSignature: computeStableHashForData_(expiringRecipeFingerprints),
     source: source || 'runtime_index'
   };
 }
@@ -400,7 +417,8 @@ function buildDashboardTotalsHashPayload_(archiveTotals, appTotals, cfg) {
     debtAmount: roundDashboardTotalsAmount_((appTotals && appTotals.debtAmount) || 0),
     advanceCount: Math.max(0, Number((appTotals && appTotals.advanceCount) || 0)),
     bookingCount: Math.max(0, Number((appTotals && appTotals.bookingCount) || 0)),
-    expiringCount: Math.max(0, Number((archiveTotals && archiveTotals.expiringCount) || 0))
+    expiringCount: Math.max(0, Number((archiveTotals && archiveTotals.expiringCount) || 0)),
+    expiringRecipesSignature: String((archiveTotals && archiveTotals.expiringRecipesSignature) || '')
   };
 }
 
