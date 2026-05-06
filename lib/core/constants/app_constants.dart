@@ -12,6 +12,7 @@ class AppCollections {
   static const String parserReferenceValues = 'parser_reference_values';
   static const String patientTherapeuticAdvice = 'patient_therapeutic_advice';
   static const String dashboardTotals = 'dashboard_totals';
+  static const String dashboardExpiringRecipes = 'dashboard_expiring_recipes';
   static const String dashboardSummaries = 'dashboard_summaries';
   static const String patientDashboardIndex = 'patient_dashboard_index';
   static const String phboxRuntime = 'phbox_runtime';
