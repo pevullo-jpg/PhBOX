@@ -15,6 +15,7 @@ class AppCollections {
   static const String dashboardExpiringRecipes = 'dashboard_expiring_recipes';
   static const String dashboardSummaries = 'dashboard_summaries';
   static const String patientDashboardIndex = 'patient_dashboard_index';
+  static const String identityResolutionRequests = 'identity_resolution_requests';
   static const String phboxRuntime = 'phbox_runtime';
   static const String phboxSignals = 'phbox_signals';
 }
