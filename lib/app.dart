@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import 'features/dashboard/pages/dashboard_page.dart';
 import 'features/families/pages/families_page.dart';
-import 'features/identity/pages/identity_resolution_page.dart';
 import 'features/settings/pages/settings_page.dart';
 import 'shared/navigation/app_navigation.dart';
 import 'shared/widgets/floating_page_menu.dart';
@@ -28,8 +27,6 @@ class _FarmaciaAppState extends State<FarmaciaApp> {
         return const FamiliesPage();
       case 2:
         return const SettingsPage();
-      case 3:
-        return const IdentityResolutionPage();
       case 0:
       default:
         return const DashboardPage();
