@@ -3,6 +3,197 @@ function dryRunPatientIdentityCanonicalization(options) {
   var cfg = getPhboxConfig_();
   var startedAt = new Date().toISOString();
   var maxSamples = patientIdentityCanonicalizerBoundedInt_(options.maxSamples, 30, 1, 100);
+  var built = patientIdentityCanonicalizerBuildPlan_(cfg, { maxSamples: maxSamples });
+  var plan = built.plan;
+
+  var result = {
+    ok: true,
+    mode: 'dry_run_read_only',
+    source: 'patient_identity_canonicalizer',
+    startedAt: startedAt,
+    checkedAt: new Date().toISOString(),
+    policy: {
+      canonicalId: 'patients/{normalizedFiscalCode}',
+      familyMembershipWithRealCf: 'create_canonical_patient',
+      tmpWithoutCf: 'do_not_auto_canonicalize',
+      sameNameWithoutCf: 'frontend_user_merge_suggestion_only',
+      hardDelete: 'out_of_scope_for_this_pr'
+    },
+    counts: {
+      patientsSeen: built.counts.patientsSeen,
+      patientDashboardIndexSeen: built.counts.patientDashboardIndexSeen,
+      drivePdfImportsSeen: built.counts.drivePdfImportsSeen,
+      debtsSeen: built.counts.debtsSeen,
+      advancesSeen: built.counts.advancesSeen,
+      bookingsSeen: built.counts.bookingsSeen,
+      familiesSeen: built.counts.familiesSeen,
+      doctorLinksSeen: built.counts.doctorLinksSeen,
+      therapeuticAdviceSeen: built.counts.therapeuticAdviceSeen,
+      canonicalPatients: built.counts.canonicalPatients,
+      tmpPatients: built.counts.tmpPatients,
+      identityStatus: plan.counts.identityStatus,
+      createReasons: plan.counts.createReasons,
+      mergeTypes: plan.counts.mergeTypes,
+      plannedOperations: plan.counts.plannedOperations,
+      operationSamplesReturned: plan.samples.operationSamples.length
+    },
+    samples: plan.samples,
+    nextStep: 'Review dry-run. Apply executor is separate, bounded and create-only.'
+  };
+
+  logInfo_(cfg, 'dryRunPatientIdentityCanonicalization completato', result);
+  return result;
+}
+
+function applyPatientIdentityCanonicalization(options) {
+  options = options || {};
+  var cfg = getPhboxConfig_();
+  var startedAt = new Date().toISOString();
+  var dryRun = options.dryRun !== false;
+  var applyToken = String(options.applyToken || '').trim();
+  var maxSamples = patientIdentityCanonicalizerBoundedInt_(options.maxSamples, 30, 1, 100);
+  var maxWrites = patientIdentityCanonicalizerBoundedInt_(options.maxWrites, 25, 1, 100);
+  var resumeAfter = normalizeCf_(options.resumeAfter || '');
+
+  if (!dryRun && applyToken !== 'APPLY_CREATE_CANONICAL_PATIENTS') {
+    var blocked = {
+      ok: false,
+      mode: 'apply_blocked',
+      source: 'patient_identity_canonicalizer_apply',
+      dryRun: false,
+      startedAt: startedAt,
+      checkedAt: new Date().toISOString(),
+      reason: 'blocked_missing_apply_token',
+      requiredApplyToken: 'APPLY_CREATE_CANONICAL_PATIENTS',
+      writesSucceeded: 0,
+      firestoreWritesDelta: 0
+    };
+    logInfo_(cfg, 'applyPatientIdentityCanonicalization bloccato', blocked);
+    return blocked;
+  }
+
+  var built = patientIdentityCanonicalizerBuildPlan_(cfg, { maxSamples: maxSamples });
+  var operations = patientIdentityCanonicalizerCreateCanonicalOperations_(built.plan.operations || []);
+  var remaining = operations.filter(function (op) {
+    return !resumeAfter || String(op.targetId || '') > resumeAfter;
+  });
+  var nowIso = new Date().toISOString();
+  var result = {
+    ok: true,
+    mode: dryRun ? 'apply_dry_run_create_canonical_patients' : 'apply_create_canonical_patients',
+    source: 'patient_identity_canonicalizer_apply',
+    dryRun: dryRun,
+    startedAt: startedAt,
+    checkedAt: '',
+    maxWrites: maxWrites,
+    maxSamples: maxSamples,
+    resumeAfter: resumeAfter,
+    plannedOperations: built.plan.counts.plannedOperations,
+    plannedApplicableOperations: operations.length,
+    remainingApplicableOperations: remaining.length,
+    createReasons: built.plan.counts.createReasons,
+    operationsProcessed: 0,
+    writesPlanned: 0,
+    writesAttempted: 0,
+    writesSucceeded: 0,
+    skippedAlreadyExists: 0,
+    skippedConcurrentExists: 0,
+    skippedTmp: 0,
+    skippedInvalid: 0,
+    maxWritesReached: false,
+    nextResumeAfter: '',
+    firestoreWritesDelta: 0,
+    samples: {
+      appliedOrPlanned: [],
+      skippedAlreadyExists: [],
+      skippedTmp: [],
+      skippedInvalid: []
+    }
+  };
+
+  for (var i = 0; i < remaining.length; i++) {
+    if (result.writesPlanned + result.writesAttempted >= maxWrites) {
+      result.maxWritesReached = true;
+      break;
+    }
+
+    var op = remaining[i] || {};
+    var targetId = normalizeCf_(op.targetId || op.fiscalCode || '');
+    result.operationsProcessed++;
+    result.nextResumeAfter = targetId || result.nextResumeAfter;
+
+    if (!patientIdentityCanonicalizerIsSafeRealCf_(targetId)) {
+      result.skippedInvalid++;
+      patientIdentityCanonicalizerAddSample_(result.samples.skippedInvalid, {
+        targetId: targetId,
+        reason: 'invalid_or_missing_real_fiscal_code'
+      }, maxSamples);
+      continue;
+    }
+
+    if (auditPatientIdentityIsTmp_(targetId)) {
+      result.skippedTmp++;
+      patientIdentityCanonicalizerAddSample_(result.samples.skippedTmp, {
+        targetId: targetId,
+        reason: 'tmp_identity_not_canonicalized'
+      }, maxSamples);
+      continue;
+    }
+
+    if (dryRun) {
+      result.writesPlanned++;
+      patientIdentityCanonicalizerAddSample_(result.samples.appliedOrPlanned, {
+        action: 'create_canonical_patient',
+        targetId: targetId,
+        dryRun: true,
+        reason: op.reason || ''
+      }, maxSamples);
+      continue;
+    }
+
+    if (patientIdentityCanonicalizerPatientExists_(cfg, targetId)) {
+      result.skippedAlreadyExists++;
+      patientIdentityCanonicalizerAddSample_(result.samples.skippedAlreadyExists, {
+        targetId: targetId,
+        reason: 'patient_already_exists'
+      }, maxSamples);
+      continue;
+    }
+
+    var doc = patientIdentityCanonicalizerBuildMinimalPatientDocument_(targetId, op, nowIso);
+    var write = patientIdentityCanonicalizerBuildCreateOnlyWrite_(cfg, 'patients', targetId, doc);
+    result.writesAttempted++;
+    try {
+      executeFirestoreCommit_(cfg, [write]);
+      result.writesSucceeded++;
+      result.firestoreWritesDelta++;
+      patientIdentityCanonicalizerAddSample_(result.samples.appliedOrPlanned, {
+        action: 'create_canonical_patient',
+        targetId: targetId,
+        dryRun: false,
+        reason: op.reason || ''
+      }, maxSamples);
+    } catch (e) {
+      if (patientIdentityCanonicalizerIsAlreadyExistsCommitError_(e)) {
+        result.skippedConcurrentExists++;
+        patientIdentityCanonicalizerAddSample_(result.samples.skippedAlreadyExists, {
+          targetId: targetId,
+          reason: 'patient_created_concurrently'
+        }, maxSamples);
+        continue;
+      }
+      throw e;
+    }
+  }
+
+  result.checkedAt = new Date().toISOString();
+  logInfo_(cfg, 'applyPatientIdentityCanonicalization completato', result);
+  return result;
+}
+
+function patientIdentityCanonicalizerBuildPlan_(cfg, options) {
+  options = options || {};
+  var maxSamples = patientIdentityCanonicalizerBoundedInt_(options.maxSamples, 30, 1, 100);
 
   var patients = listFirestoreDocumentsByPathSafe_(cfg, ['patients'], { pageSize: 500 });
   var indexes = listFirestoreDocumentsByPathSafe_(cfg, ['patient_dashboard_index'], { pageSize: 500 });
@@ -221,19 +412,7 @@ function dryRunPatientIdentityCanonicalization(options) {
     }, maxSamples);
   });
 
-  var result = {
-    ok: true,
-    mode: 'dry_run_read_only',
-    source: 'patient_identity_canonicalizer',
-    startedAt: startedAt,
-    checkedAt: new Date().toISOString(),
-    policy: {
-      canonicalId: 'patients/{normalizedFiscalCode}',
-      familyMembershipWithRealCf: 'create_canonical_patient',
-      tmpWithoutCf: 'do_not_auto_canonicalize',
-      sameNameWithoutCf: 'frontend_user_merge_suggestion_only',
-      hardDelete: 'out_of_scope_for_this_pr'
-    },
+  return {
     counts: {
       patientsSeen: patients.length,
       patientDashboardIndexSeen: indexes.length,
@@ -245,19 +424,10 @@ function dryRunPatientIdentityCanonicalization(options) {
       doctorLinksSeen: doctorLinks.length,
       therapeuticAdviceSeen: therapeuticAdvice.length,
       canonicalPatients: Object.keys(canonicalPatientsByCf).length,
-      tmpPatients: Object.keys(tmpPatientsById).length,
-      identityStatus: plan.counts.identityStatus,
-      createReasons: plan.counts.createReasons,
-      mergeTypes: plan.counts.mergeTypes,
-      plannedOperations: plan.counts.plannedOperations,
-      operationSamplesReturned: plan.samples.operationSamples.length
+      tmpPatients: Object.keys(tmpPatientsById).length
     },
-    samples: plan.samples,
-    nextStep: 'Review dry-run. A later PR may add an apply executor with maxWrites, resumable state and explicit user-confirmed destructive operations.'
+    plan: plan
   };
-
-  logInfo_(cfg, 'dryRunPatientIdentityCanonicalization completato', result);
-  return result;
 }
 
 function patientIdentityCanonicalizerEmptyPlan_() {
@@ -276,7 +446,8 @@ function patientIdentityCanonicalizerEmptyPlan_() {
       userMergeSuggestionsByName: [],
       unsafeCandidates: [],
       operationSamples: []
-    }
+    },
+    operations: []
   };
 }
 
@@ -336,6 +507,66 @@ function patientIdentityCanonicalizerBestName_(id, index, operational) {
   return names.length ? names[0] : id;
 }
 
+function patientIdentityCanonicalizerCreateCanonicalOperations_(operations) {
+  return (operations || []).filter(function (op) {
+    return op && op.action === 'create_canonical_patient';
+  }).sort(function (a, b) {
+    return String(a.targetId || '').localeCompare(String(b.targetId || ''));
+  });
+}
+
+function patientIdentityCanonicalizerPatientExists_(cfg, fiscalCode) {
+  var url = buildFirestoreDocumentUrl_(cfg, 'patients', fiscalCode);
+  var response = UrlFetchApp.fetch(url, {
+    method: 'get',
+    muteHttpExceptions: true,
+    headers: {
+      Authorization: 'Bearer ' + ScriptApp.getOAuthToken()
+    }
+  });
+  var code = response.getResponseCode();
+  if (code === 200) return true;
+  if (code === 404) return false;
+  throw new Error('Firestore GET patient failed [' + code + '] ' + response.getContentText());
+}
+
+function patientIdentityCanonicalizerBuildMinimalPatientDocument_(fiscalCode, operation, nowIso) {
+  var reason = String((operation && operation.reason) || '').trim();
+  var data = {
+    fiscalCode: fiscalCode,
+    source: 'backend_identity_canonicalizer_apply',
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    identityCanonicalizedAt: nowIso,
+    identityCanonicalizationReason: reason,
+    identityCanonicalizationVersion: 1
+  };
+  var fullName = auditPatientIdentityReadString_(operation && operation.fullName);
+  if (fullName && normalizeCf_(fullName) !== fiscalCode) data.fullName = fullName;
+  var familyIdsSample = operation && operation.evidence && Array.isArray(operation.evidence.familyIdsSample) ? operation.evidence.familyIdsSample : [];
+  if (familyIdsSample.length) data.identityCanonicalizationFamilyIdsSample = familyIdsSample.slice(0, 10);
+  return data;
+}
+
+function patientIdentityCanonicalizerBuildCreateOnlyWrite_(cfg, collection, documentId, data) {
+  var write = buildFirestoreUpdateWrite_(cfg, collection, documentId, data);
+  write.currentDocument = { exists: false };
+  return write;
+}
+
+function patientIdentityCanonicalizerIsAlreadyExistsCommitError_(error) {
+  var text = String(error && (error.message || error) || '');
+  return text.indexOf('ALREADY_EXISTS') >= 0 ||
+    text.indexOf('already exists') >= 0 ||
+    text.indexOf('FAILED_PRECONDITION') >= 0 ||
+    text.indexOf('currentDocument') >= 0;
+}
+
+function patientIdentityCanonicalizerIsSafeRealCf_(value) {
+  var cf = normalizeCf_(value);
+  return !!cf && !auditPatientIdentityIsTmp_(cf) && /^[A-Z0-9]{16}$/.test(cf);
+}
+
 function patientIdentityCanonicalizerAddNameBucket_(buckets, source, id, fiscalCode, fullName, isTmp, isCanonical) {
   var nameKey = patientIdentityCanonicalizerNameKey_(fullName);
   if (!nameKey) return;
@@ -372,6 +603,7 @@ function patientIdentityCanonicalizerNameKey_(value) {
 
 function patientIdentityCanonicalizerAddOperationSample_(plan, operation, maxSamples) {
   plan.counts.plannedOperations = (plan.counts.plannedOperations || 0) + 1;
+  plan.operations.push(operation);
   patientIdentityCanonicalizerAddSample_(plan.samples.operationSamples, operation, maxSamples);
 }
 
