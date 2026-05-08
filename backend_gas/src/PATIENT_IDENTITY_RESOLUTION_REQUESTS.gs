@@ -703,9 +703,8 @@ function identityMergeDetectPatientFieldConflicts_(sourcePatient, targetPatient)
 }
 
 function identityMergeUnresolvedConflictFields_(conflictFields, request) {
-  var selectedFieldValues = identityMergeReadPlainObject_(request && request.selectedFieldValues);
-  var confirmed = request && request.userFieldChoicesConfirmed === true;
-  if (!confirmed || !selectedFieldValues) {
+  var selectedFieldValues = identityMergeReadSelectedFieldValues_(request);
+  if (!selectedFieldValues) {
     return conflictFields.slice();
   }
   return conflictFields.filter(function (field) {
@@ -714,9 +713,26 @@ function identityMergeUnresolvedConflictFields_(conflictFields, request) {
   });
 }
 
+function identityMergeReadSelectedFieldValues_(request) {
+  var selectedFieldValues = identityMergeReadPlainObject_(request && request.selectedFieldValues);
+  var confirmed = identityMergeIsTrue_(request && request.userFieldChoicesConfirmed);
+  if (confirmed && selectedFieldValues) return selectedFieldValues;
+
+  var action = String(request && request.action || '').trim();
+  var normalizedName = String(request && request.normalizedName || '').trim();
+  if (action === 'choose_correct_fiscal_code' && normalizedName) {
+    return { fullName: normalizedName };
+  }
+  return null;
+}
+
 function identityMergeReadPlainObject_(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value;
+}
+
+function identityMergeIsTrue_(value) {
+  return value === true || String(value).toLowerCase() === 'true';
 }
 
 function identityMergeHasOwnNonEmptyValue_(object, field) {
