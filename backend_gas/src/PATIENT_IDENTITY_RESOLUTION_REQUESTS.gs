@@ -371,3 +371,302 @@ function identityResolutionRequestsBoundedInt_(value, fallback, minValue, maxVal
   if (parsed > maxValue) return maxValue;
   return parsed;
 }
+
+
+function dryRunPatientIdentityMergeRequests() {
+  return processPatientIdentityMergeRequests({
+    dryRun: true,
+    maxRequests: 25,
+    maxSamples: 30
+  });
+}
+
+function processPatientIdentityMergeRequests(options) {
+  options = options || {};
+  var cfg = getPhboxConfig_();
+  var startedAt = new Date().toISOString();
+  var dryRun = options.dryRun !== false;
+  var maxRequests = identityResolutionRequestsBoundedInt_(options.maxRequests, 25, 1, 50);
+  var maxSamples = identityResolutionRequestsBoundedInt_(options.maxSamples, 30, 1, 100);
+
+  if (!dryRun) {
+    var blocked = {
+      ok: false,
+      mode: 'identity_merge_requests_apply_blocked',
+      source: 'patient_identity_merge_requests',
+      dryRun: false,
+      startedAt: startedAt,
+      checkedAt: new Date().toISOString(),
+      reason: 'apply_not_implemented_for_merge_requests',
+      writesAttempted: 0,
+      writesSucceeded: 0,
+      firestoreWritesDelta: 0
+    };
+    logInfo_(cfg, 'processPatientIdentityMergeRequests bloccato', blocked);
+    return blocked;
+  }
+
+  var requests = listPendingBackendMergeIdentityResolutionRequests_(cfg, maxRequests);
+  var result = {
+    ok: true,
+    mode: 'identity_merge_requests_dry_run',
+    source: 'patient_identity_merge_requests',
+    dryRun: true,
+    startedAt: startedAt,
+    checkedAt: '',
+    maxRequests: maxRequests,
+    maxSamples: maxSamples,
+    requestsSeen: requests.length,
+    requestsProcessed: 0,
+    plannedMergeRequests: 0,
+    invalidRequests: 0,
+    unsupportedActions: 0,
+    sourceMissing: 0,
+    targetMissing: 0,
+    targetAlreadyExists: 0,
+    conflictFree: 0,
+    conflictsDetected: 0,
+    userChoicesRequired: 0,
+    writesPlanned: 0,
+    writesAttempted: 0,
+    writesSucceeded: 0,
+    firestoreWritesDelta: 0,
+    maxRequestsReached: requests.length >= maxRequests,
+    supportedActions: [
+      'choose_correct_fiscal_code',
+      'merge_same_name_patient',
+      'merge_similar_cf_patient'
+    ],
+    samples: {
+      planned: [],
+      conflicts: [],
+      rejected: [],
+      unsupported: [],
+      missing: []
+    }
+  };
+
+  for (var i = 0; i < requests.length; i++) {
+    var request = requests[i] || {};
+    var requestId = String(request.documentId || '').trim();
+    var action = String(request.action || '').trim();
+    var sourceId = identityMergeRequestSourceId_(request);
+    var selectedCf = identityMergeRequestSelectedFiscalCode_(request);
+    var targetId = identityMergeRequestTargetId_(request, selectedCf);
+
+    if (!requestId) {
+      result.invalidRequests++;
+      identityResolutionRequestsAddSample_(result.samples.rejected, {
+        requestId: '',
+        reason: 'missing_request_document_id'
+      }, maxSamples);
+      continue;
+    }
+
+    if (!identityMergeRequestIsSupportedAction_(action)) {
+      result.requestsProcessed++;
+      result.unsupportedActions++;
+      identityResolutionRequestsAddSample_(result.samples.unsupported, {
+        requestId: requestId,
+        action: action || '',
+        reason: 'unsupported_merge_action'
+      }, maxSamples);
+      continue;
+    }
+
+    if (!sourceId || !selectedCf || !identityResolutionRequestsIsSafeRealCf_(selectedCf)) {
+      result.requestsProcessed++;
+      result.invalidRequests++;
+      identityResolutionRequestsAddSample_(result.samples.rejected, {
+        requestId: requestId,
+        action: action,
+        sourceId: sourceId,
+        selectedFiscalCode: selectedCf,
+        reason: 'missing_source_or_invalid_selected_cf'
+      }, maxSamples);
+      continue;
+    }
+
+    var sourcePatient = identityResolutionRequestsGetPatientOrNull_(cfg, sourceId);
+    if (!sourcePatient) {
+      result.requestsProcessed++;
+      result.sourceMissing++;
+      identityResolutionRequestsAddSample_(result.samples.missing, {
+        requestId: requestId,
+        action: action,
+        sourceId: sourceId,
+        selectedFiscalCode: selectedCf,
+        reason: 'source_patient_missing'
+      }, maxSamples);
+      continue;
+    }
+
+    var targetPatient = identityResolutionRequestsGetPatientOrNull_(cfg, targetId);
+    var targetExists = !!targetPatient;
+    if (targetExists) {
+      result.targetAlreadyExists++;
+    } else {
+      result.targetMissing++;
+    }
+
+    var conflicts = targetExists
+      ? identityMergeDetectPatientFieldConflicts_(sourcePatient, targetPatient)
+      : [];
+    var requiresUserChoices = conflicts.length > 0;
+
+    result.requestsProcessed++;
+    result.plannedMergeRequests++;
+    if (requiresUserChoices) {
+      result.conflictsDetected++;
+      result.userChoicesRequired++;
+      identityResolutionRequestsAddSample_(result.samples.conflicts, {
+        requestId: requestId,
+        action: action,
+        sourceId: sourceId,
+        targetId: targetId,
+        selectedFiscalCode: selectedCf,
+        conflictFields: conflicts,
+        futureAction: 'frontend_user_selects_field_values_then_backend_apply'
+      }, maxSamples);
+    } else {
+      result.conflictFree++;
+    }
+
+    identityResolutionRequestsAddSample_(result.samples.planned, {
+      requestId: requestId,
+      action: action,
+      sourceId: sourceId,
+      targetId: targetId,
+      selectedFiscalCode: selectedCf,
+      targetExists: targetExists,
+      requiresUserChoices: requiresUserChoices,
+      conflictFields: conflicts,
+      futureAction: 'backend_merge_executor_apply_not_in_this_pr'
+    }, maxSamples);
+  }
+
+  result.checkedAt = new Date().toISOString();
+  logInfo_(cfg, 'processPatientIdentityMergeRequests completato', result);
+  return result;
+}
+
+function listPendingBackendMergeIdentityResolutionRequests_(cfg, limit) {
+  var url = 'https://firestore.googleapis.com/v1/projects/' + encodeURIComponent(cfg.firestoreProjectId) + '/databases/(default)/documents:runQuery';
+  var payload = {
+    structuredQuery: {
+      from: [{ collectionId: 'identity_resolution_requests' }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: 'status' },
+          op: 'EQUAL',
+          value: { stringValue: 'user_confirmed_pending_backend_merge_executor' }
+        }
+      },
+      limit: Math.max(1, Number(limit || 1))
+    }
+  };
+  var response = UrlFetchApp.fetch(url, {
+    method: 'post',
+    muteHttpExceptions: true,
+    contentType: 'application/json',
+    headers: {
+      Authorization: 'Bearer ' + ScriptApp.getOAuthToken()
+    },
+    payload: JSON.stringify(payload)
+  });
+  var code = response.getResponseCode();
+  var body = response.getContentText() || '';
+  if (code < 200 || code >= 300) {
+    throw new Error('Firestore runQuery pending identity merge requests failed [' + code + '] ' + body);
+  }
+  var parsed = parseJsonSafe_(body);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.map(function (row) {
+    if (!row || !row.document) return null;
+    var document = row.document;
+    var data = fromFirestoreFields_(document.fields || {});
+    data.documentName = document.name || '';
+    data.documentId = extractFirestoreDocumentId_(document.name || '');
+    return data;
+  }).filter(function (item) {
+    return !!item;
+  });
+}
+
+function identityMergeRequestIsSupportedAction_(action) {
+  return action === 'choose_correct_fiscal_code' ||
+    action === 'merge_same_name_patient' ||
+    action === 'merge_similar_cf_patient';
+}
+
+function identityMergeRequestSourceId_(request) {
+  return normalizeCf_(request.sourcePatientId ||
+    request.sourceFiscalCode ||
+    request.temporaryDocumentId ||
+    request.currentDocumentId ||
+    request.patientFiscalCode ||
+    '');
+}
+
+function identityMergeRequestSelectedFiscalCode_(request) {
+  return normalizeCf_(request.selectedFiscalCode ||
+    request.targetFiscalCode ||
+    request.correctFiscalCode ||
+    request.targetId ||
+    '');
+}
+
+function identityMergeRequestTargetId_(request, selectedCf) {
+  return normalizeCf_(request.targetPatientId ||
+    request.targetFiscalCode ||
+    selectedCf ||
+    '');
+}
+
+function identityResolutionRequestsGetPatientOrNull_(cfg, documentId) {
+  var normalizedId = normalizeCf_(documentId);
+  if (!normalizedId) return null;
+  var url = buildFirestoreDocumentUrl_(cfg, 'patients', normalizedId);
+  var response = UrlFetchApp.fetch(url, {
+    method: 'get',
+    muteHttpExceptions: true,
+    headers: {
+      Authorization: 'Bearer ' + ScriptApp.getOAuthToken()
+    }
+  });
+  var code = response.getResponseCode();
+  if (code === 404) return null;
+  if (code < 200 || code >= 300) {
+    throw new Error('Firestore GET patient for merge dry-run failed [' + code + '] ' + response.getContentText());
+  }
+  var parsed = parseJsonSafe_(response.getContentText() || '{}');
+  var data = fromFirestoreFields_((parsed && parsed.fields) || {});
+  data.documentName = parsed.name || '';
+  data.documentId = extractFirestoreDocumentId_(parsed.name || '');
+  return data;
+}
+
+function identityMergeDetectPatientFieldConflicts_(sourcePatient, targetPatient) {
+  var fields = [
+    'fullName',
+    'alias',
+    'city',
+    'exemptionCode',
+    'doctorName',
+    'doctorFullName'
+  ];
+  var conflicts = [];
+  for (var i = 0; i < fields.length; i++) {
+    var field = fields[i];
+    var sourceValue = identityMergeComparableString_(sourcePatient && sourcePatient[field]);
+    var targetValue = identityMergeComparableString_(targetPatient && targetPatient[field]);
+    if (sourceValue && targetValue && sourceValue !== targetValue) {
+      conflicts.push(field);
+    }
+  }
+  return conflicts;
+}
+
+function identityMergeComparableString_(value) {
+  return String(value == null ? '' : value).trim().replace(/\s+/g, ' ').toUpperCase();
+}
