@@ -29,6 +29,7 @@ import '../../../data/repositories/dashboard_totals_repository.dart';
 import '../../../data/repositories/doctor_patient_links_repository.dart';
 import '../../../data/repositories/drive_pdf_imports_repository.dart';
 import '../../../data/repositories/family_groups_repository.dart';
+import '../../../data/repositories/identity_resolution_requests_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/patient_dashboard_index_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
@@ -60,6 +61,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   late final TherapeuticAdviceRepository _therapeuticAdviceRepository;
   late final DashboardTotalsRepository _dashboardTotalsRepository;
   late final PatientDashboardIndexRepository _patientDashboardIndexRepository;
+  late final IdentityResolutionRequestsRepository _identityResolutionRequestsRepository;
 
   Future<_PatientDetailData>? _future;
   String _message = '';
@@ -81,6 +83,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     _therapeuticAdviceRepository = TherapeuticAdviceRepository(datasource: datasource);
     _dashboardTotalsRepository = DashboardTotalsRepository(datasource: datasource);
     _patientDashboardIndexRepository = PatientDashboardIndexRepository(datasource: datasource);
+    _identityResolutionRequestsRepository = IdentityResolutionRequestsRepository(datasource: datasource);
     _currentFiscalCode = PatientInputNormalizer.normalizeFiscalCode(widget.fiscalCode);
     _future = _load();
   }
@@ -145,6 +148,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     final settings = await _settingsRepository.getSettings();
     final therapeuticAdvice = await _therapeuticAdviceRepository.getByFiscalCode(_currentFiscalCode);
     final familyContext = await _loadFamilyContext(patient);
+    final identityContext = await _loadIdentityResolutionContext(patient);
     final doctorName = _resolveDoctor(
       patient: patient,
       doctorLinks: doctorLinks,
@@ -163,6 +167,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       resolvedDoctorName: doctorName,
       therapeuticAdvice: therapeuticAdvice,
       familyContext: familyContext,
+      identityContext: identityContext,
     );
   }
 
@@ -324,6 +329,306 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         _message = 'Dati salvati. Indice dashboard non riallineato: ' + e.toString();
       });
     }
+  }
+
+
+  Future<_PatientIdentityResolutionContext?> _loadIdentityResolutionContext(Patient? patient) async {
+    if (patient == null) {
+      return null;
+    }
+    final String sourceId = PatientInputNormalizer.normalizeFiscalCode(patient.fiscalCode);
+    final bool isTemporaryIdentity = isTemporaryPatientKey(sourceId) ||
+        isTemporaryPatientKey(patient.fiscalCode);
+    if (!isTemporaryIdentity) {
+      return null;
+    }
+    final String nameKey = _identityNameKey(patient.fullName);
+    if (nameKey.length < 3) {
+      return _PatientIdentityResolutionContext(
+        sourceId: sourceId,
+        sourceFullName: patient.fullName,
+        candidates: const <PatientDashboardIndex>[],
+      );
+    }
+    final List<PatientDashboardIndex> rawCandidates =
+        await _patientDashboardIndexRepository.searchByPrefix(patient.fullName, limit: 20);
+    final List<PatientDashboardIndex> candidates = rawCandidates.where((PatientDashboardIndex item) {
+      final String candidateId = PatientInputNormalizer.normalizeFiscalCode(item.fiscalCode);
+      if (candidateId.isEmpty || candidateId == sourceId) {
+        return false;
+      }
+      return _identityNameKey(item.fullName) == nameKey;
+    }).toList()
+      ..sort((PatientDashboardIndex a, PatientDashboardIndex b) {
+        final bool aTmp = isTemporaryPatientKey(a.fiscalCode);
+        final bool bTmp = isTemporaryPatientKey(b.fiscalCode);
+        if (aTmp != bTmp) return aTmp ? 1 : -1;
+        return a.fullName.toLowerCase().compareTo(b.fullName.toLowerCase());
+      });
+    return _PatientIdentityResolutionContext(
+      sourceId: sourceId,
+      sourceFullName: patient.fullName,
+      candidates: candidates.length > 8 ? candidates.sublist(0, 8) : candidates,
+    );
+  }
+
+  String _identityNameKey(String value) {
+    return PatientInputNormalizer.normalizeFullName(value).toUpperCase();
+  }
+
+  Map<String, String> _identitySourceFieldValues(Patient patient) {
+    final Map<String, String> values = <String, String>{};
+    final String fullName = patient.fullName.trim();
+    if (fullName.isNotEmpty) values['fullName'] = fullName;
+    return values;
+  }
+
+  Map<String, String> _identityTargetFieldValues(PatientDashboardIndex candidate) {
+    final Map<String, String> values = <String, String>{};
+    final String fullName = candidate.fullName.trim();
+    if (fullName.isNotEmpty) values['fullName'] = fullName;
+    return values;
+  }
+
+  List<String> _identityConflictFields({
+    required Map<String, String> sourceValues,
+    required Map<String, String> targetValues,
+  }) {
+    final List<String> fields = <String>[];
+    for (final String field in <String>['fullName']) {
+      final String source = (sourceValues[field] ?? '').trim().toUpperCase();
+      final String target = (targetValues[field] ?? '').trim().toUpperCase();
+      if (source.isNotEmpty && target.isNotEmpty && source != target) {
+        fields.add(field);
+      }
+    }
+    return fields;
+  }
+
+  Future<void> _openIdentityResolutionDialog(_PatientDetailData data) async {
+    final Patient? patient = data.patient;
+    final _PatientIdentityResolutionContext? identityContext = data.identityContext;
+    if (patient == null || identityContext == null) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        bool busy = false;
+        String localError = '';
+
+        Future<void> submitMergeRequest(
+          StateSetter setLocalState,
+          PatientDashboardIndex candidate,
+        ) async {
+          setLocalState(() {
+            busy = true;
+            localError = '';
+          });
+          try {
+            final String sourceId = identityContext.sourceId;
+            final String targetId = PatientInputNormalizer.normalizeFiscalCode(candidate.fiscalCode);
+            final bool targetIsTemporary = isTemporaryPatientKey(targetId);
+            final Map<String, String> sourceValues = _identitySourceFieldValues(patient);
+            final Map<String, String> targetValues = _identityTargetFieldValues(candidate);
+            final List<String> conflictFields = _identityConflictFields(
+              sourceValues: sourceValues,
+              targetValues: targetValues,
+            );
+            final Map<String, String> selectedValues = <String, String>{
+              for (final String field in conflictFields)
+                if ((sourceValues[field] ?? '').trim().isNotEmpty)
+                  field: sourceValues[field]!.trim(),
+            };
+            await _identityResolutionRequestsRepository.createUserConfirmedRequest(
+              action: targetIsTemporary
+                  ? IdentityResolutionRequestAction.mergeSameNamePatient
+                  : IdentityResolutionRequestAction.chooseCorrectFiscalCode,
+              sourceFiscalCode: sourceId,
+              targetFiscalCode: targetId,
+              sourcePatientId: sourceId,
+              targetPatientId: targetId,
+              selectedFiscalCode: targetIsTemporary ? null : targetId,
+              normalizedName: patient.fullName,
+              candidateFiscalCodes: targetIsTemporary ? const <String>[] : <String>[targetId],
+              conflictFields: conflictFields,
+              sourceFieldValues: sourceValues,
+              targetFieldValues: targetValues,
+              selectedFieldValues: selectedValues,
+              reason: targetIsTemporary
+                  ? 'frontend_contextual_same_name_user_confirmed'
+                  : 'frontend_contextual_tmp_cf_user_confirmed',
+            );
+            if (dialogContext.mounted) {
+              Navigator.of(dialogContext).pop();
+            }
+            if (!mounted) return;
+            setState(() {
+              _message = 'Richiesta risoluzione identità creata. Il backend completerà la correzione.';
+            });
+          } catch (e) {
+            if (dialogContext.mounted) {
+              setLocalState(() {
+                busy = false;
+                localError = 'Errore creazione richiesta identità: $e';
+              });
+            }
+          }
+        }
+
+        return StatefulBuilder(
+          builder: (context, setLocalState) => AlertDialog(
+            backgroundColor: AppColors.panel,
+            title: const Text('Risolvi identità assistito', style: TextStyle(color: Colors.white)),
+            content: SizedBox(
+              width: 620,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Assistito temporaneo: ${visiblePatientTitle(fullName: patient.fullName, patientKey: patient.fiscalCode)}',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Scegli un candidato solo se sei certo che rappresenti lo stesso assistito. Il frontend creerà una richiesta: il merge resta backend-owned.',
+                    style: TextStyle(color: Colors.white70, height: 1.35),
+                  ),
+                  const SizedBox(height: 16),
+                  if (identityContext.candidates.isEmpty)
+                    const Text(
+                      'Nessun candidato trovato dalla segnaletica dashboard.',
+                      style: TextStyle(color: Colors.white70),
+                    )
+                  else
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 360),
+                      child: SingleChildScrollView(
+                        child: Column(
+                          children: identityContext.candidates.map((PatientDashboardIndex candidate) {
+                            final String candidateId = PatientInputNormalizer.normalizeFiscalCode(candidate.fiscalCode);
+                            final bool targetIsTemporary = isTemporaryPatientKey(candidateId);
+                            return Container(
+                              width: double.infinity,
+                              margin: const EdgeInsets.only(bottom: 10),
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: AppColors.panelSoft,
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: targetIsTemporary ? AppColors.amber : AppColors.green),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    visiblePatientTitle(
+                                      fullName: candidate.fullName,
+                                      patientKey: candidateId,
+                                    ),
+                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      _pill(targetIsTemporary ? 'TMP/no CF' : 'CF reale', targetIsTemporary ? AppColors.amber : AppColors.green),
+                                      _pill(visiblePatientFiscalCode(candidateId), AppColors.yellow),
+                                      if (candidate.hasRecipes) _pill('Ricette ${candidate.recipeCount}', AppColors.green),
+                                      if (candidate.hasDebt) _pill('Debiti', AppColors.wine),
+                                      if (candidate.hasAdvance) _pill('Anticipi', AppColors.amber),
+                                      if (candidate.hasBooking) _pill('Prenotazioni', AppColors.yellow),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: FilledButton.icon(
+                                      onPressed: busy ? null : () => submitMergeRequest(setLocalState, candidate),
+                                      icon: const Icon(Icons.merge_type_rounded),
+                                      label: const Text('Sono lo stesso assistito'),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ),
+                  if (localError.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(localError, style: const TextStyle(color: AppColors.red, fontWeight: FontWeight.w700)),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: busy ? null : () => Navigator.of(dialogContext).pop(),
+                child: const Text('Lascia separato / annulla', style: TextStyle(color: Colors.white70)),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildIdentityResolutionBanner(_PatientDetailData data) {
+    final _PatientIdentityResolutionContext? identityContext = data.identityContext;
+    if (identityContext == null) {
+      return const SizedBox.shrink();
+    }
+    final bool hasCandidates = identityContext.candidates.isNotEmpty;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.panel,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: hasCandidates ? AppColors.amber : Colors.white24),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.warning_amber_rounded, color: hasCandidates ? AppColors.amber : Colors.white70),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Identità assistito da verificare',
+                      style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      hasCandidates
+                          ? 'Questo assistito è temporaneo e ci sono possibili candidati con stesso nome. Conferma solo se rappresentano lo stesso assistito.'
+                          : 'Questo assistito è temporaneo. Nessun candidato automatico trovato: puoi completare il CF dalla modifica assistito.',
+                      style: const TextStyle(color: Colors.white70, height: 1.35),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (hasCandidates) ...[
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              onPressed: () => _openIdentityResolutionDialog(data),
+              icon: const Icon(Icons.manage_search_rounded),
+              label: const Text('Risolvi identità assistito'),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   String _resolveDoctor({
@@ -1180,7 +1485,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                       fiscalCodeController,
                       'Codice fiscale',
                       helperText: temporaryKey
-                          ? 'Se inserisci un CF reale, il record TMP viene migrato in modo controllato insieme ai dati manuali collegati.'
+                          ? 'Se inserisci un CF reale, verrà creata una richiesta backend-owned: nessun merge diretto dal frontend.'
                           : 'Il codice fiscale resta visibile ma non può essere rinominato da questa schermata.',
                       readOnly: !temporaryKey,
                     ),
@@ -1266,6 +1571,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   _buildHeader(data),
+                                  if (data.identityContext != null) ...[
+                                    const SizedBox(height: 12),
+                                    _buildIdentityResolutionBanner(data),
+                                  ],
                                   if (_message.isNotEmpty) ...[
                                     const SizedBox(height: 12),
                                     Text(_message, style: const TextStyle(color: AppColors.green, fontWeight: FontWeight.w700)),
@@ -2903,6 +3212,7 @@ class _PatientDetailData {
   final String resolvedDoctorName;
   final TherapeuticAdviceNote? therapeuticAdvice;
   final _PatientFamilyContext? familyContext;
+  final _PatientIdentityResolutionContext? identityContext;
 
   const _PatientDetailData({
     required this.patient,
@@ -2916,6 +3226,7 @@ class _PatientDetailData {
     required this.resolvedDoctorName,
     required this.therapeuticAdvice,
     required this.familyContext,
+    required this.identityContext,
   });
 
   static const Object _unset = Object();
@@ -2932,6 +3243,7 @@ class _PatientDetailData {
     String? resolvedDoctorName,
     Object? therapeuticAdvice = _unset,
     Object? familyContext = _unset,
+    Object? identityContext = _unset,
   }) {
     return _PatientDetailData(
       patient: identical(patient, _unset) ? this.patient : patient as Patient?,
@@ -2949,6 +3261,9 @@ class _PatientDetailData {
       familyContext: identical(familyContext, _unset)
           ? this.familyContext
           : familyContext as _PatientFamilyContext?,
+      identityContext: identical(identityContext, _unset)
+          ? this.identityContext
+          : identityContext as _PatientIdentityResolutionContext?,
     );
   }
 
@@ -3032,6 +3347,18 @@ class _PatientDetailData {
   }
 }
 
+
+class _PatientIdentityResolutionContext {
+  final String sourceId;
+  final String sourceFullName;
+  final List<PatientDashboardIndex> candidates;
+
+  const _PatientIdentityResolutionContext({
+    required this.sourceId,
+    required this.sourceFullName,
+    required this.candidates,
+  });
+}
 
 class _PatientFamilyContext {
   final FamilyGroup family;
