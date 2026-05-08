@@ -372,7 +372,6 @@ function identityResolutionRequestsBoundedInt_(value, fallback, minValue, maxVal
   return parsed;
 }
 
-
 function dryRunPatientIdentityMergeRequests() {
   return processPatientIdentityMergeRequests({
     dryRun: true,
@@ -427,6 +426,7 @@ function processPatientIdentityMergeRequests(options) {
     conflictFree: 0,
     conflictsDetected: 0,
     userChoicesRequired: 0,
+    userChoicesSatisfied: 0,
     writesPlanned: 0,
     writesAttempted: 0,
     writesSucceeded: 0,
@@ -474,15 +474,31 @@ function processPatientIdentityMergeRequests(options) {
       continue;
     }
 
-    if (!sourceId || !selectedCf || !identityResolutionRequestsIsSafeRealCf_(selectedCf)) {
+    if (!sourceId || !targetId) {
       result.requestsProcessed++;
       result.invalidRequests++;
       identityResolutionRequestsAddSample_(result.samples.rejected, {
         requestId: requestId,
         action: action,
         sourceId: sourceId,
+        targetId: targetId,
         selectedFiscalCode: selectedCf,
-        reason: 'missing_source_or_invalid_selected_cf'
+        reason: 'missing_source_or_target'
+      }, maxSamples);
+      continue;
+    }
+
+    if (action !== 'merge_same_name_patient' &&
+        (!selectedCf || !identityResolutionRequestsIsSafeRealCf_(selectedCf))) {
+      result.requestsProcessed++;
+      result.invalidRequests++;
+      identityResolutionRequestsAddSample_(result.samples.rejected, {
+        requestId: requestId,
+        action: action,
+        sourceId: sourceId,
+        targetId: targetId,
+        selectedFiscalCode: selectedCf,
+        reason: 'invalid_selected_cf_for_cf_based_merge'
       }, maxSamples);
       continue;
     }
@@ -509,15 +525,24 @@ function processPatientIdentityMergeRequests(options) {
       result.targetMissing++;
     }
 
-    var conflicts = targetExists
+    var rawConflicts = targetExists
       ? identityMergeDetectPatientFieldConflicts_(sourcePatient, targetPatient)
       : [];
-    var requiresUserChoices = conflicts.length > 0;
+    var unresolvedConflicts = identityMergeUnresolvedConflictFields_(rawConflicts, request);
+    var resolvedConflicts = rawConflicts.filter(function (field) {
+      return unresolvedConflicts.indexOf(field) < 0;
+    });
+    var requiresUserChoices = unresolvedConflicts.length > 0;
 
     result.requestsProcessed++;
     result.plannedMergeRequests++;
-    if (requiresUserChoices) {
+    if (rawConflicts.length > 0) {
       result.conflictsDetected++;
+    }
+    if (resolvedConflicts.length > 0) {
+      result.userChoicesSatisfied++;
+    }
+    if (requiresUserChoices) {
       result.userChoicesRequired++;
       identityResolutionRequestsAddSample_(result.samples.conflicts, {
         requestId: requestId,
@@ -525,7 +550,8 @@ function processPatientIdentityMergeRequests(options) {
         sourceId: sourceId,
         targetId: targetId,
         selectedFiscalCode: selectedCf,
-        conflictFields: conflicts,
+        conflictFields: unresolvedConflicts,
+        resolvedConflictFields: resolvedConflicts,
         futureAction: 'frontend_user_selects_field_values_then_backend_apply'
       }, maxSamples);
     } else {
@@ -540,7 +566,9 @@ function processPatientIdentityMergeRequests(options) {
       selectedFiscalCode: selectedCf,
       targetExists: targetExists,
       requiresUserChoices: requiresUserChoices,
-      conflictFields: conflicts,
+      conflictFields: unresolvedConflicts,
+      resolvedConflictFields: resolvedConflicts,
+      targetIdentityType: identityMergeRequestTargetIdentityType_(action, targetId, selectedCf),
       futureAction: 'backend_merge_executor_apply_not_in_this_pr'
     }, maxSamples);
   }
@@ -623,6 +651,13 @@ function identityMergeRequestTargetId_(request, selectedCf) {
     '');
 }
 
+function identityMergeRequestTargetIdentityType_(action, targetId, selectedCf) {
+  if (action === 'merge_same_name_patient') {
+    return identityResolutionRequestsIsSafeRealCf_(targetId) ? 'canonical_cf' : 'temporary_or_no_cf';
+  }
+  return identityResolutionRequestsIsSafeRealCf_(selectedCf || targetId) ? 'canonical_cf' : 'invalid';
+}
+
 function identityResolutionRequestsGetPatientOrNull_(cfg, documentId) {
   var normalizedId = normalizeCf_(documentId);
   if (!normalizedId) return null;
@@ -665,6 +700,37 @@ function identityMergeDetectPatientFieldConflicts_(sourcePatient, targetPatient)
     }
   }
   return conflicts;
+}
+
+function identityMergeUnresolvedConflictFields_(conflictFields, request) {
+  var selectedFieldValues = identityMergeReadPlainObject_(request && request.selectedFieldValues);
+  var confirmed = request && request.userFieldChoicesConfirmed === true;
+  if (!confirmed || !selectedFieldValues) {
+    return conflictFields.slice();
+  }
+  return conflictFields.filter(function (field) {
+    if (!identityMergeIsSafeMergeChoiceField_(field)) return true;
+    return !identityMergeHasOwnNonEmptyValue_(selectedFieldValues, field);
+  });
+}
+
+function identityMergeReadPlainObject_(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value;
+}
+
+function identityMergeHasOwnNonEmptyValue_(object, field) {
+  if (!object || !Object.prototype.hasOwnProperty.call(object, field)) return false;
+  return identityMergeComparableString_(object[field]) !== '';
+}
+
+function identityMergeIsSafeMergeChoiceField_(field) {
+  return field === 'fullName' ||
+    field === 'alias' ||
+    field === 'city' ||
+    field === 'exemptionCode' ||
+    field === 'doctorName' ||
+    field === 'doctorFullName';
 }
 
 function identityMergeComparableString_(value) {
