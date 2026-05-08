@@ -17,6 +17,10 @@ class IdentityResolutionRequestsRepository {
     String? normalizedName,
     String? reason,
     List<String> candidateFiscalCodes = const <String>[],
+    List<String> conflictFields = const <String>[],
+    Map<String, String> selectedFieldValues = const <String, String>{},
+    Map<String, String> sourceFieldValues = const <String, String>{},
+    Map<String, String> targetFieldValues = const <String, String>{},
   }) async {
     final String normalizedTarget =
         PatientInputNormalizer.normalizeFiscalCode(targetFiscalCode);
@@ -30,6 +34,18 @@ class IdentityResolutionRequestsRepository {
         .toSet()
         .toList()
       ..sort();
+    final List<String> normalizedConflictFields = conflictFields
+        .map((String item) => item.trim())
+        .where((String item) => item.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    final Map<String, String> cleanSelectedFieldValues =
+        _cleanStringMap(selectedFieldValues);
+    final Map<String, String> cleanSourceFieldValues =
+        _cleanStringMap(sourceFieldValues);
+    final Map<String, String> cleanTargetFieldValues =
+        _cleanStringMap(targetFieldValues);
 
     if (normalizedTarget.isEmpty && normalizedSelected.isEmpty) {
       throw const IdentityResolutionRequestException(
@@ -57,12 +73,21 @@ class IdentityResolutionRequestsRepository {
       if ((normalizedName ?? '').trim().isNotEmpty)
         'normalizedName': normalizedName!.trim().toUpperCase(),
       if (normalizedCandidates.isNotEmpty) 'candidateFiscalCodes': normalizedCandidates,
+      if (normalizedConflictFields.isNotEmpty) 'conflictFields': normalizedConflictFields,
+      if (cleanSelectedFieldValues.isNotEmpty)
+        'selectedFieldValues': cleanSelectedFieldValues,
+      if (cleanSourceFieldValues.isNotEmpty)
+        'sourceFieldValues': cleanSourceFieldValues,
+      if (cleanTargetFieldValues.isNotEmpty)
+        'targetFieldValues': cleanTargetFieldValues,
+      if (cleanSelectedFieldValues.isNotEmpty)
+        'userFieldChoicesConfirmed': true,
       'reason': (reason ?? action.defaultReason).trim(),
       'createdBy': 'frontend_user_confirmed',
       'createdAt': now.toIso8601String(),
       'updatedAt': now.toIso8601String(),
       'userConfirmedAt': now.toIso8601String(),
-      'frontendContractVersion': 1,
+      'frontendContractVersion': 2,
     };
 
     await datasource.setDocument(
@@ -71,6 +96,17 @@ class IdentityResolutionRequestsRepository {
       data: data,
     );
     return requestId;
+  }
+
+  Map<String, String> _cleanStringMap(Map<String, String> source) {
+    final Map<String, String> result = <String, String>{};
+    for (final MapEntry<String, String> entry in source.entries) {
+      final String key = entry.key.trim();
+      final String value = entry.value.trim();
+      if (key.isEmpty || value.isEmpty) continue;
+      result[key] = value;
+    }
+    return result;
   }
 
   String _buildRequestId(

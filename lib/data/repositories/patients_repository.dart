@@ -98,6 +98,25 @@ class PatientsRepository {
           'Il codice fiscale corretto deve essere reale, non TMP.',
         );
       }
+      final Map<String, dynamic>? targetPatientMap = await datasource.getDocument(
+        collectionPath: AppCollections.patients,
+        documentId: normalizedFiscalCode,
+      );
+      final Map<String, String> sourceFieldValues = <String, String>{
+        'fullName': fullName,
+        if (normalizedAlias != null) 'alias': normalizedAlias,
+      };
+      final Map<String, String> targetFieldValues = _extractTargetFieldValues(targetPatientMap);
+      final List<String> conflictFields = _detectSubmittedFieldConflicts(
+        sourceValues: sourceFieldValues,
+        targetValues: targetFieldValues,
+      );
+      final Map<String, String> selectedFieldValues = <String, String>{
+        for (final String field in conflictFields)
+          if ((sourceFieldValues[field] ?? '').trim().isNotEmpty)
+            field: sourceFieldValues[field]!.trim(),
+      };
+
       final String requestId = await IdentityResolutionRequestsRepository(
         datasource: datasource,
       ).createUserConfirmedRequest(
@@ -105,10 +124,17 @@ class PatientsRepository {
         sourceFiscalCode: normalizedCurrentDocumentId,
         targetFiscalCode: normalizedFiscalCode,
         sourcePatientId: normalizedCurrentDocumentId,
+        targetPatientId: targetPatientMap == null ? null : normalizedFiscalCode,
         selectedFiscalCode: normalizedFiscalCode,
         normalizedName: fullName,
         candidateFiscalCodes: <String>[normalizedFiscalCode],
-        reason: 'frontend_contextual_tmp_cf_user_confirmed',
+        conflictFields: conflictFields,
+        sourceFieldValues: sourceFieldValues,
+        targetFieldValues: targetFieldValues,
+        selectedFieldValues: selectedFieldValues,
+        reason: conflictFields.isEmpty
+            ? 'frontend_contextual_tmp_cf_user_confirmed'
+            : 'frontend_contextual_tmp_cf_user_confirmed_with_field_choices',
       );
       await _applyInPlacePatientProfileUpdate(
         documentId: normalizedCurrentDocumentId,
@@ -345,6 +371,39 @@ class PatientsRepository {
   String? _normalizeAlias(String? value) {
     final String normalized = value?.trim() ?? '';
     return normalized.isEmpty ? null : normalized;
+  }
+
+  Map<String, String> _extractTargetFieldValues(Map<String, dynamic>? targetPatientMap) {
+    if (targetPatientMap == null) return const <String, String>{};
+    return <String, String>{
+      for (final String field in <String>['fullName', 'alias'])
+        if (_readStringField(targetPatientMap, field).isNotEmpty)
+          field: _readStringField(targetPatientMap, field),
+    };
+  }
+
+  List<String> _detectSubmittedFieldConflicts({
+    required Map<String, String> sourceValues,
+    required Map<String, String> targetValues,
+  }) {
+    final List<String> conflicts = <String>[];
+    for (final String field in <String>['fullName', 'alias']) {
+      final String sourceValue = _comparableString(sourceValues[field]);
+      final String targetValue = _comparableString(targetValues[field]);
+      if (sourceValue.isNotEmpty && targetValue.isNotEmpty && sourceValue != targetValue) {
+        conflicts.add(field);
+      }
+    }
+    return conflicts;
+  }
+
+  String _readStringField(Map<String, dynamic> map, String field) {
+    final dynamic value = map[field];
+    return value == null ? '' : value.toString().trim();
+  }
+
+  String _comparableString(String? value) {
+    return (value ?? '').trim().replaceAll(RegExp(r'\s+'), ' ').toUpperCase();
   }
 
   Map<String, dynamic> _cleanMapForWrite(Map<String, dynamic> source) {
