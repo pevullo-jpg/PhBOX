@@ -92,12 +92,10 @@ class PatientsRepository {
         isTemporaryPatientKey(normalizedCurrentDocumentId);
 
     if (isTemporaryKey && normalizedFiscalCode.isNotEmpty) {
-      return migrateTemporaryPatientToFiscalCode(
-        temporaryDocumentId: normalizedCurrentDocumentId,
-        name: normalizedName,
-        surname: normalizedSurname,
-        fiscalCode: normalizedFiscalCode,
-        alias: normalizedAlias,
+      throw const PatientProfileUpdateException(
+        'La migrazione diretta da TMP a codice fiscale reale è stata disabilitata. '
+        'L’app deve proporre la correzione nel contesto, raccogliere conferma utente '
+        'e creare una richiesta backend-owned in identity_resolution_requests.',
       );
     }
 
@@ -136,110 +134,9 @@ class PatientsRepository {
     required String fiscalCode,
     String? alias,
   }) async {
-    final String normalizedTemporaryDocumentId =
-        PatientInputNormalizer.normalizeFiscalCode(temporaryDocumentId);
-    final String normalizedFiscalCode =
-        PatientInputNormalizer.normalizeFiscalCode(fiscalCode);
-    final String fullName = PatientInputNormalizer.buildFullName(
-      name: name,
-      surname: surname,
-    );
-    final String? normalizedAlias = _normalizeAlias(alias);
-
-    if (!isTemporaryPatientKey(normalizedTemporaryDocumentId)) {
-      throw const PatientProfileUpdateException(
-        'La migrazione verso codice fiscale reale è consentita solo per pazienti TMP.',
-      );
-    }
-    if (normalizedFiscalCode.isEmpty) {
-      throw const PatientProfileUpdateException(
-        'Inserisci un codice fiscale reale per completare il paziente temporaneo.',
-      );
-    }
-    if (fullName.isEmpty) {
-      throw const PatientProfileUpdateException(
-        'Nome e cognome non possono essere entrambi vuoti.',
-      );
-    }
-
-    final Map<String, dynamic>? currentPatientMap = await datasource.getDocument(
-      collectionPath: AppCollections.patients,
-      documentId: normalizedTemporaryDocumentId,
-    );
-    if (currentPatientMap == null) {
-      throw const PatientProfileUpdateException('Assistito temporaneo non trovato.');
-    }
-
-    final Map<String, dynamic>? existingTargetPatient = await datasource.getDocument(
-      collectionPath: AppCollections.patients,
-      documentId: normalizedFiscalCode,
-    );
-    if (existingTargetPatient != null) {
-      throw PatientProfileUpdateException(
-        'Esiste già un assistito con codice fiscale $normalizedFiscalCode.',
-      );
-    }
-
-    final FirebaseFirestore firestore = _firebaseFirestoreOrThrow();
-    final WriteBatch batch = firestore.batch();
-    final DateTime now = DateTime.now();
-    final String isoNow = now.toIso8601String();
-
-    final DocumentReference<Map<String, dynamic>> oldPatientRef = firestore
-        .collection(AppCollections.patients)
-        .doc(normalizedTemporaryDocumentId);
-    final DocumentReference<Map<String, dynamic>> newPatientRef = firestore
-        .collection(AppCollections.patients)
-        .doc(normalizedFiscalCode);
-
-    final Map<String, dynamic> nextPatientMap =
-        _cleanMapForWrite(currentPatientMap);
-    nextPatientMap['fiscalCode'] = normalizedFiscalCode;
-    nextPatientMap['fullName'] = fullName;
-    nextPatientMap['alias'] = normalizedAlias;
-    nextPatientMap['updatedAt'] = isoNow;
-    nextPatientMap['createdAt'] =
-        nextPatientMap['createdAt'] ?? currentPatientMap['createdAt'] ?? isoNow;
-    batch.set(newPatientRef, nextPatientMap);
-
-    await _queueManualSubcollectionMigration(
-      batch: batch,
-      oldPatientRef: oldPatientRef,
-      newPatientRef: newPatientRef,
-      oldPatientDocumentId: normalizedTemporaryDocumentId,
-      newPatientDocumentId: normalizedFiscalCode,
-      fullName: fullName,
-      isoNow: isoNow,
-    );
-    await _queueDoctorLinkSync(
-      batch: batch,
-      oldPatientDocumentId: normalizedTemporaryDocumentId,
-      newPatientDocumentId: normalizedFiscalCode,
-      fullName: fullName,
-      isoNow: isoNow,
-      migrationMode: true,
-    );
-    await _queueTherapeuticAdviceMigration(
-      batch: batch,
-      oldPatientDocumentId: normalizedTemporaryDocumentId,
-      newPatientDocumentId: normalizedFiscalCode,
-      isoNow: isoNow,
-    );
-    await _queueFamilyMembershipRewrite(
-      batch: batch,
-      oldPatientDocumentId: normalizedTemporaryDocumentId,
-      newPatientDocumentId: normalizedFiscalCode,
-      isoNow: isoNow,
-    );
-
-    batch.delete(oldPatientRef);
-    await batch.commit();
-
-    return PatientProfileUpdateResult(
-      effectiveDocumentId: normalizedFiscalCode,
-      fiscalCode: normalizedFiscalCode,
-      fullName: fullName,
-      migratedFromTemporaryKey: true,
+    throw const PatientProfileUpdateException(
+      'Migrazione frontend TMP→CF disabilitata: le correzioni identità devono essere '
+      'utente-confermate e backend-owned.',
     );
   }
 
@@ -295,26 +192,9 @@ class PatientsRepository {
     required String fullName,
     required String isoNow,
   }) async {
-    for (final String subcollection in _manualSubcollections) {
-      final List<Map<String, dynamic>> items = await datasource.getSubCollection(
-        collectionPath: AppCollections.patients,
-        documentId: oldPatientDocumentId,
-        subcollectionPath: subcollection,
-      );
-      for (final Map<String, dynamic> item in items) {
-        final String itemId = _readId(item);
-        if (itemId.isEmpty) continue;
-        final Map<String, dynamic> nextMap = _cleanMapForWrite(item);
-        nextMap['patientFiscalCode'] = newPatientDocumentId;
-        nextMap['patientName'] = fullName;
-        if (nextMap.containsKey('updatedAt') ||
-            subcollection == AppCollections.advances) {
-          nextMap['updatedAt'] = isoNow;
-        }
-        batch.set(newPatientRef.collection(subcollection).doc(itemId), nextMap);
-        batch.delete(oldPatientRef.collection(subcollection).doc(itemId));
-      }
-    }
+    throw UnsupportedError(
+      'Migrazione subcollection frontend disabilitata per contratto identity backend-owned.',
+    );
   }
 
   Future<void> _queueDoctorLinkSync({
@@ -348,26 +228,9 @@ class PatientsRepository {
         .toSet();
 
     if (migrationMode) {
-      for (final String targetId in oldLinkIds
-          .map((String linkId) => _resolveDoctorLinkTargetId(
-                currentLinkId: linkId,
-                oldPatientDocumentId: normalizedOld,
-                newPatientDocumentId: normalizedNew,
-              ))
-          .where((String id) => id.isNotEmpty)) {
-        if (oldLinkIds.contains(targetId)) {
-          continue;
-        }
-        final Map<String, dynamic>? conflict = await datasource.getDocument(
-          collectionPath: AppCollections.doctorPatientLinks,
-          documentId: targetId,
-        );
-        if (conflict != null) {
-          throw PatientProfileUpdateException(
-            'Esiste già un collegamento medico associato al codice fiscale $normalizedNew.',
-          );
-        }
-      }
+      throw UnsupportedError(
+        'Migrazione doctor links frontend disabilitata per contratto identity backend-owned.',
+      );
     }
 
     for (final Map<String, dynamic> link in links) {
@@ -394,11 +257,6 @@ class PatientsRepository {
           .collection(AppCollections.doctorPatientLinks)
           .doc(targetLinkId);
       batch.set(targetRef, nextMap);
-      if (migrationMode && targetLinkId != currentLinkId) {
-        batch.delete(
-          firestore.collection(AppCollections.doctorPatientLinks).doc(currentLinkId),
-        );
-      }
     }
   }
 
@@ -408,36 +266,9 @@ class PatientsRepository {
     required String newPatientDocumentId,
     required String isoNow,
   }) async {
-    final Map<String, dynamic>? therapeuticAdvice = await datasource.getDocument(
-      collectionPath: AppCollections.patientTherapeuticAdvice,
-      documentId: oldPatientDocumentId,
+    throw UnsupportedError(
+      'Migrazione therapeutic advice frontend disabilitata per contratto identity backend-owned.',
     );
-    if (therapeuticAdvice == null) {
-      return;
-    }
-
-    final Map<String, dynamic>? targetAdvice = await datasource.getDocument(
-      collectionPath: AppCollections.patientTherapeuticAdvice,
-      documentId: newPatientDocumentId,
-    );
-    if (targetAdvice != null) {
-      throw PatientProfileUpdateException(
-        'Esistono già note terapeutiche associate al codice fiscale $newPatientDocumentId.',
-      );
-    }
-
-    final FirebaseFirestore firestore = _firebaseFirestoreOrThrow();
-    final DocumentReference<Map<String, dynamic>> oldAdviceRef = firestore
-        .collection(AppCollections.patientTherapeuticAdvice)
-        .doc(oldPatientDocumentId);
-    final DocumentReference<Map<String, dynamic>> newAdviceRef = firestore
-        .collection(AppCollections.patientTherapeuticAdvice)
-        .doc(newPatientDocumentId);
-    final Map<String, dynamic> nextAdvice = _cleanMapForWrite(therapeuticAdvice);
-    nextAdvice['patientFiscalCode'] = newPatientDocumentId;
-    nextAdvice['updatedAt'] = isoNow;
-    batch.set(newAdviceRef, nextAdvice);
-    batch.delete(oldAdviceRef);
   }
 
   Future<void> _queueFamilyMembershipRewrite({
@@ -446,33 +277,9 @@ class PatientsRepository {
     required String newPatientDocumentId,
     required String isoNow,
   }) async {
-    final FirebaseFirestore firestore = _firebaseFirestoreOrThrow();
-    final List<Map<String, dynamic>> families = await datasource.getCollectionWhereArrayContains(
-      collectionPath: AppCollections.families,
-      field: 'memberFiscalCodes',
-      value: oldPatientDocumentId,
+    throw UnsupportedError(
+      'Migrazione famiglie frontend disabilitata per contratto identity backend-owned.',
     );
-    for (final Map<String, dynamic> family in families) {
-      final List<String> members = _readStringList(family['memberFiscalCodes']);
-      final String familyId = _readId(family);
-      if (familyId.isEmpty) {
-        continue;
-      }
-      final List<String> nextMembers = members
-          .map((String item) => item == oldPatientDocumentId ? newPatientDocumentId : item)
-          .where((String item) => item.isNotEmpty)
-          .toSet()
-          .toList()
-        ..sort();
-      batch.set(
-        firestore.collection(AppCollections.families).doc(familyId),
-        <String, dynamic>{
-          'memberFiscalCodes': nextMembers,
-          'updatedAt': isoNow,
-        },
-        SetOptions(merge: true),
-      );
-    }
   }
 
   Future<Patient?> getPatientByFiscalCode(String fiscalCode) async {
@@ -526,17 +333,6 @@ class PatientsRepository {
     return id.toString().trim();
   }
 
-  List<String> _readStringList(dynamic value) {
-    if (value is List) {
-      return value
-          .map((dynamic item) =>
-              PatientInputNormalizer.normalizeFiscalCode(item.toString()))
-          .where((String item) => item.isNotEmpty)
-          .toList();
-    }
-    return const <String>[];
-  }
-
   String _resolveDoctorLinkTargetId({
     required String currentLinkId,
     required String oldPatientDocumentId,
@@ -553,12 +349,6 @@ class PatientsRepository {
     }
     return normalizedCurrentLinkId;
   }
-
-  static const List<String> _manualSubcollections = <String>[
-    AppCollections.advances,
-    AppCollections.bookings,
-    AppCollections.debts,
-  ];
 }
 
 class PatientProfileUpdateResult {
