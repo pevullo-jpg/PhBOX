@@ -54,6 +54,8 @@ function processPatientIdentityResolutionRequests(options) {
     maxWrites: maxWrites,
     maxSamples: maxSamples,
     requestsSeen: requests.length,
+    pendingCanonicalIndexSeen: pendingCanonicalIndexRequests.length,
+    pendingCanonicalIndexPossiblyTruncated: pendingCanonicalIndexPossiblyTruncated,
     requestsProcessed: 0,
     plannedCreates: 0,
     writesPlanned: 0,
@@ -426,6 +428,10 @@ function processPatientIdentityMergeRequests(options) {
     return blocked;
   }
 
+  var pendingCanonicalIndexLimit = 500;
+  var pendingCanonicalIndexRequests = listPendingBackendMergeIdentityResolutionRequests_(cfg, pendingCanonicalIndexLimit);
+  var pendingCanonicalIndexPossiblyTruncated = pendingCanonicalIndexRequests.length >= pendingCanonicalIndexLimit;
+  var pendingCanonicalTargetBySource = identityMergeBuildPendingCanonicalTargetBySource_(pendingCanonicalIndexRequests);
   var requests = listPendingBackendMergeIdentityResolutionRequests_(cfg, maxRequests);
   var seenMergeKeys = {};
   var result = {
@@ -439,6 +445,8 @@ function processPatientIdentityMergeRequests(options) {
     maxRequests: maxRequests,
     maxSamples: maxSamples,
     requestsSeen: requests.length,
+    pendingCanonicalIndexSeen: pendingCanonicalIndexRequests.length,
+    pendingCanonicalIndexPossiblyTruncated: pendingCanonicalIndexPossiblyTruncated,
     requestsProcessed: 0,
     plannedMergeRequests: 0,
     appliedMergeRequests: 0,
@@ -454,6 +462,9 @@ function processPatientIdentityMergeRequests(options) {
     skippedUnresolvedConflicts: 0,
     skippedDuplicateRequests: 0,
     skippedConcurrentRequests: 0,
+    deferredTargetPendingCanonical: 0,
+    deferredTargetPendingCanonicalIndexTruncated: 0,
+    redirectedMergedTargets: 0,
     writesPlanned: 0,
     writesAttempted: 0,
     writesSucceeded: 0,
@@ -473,7 +484,9 @@ function processPatientIdentityMergeRequests(options) {
       unsupported: [],
       missing: [],
       duplicates: [],
-      concurrent: []
+      concurrent: [],
+      deferred: [],
+      redirected: []
     }
   };
 
@@ -549,6 +562,29 @@ function processPatientIdentityMergeRequests(options) {
       continue;
     }
 
+    var pendingCanonicalTargetId = pendingCanonicalTargetBySource[targetId] || '';
+    var targetIsCanonicalCf = identityResolutionRequestsIsSafeRealCf_(targetId);
+    if (!targetIsCanonicalCf && (pendingCanonicalTargetId || pendingCanonicalIndexPossiblyTruncated)) {
+      result.requestsProcessed++;
+      result.deferredTargetPendingCanonical++;
+      if (!pendingCanonicalTargetId && pendingCanonicalIndexPossiblyTruncated) {
+        result.deferredTargetPendingCanonicalIndexTruncated++;
+      }
+      identityResolutionRequestsAddSample_(result.samples.deferred, {
+        requestId: requestId,
+        action: action,
+        sourceId: sourceId,
+        targetId: targetId,
+        pendingCanonicalTargetId: pendingCanonicalTargetId,
+        pendingCanonicalIndexPossiblyTruncated: pendingCanonicalIndexPossiblyTruncated,
+        reason: pendingCanonicalTargetId
+            ? 'target_tmp_has_pending_canonical_merge'
+            : 'pending_canonical_index_truncated_fail_closed',
+        futureAction: 'run_after_target_tmp_canonical_merge_applies'
+      }, maxSamples);
+      continue;
+    }
+
     var targetPatient = identityResolutionRequestsGetPatientOrNull_(cfg, targetId);
     var targetExists = !!targetPatient;
     if (targetExists) {
@@ -568,6 +604,38 @@ function processPatientIdentityMergeRequests(options) {
         reason: 'target_patient_missing'
       }, maxSamples);
       continue;
+    }
+
+    var originalTargetId = targetId;
+    var redirectedTargetId = identityMergeReadMergedIntoTargetId_(targetPatient);
+    if (!identityResolutionRequestsIsSafeRealCf_(targetId) && redirectedTargetId) {
+      var redirectedTargetPatient = identityResolutionRequestsGetPatientOrNull_(cfg, redirectedTargetId);
+      if (!redirectedTargetPatient) {
+        result.requestsProcessed++;
+        result.targetMissing++;
+        identityResolutionRequestsAddSample_(result.samples.missing, {
+          requestId: requestId,
+          action: action,
+          sourceId: sourceId,
+          targetId: targetId,
+          redirectedTargetId: redirectedTargetId,
+          selectedFiscalCode: selectedCf,
+          reason: 'redirected_target_patient_missing'
+        }, maxSamples);
+        continue;
+      }
+      targetId = redirectedTargetId;
+      targetPatient = redirectedTargetPatient;
+      targetExists = true;
+      result.redirectedMergedTargets++;
+      identityResolutionRequestsAddSample_(result.samples.redirected, {
+        requestId: requestId,
+        action: action,
+        sourceId: sourceId,
+        originalTargetId: originalTargetId,
+        effectiveTargetId: targetId,
+        reason: 'target_tmp_already_merged_into_canonical'
+      }, maxSamples);
     }
 
     var rawConflicts = identityMergeDetectPatientFieldConflicts_(sourcePatient, targetPatient);
@@ -594,6 +662,7 @@ function processPatientIdentityMergeRequests(options) {
         action: action,
         sourceId: sourceId,
         targetId: targetId,
+        originalTargetId: originalTargetId,
         selectedFiscalCode: selectedCf,
         conflictFields: unresolvedConflicts,
         resolvedConflictFields: resolvedConflicts,
@@ -604,6 +673,7 @@ function processPatientIdentityMergeRequests(options) {
         action: action,
         sourceId: sourceId,
         targetId: targetId,
+        originalTargetId: originalTargetId,
         selectedFiscalCode: selectedCf,
         targetExists: targetExists,
         requiresUserChoices: true,
@@ -713,6 +783,7 @@ function processPatientIdentityMergeRequests(options) {
         action: action,
         sourceId: sourceId,
         targetId: targetId,
+        originalTargetId: originalTargetId,
         selectedFiscalCode: selectedCf,
         targetExists: targetExists,
         requiresUserChoices: false,
@@ -737,6 +808,7 @@ function processPatientIdentityMergeRequests(options) {
         action: action,
         sourceId: sourceId,
         targetId: targetId,
+        originalTargetId: originalTargetId,
         selectedFiscalCode: selectedCf,
         writesSucceeded: writes.length,
         sourceDeleted: false,
@@ -808,6 +880,23 @@ function listPendingBackendMergeIdentityResolutionRequests_(cfg, limit) {
   });
 }
 
+function identityMergeBuildPendingCanonicalTargetBySource_(requests) {
+  var pendingBySource = {};
+  if (!Array.isArray(requests)) return pendingBySource;
+  for (var i = 0; i < requests.length; i++) {
+    var request = requests[i] || {};
+    var action = String(request.action || '').trim();
+    if (!identityMergeRequestIsSupportedAction_(action)) continue;
+    var sourceId = identityMergeRequestSourceId_(request);
+    var selectedCf = identityMergeRequestSelectedFiscalCode_(request);
+    var targetId = identityMergeRequestTargetId_(request, selectedCf);
+    var targetType = identityMergeRequestTargetIdentityType_(action, targetId, selectedCf);
+    if (!sourceId || targetType !== 'canonical_cf') continue;
+    pendingBySource[sourceId] = identityResolutionRequestsIsSafeRealCf_(targetId) ? targetId : selectedCf;
+  }
+  return pendingBySource;
+}
+
 function identityMergeRequestIsSupportedAction_(action) {
   return action === 'choose_correct_fiscal_code' ||
     action === 'merge_same_name_patient' ||
@@ -866,6 +955,13 @@ function identityResolutionRequestsGetPatientOrNull_(cfg, documentId) {
   data.documentName = parsed.name || '';
   data.documentId = extractFirestoreDocumentId_(parsed.name || '');
   return data;
+}
+
+function identityMergeReadMergedIntoTargetId_(patient) {
+  var status = String(patient && patient.identityMergeStatus || '').trim();
+  var mergedInto = normalizeCf_(patient && patient.identityMergedInto || '');
+  if (status !== 'merged_into') return '';
+  return identityResolutionRequestsIsSafeRealCf_(mergedInto) ? mergedInto : '';
 }
 
 function identityMergeDetectPatientFieldConflicts_(sourcePatient, targetPatient) {
