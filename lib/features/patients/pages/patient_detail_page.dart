@@ -20,6 +20,7 @@ import '../../../data/models/doctor_patient_link.dart';
 import '../../../data/models/drive_pdf_import.dart';
 import '../../../data/models/family_group.dart';
 import '../../../data/models/patient.dart';
+import '../../../data/models/patient_dashboard_index.dart';
 import '../../../data/models/prescription.dart';
 import '../../../data/models/therapeutic_advice_note.dart';
 import '../../../data/repositories/advances_repository.dart';
