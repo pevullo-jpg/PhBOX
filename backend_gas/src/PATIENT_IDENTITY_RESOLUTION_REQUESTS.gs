@@ -1086,3 +1086,733 @@ function identityMergeIsRequestPreconditionError_(error) {
 function identityMergeComparableString_(value) {
   return String(value == null ? '' : value).trim().replace(/\s+/g, ' ').toUpperCase();
 }
+
+function dryRunMaterializePatientIdentityMerges() {
+  return processMaterializePatientIdentityMerges({
+    dryRun: true,
+    maxWrites: 25,
+    maxSources: 10,
+    maxDocsPerSource: 50,
+    maxSamples: 30
+  });
+}
+
+function runMaterializePatientIdentityMergesBatch() {
+  return processMaterializePatientIdentityMerges({
+    dryRun: false,
+    applyToken: 'MATERIALIZE_PATIENT_IDENTITY_MERGES',
+    maxWrites: 25,
+    maxSources: 10,
+    maxDocsPerSource: 50,
+    maxSamples: 30
+  });
+}
+
+function processMaterializePatientIdentityMerges(options) {
+  options = options || {};
+  var cfg = getPhboxConfig_();
+  var startedAt = new Date().toISOString();
+  var dryRun = options.dryRun !== false;
+  var applyToken = String(options.applyToken || '').trim();
+  var maxWrites = identityResolutionRequestsBoundedInt_(options.maxWrites, 25, 1, 100);
+  var maxSources = identityResolutionRequestsBoundedInt_(options.maxSources, 10, 1, 25);
+  var maxDocsPerSource = identityResolutionRequestsBoundedInt_(options.maxDocsPerSource, 50, 1, 100);
+  var maxSamples = identityResolutionRequestsBoundedInt_(options.maxSamples, 30, 1, 100);
+  var nowIso = new Date().toISOString();
+
+  if (!dryRun && applyToken !== 'MATERIALIZE_PATIENT_IDENTITY_MERGES') {
+    var blocked = {
+      ok: false,
+      mode: 'materialize_identity_merges_apply_blocked',
+      source: 'patient_identity_materializer',
+      dryRun: false,
+      startedAt: startedAt,
+      checkedAt: new Date().toISOString(),
+      reason: 'blocked_missing_apply_token',
+      writesAttempted: 0,
+      writesSucceeded: 0,
+      firestoreWritesDelta: 0
+    };
+    logInfo_(cfg, 'processMaterializePatientIdentityMerges bloccato', blocked);
+    return blocked;
+  }
+
+  var sources = materializeListMergedSourcePatients_(cfg, maxSources);
+  var result = {
+    ok: true,
+    mode: dryRun ? 'materialize_identity_merges_dry_run' : 'materialize_identity_merges_apply',
+    source: 'patient_identity_materializer',
+    dryRun: dryRun,
+    startedAt: startedAt,
+    checkedAt: '',
+    maxWrites: maxWrites,
+    maxSources: maxSources,
+    maxDocsPerSource: maxDocsPerSource,
+    maxSamples: maxSamples,
+    sourcePatientsSeen: sources.length,
+    sourcePatientsProcessed: 0,
+    sourcePatientsMaterialized: 0,
+    sourcePatientsDeleted: 0,
+    sourcePatientsSkippedAlreadyMaterialized: 0,
+    invalidSources: 0,
+    targetMissing: 0,
+    targetInvalid: 0,
+    blockedConflicts: 0,
+    blockedTargetCollisions: 0,
+    blockedScanTruncated: 0,
+    documentsMoved: 0,
+    topLevelDocumentsPatched: 0,
+    familyGroupsPatched: 0,
+    dashboardIndexesPatched: 0,
+    dashboardIndexesDeleted: 0,
+    therapeuticAdviceMoved: 0,
+    doctorLinksMoved: 0,
+    writesPlanned: 0,
+    writesAttempted: 0,
+    writesSucceeded: 0,
+    firestoreWritesDelta: 0,
+    maxWritesReached: false,
+    maxSourcesReached: sources.length >= maxSources,
+    samples: {
+      planned: [],
+      applied: [],
+      skipped: [],
+      conflicts: [],
+      collisions: []
+    }
+  };
+
+  for (var i = 0; i < sources.length; i++) {
+    var sourcePatient = sources[i] || {};
+    var sourceId = normalizeCf_(sourcePatient.documentId || sourcePatient.fiscalCode || '');
+    var targetId = normalizeCf_(sourcePatient.identityMergedInto || sourcePatient.identityMaterializedInto || '');
+
+    if (!sourceId || !targetId) {
+      result.invalidSources++;
+      identityResolutionRequestsAddSample_(result.samples.skipped, {
+        sourceId: sourceId,
+        targetId: targetId,
+        reason: 'missing_source_or_target'
+      }, maxSamples);
+      continue;
+    }
+
+    if (String(sourcePatient.identityMaterializationStatus || '').trim() === 'materialized') {
+      result.sourcePatientsSkippedAlreadyMaterialized++;
+      continue;
+    }
+
+    if (!identityResolutionRequestsIsSafeRealCf_(targetId)) {
+      result.targetInvalid++;
+      identityResolutionRequestsAddSample_(result.samples.skipped, {
+        sourceId: sourceId,
+        targetId: targetId,
+        reason: 'target_not_safe_canonical_cf'
+      }, maxSamples);
+      continue;
+    }
+
+    var targetPatient = identityResolutionRequestsGetPatientOrNull_(cfg, targetId);
+    if (!targetPatient) {
+      result.targetMissing++;
+      identityResolutionRequestsAddSample_(result.samples.skipped, {
+        sourceId: sourceId,
+        targetId: targetId,
+        reason: 'target_patient_missing'
+      }, maxSamples);
+      continue;
+    }
+
+    var plan = materializeBuildSourcePlan_(cfg, sourcePatient, targetPatient, sourceId, targetId, nowIso, maxDocsPerSource, maxSamples);
+    result.sourcePatientsProcessed++;
+
+    if (plan.blocked) {
+      if (plan.blockReason === 'target_document_collision') {
+        result.blockedTargetCollisions++;
+        identityResolutionRequestsAddSample_(result.samples.collisions, plan.sample, maxSamples);
+      } else if (plan.blockReason === 'scan_truncated') {
+        result.blockedScanTruncated++;
+        identityResolutionRequestsAddSample_(result.samples.skipped, plan.sample, maxSamples);
+      } else {
+        result.blockedConflicts++;
+        identityResolutionRequestsAddSample_(result.samples.conflicts, plan.sample, maxSamples);
+      }
+      continue;
+    }
+
+    if (!identityResolutionRequestsCanConsumeWrites_(result, dryRun, maxWrites, plan.writes.length)) {
+      break;
+    }
+
+    result.documentsMoved += plan.counts.documentsMoved;
+    result.topLevelDocumentsPatched += plan.counts.topLevelDocumentsPatched;
+    result.familyGroupsPatched += plan.counts.familyGroupsPatched;
+    result.dashboardIndexesPatched += plan.counts.dashboardIndexesPatched;
+    result.dashboardIndexesDeleted += plan.counts.dashboardIndexesDeleted;
+    result.therapeuticAdviceMoved += plan.counts.therapeuticAdviceMoved;
+    result.doctorLinksMoved += plan.counts.doctorLinksMoved;
+
+    if (dryRun) {
+      result.writesPlanned += plan.writes.length;
+      identityResolutionRequestsAddSample_(result.samples.planned, plan.sample, maxSamples);
+      continue;
+    }
+
+    executeFirestoreCommit_(cfg, plan.writes);
+    result.writesAttempted += plan.writes.length;
+    result.writesSucceeded += plan.writes.length;
+    result.firestoreWritesDelta += plan.writes.length;
+    result.sourcePatientsMaterialized++;
+    if (plan.sourceDeleted) result.sourcePatientsDeleted++;
+    identityResolutionRequestsAddSample_(result.samples.applied, plan.sample, maxSamples);
+  }
+
+  result.checkedAt = new Date().toISOString();
+  logInfo_(cfg, 'processMaterializePatientIdentityMerges completato', result);
+  return result;
+}
+
+function materializeBuildSourcePlan_(cfg, sourcePatient, targetPatient, sourceId, targetId, nowIso, maxDocsPerSource, maxSamples) {
+  var targetFullName = String(targetPatient.fullName || targetPatient.patientFullName || targetId).trim() || targetId;
+  var writes = [];
+  var counts = {
+    documentsMoved: 0,
+    topLevelDocumentsPatched: 0,
+    familyGroupsPatched: 0,
+    dashboardIndexesPatched: 0,
+    dashboardIndexesDeleted: 0,
+    therapeuticAdviceMoved: 0,
+    doctorLinksMoved: 0
+  };
+  var affected = {
+    drivePdfImports: 0,
+    prescriptionIntakes: 0,
+    debts: 0,
+    advances: 0,
+    bookings: 0,
+    prescriptions: 0,
+    doctorLinks: 0,
+    families: 0,
+    therapeuticAdvice: 0,
+    dashboardIndexes: 0
+  };
+
+  var targetPatientPatch = materializeBuildTargetPatientAggregatePatch_(targetPatient, sourcePatient, sourceId, nowIso);
+  writes.push(buildFirestorePatchWrite_(cfg, 'patients', targetId, targetPatientPatch, Object.keys(targetPatientPatch)));
+
+  var driveImports = materializeListTopLevelWhereEqual_(cfg, 'drive_pdf_imports', 'patientFiscalCode', sourceId, maxDocsPerSource);
+  if (materializeListHitLimit_(driveImports, maxDocsPerSource)) {
+    return materializeBuildScanTruncatedBlock_(sourceId, targetId, 'drive_pdf_imports', maxDocsPerSource, counts);
+  }
+  materializeAppendTopLevelPatientPatchWrites_(writes, driveImports, targetId, targetFullName, nowIso, [
+    'patientFiscalCode',
+    'patientFullName',
+    'updatedAt',
+    'identityMaterializedFrom',
+    'identityMaterializedAt'
+  ], function () {
+    return {
+      patientFiscalCode: targetId,
+      patientFullName: targetFullName,
+      updatedAt: nowIso,
+      identityMaterializedFrom: sourceId,
+      identityMaterializedAt: nowIso
+    };
+  });
+  affected.drivePdfImports = driveImports.length;
+  counts.topLevelDocumentsPatched += driveImports.length;
+
+  var intakes = materializeListTopLevelWhereEqual_(cfg, 'prescription_intakes', 'fiscalCode', sourceId, maxDocsPerSource);
+  if (materializeListHitLimit_(intakes, maxDocsPerSource)) {
+    return materializeBuildScanTruncatedBlock_(sourceId, targetId, 'prescription_intakes', maxDocsPerSource, counts);
+  }
+  materializeAppendTopLevelPatientPatchWrites_(writes, intakes, targetId, targetFullName, nowIso, [
+    'fiscalCode',
+    'patientName',
+    'updatedAt',
+    'identityMaterializedFrom',
+    'identityMaterializedAt'
+  ], function () {
+    return {
+      fiscalCode: targetId,
+      patientName: targetFullName,
+      updatedAt: nowIso,
+      identityMaterializedFrom: sourceId,
+      identityMaterializedAt: nowIso
+    };
+  });
+  affected.prescriptionIntakes = intakes.length;
+  counts.topLevelDocumentsPatched += intakes.length;
+
+  var subcollections = ['debts', 'advances', 'bookings', 'prescriptions'];
+  for (var i = 0; i < subcollections.length; i++) {
+    var subcollection = subcollections[i];
+    var docs = materializeListCollectionGroupByPatient_(cfg, subcollection, sourceId, maxDocsPerSource);
+    if (materializeListHitLimit_(docs, maxDocsPerSource)) {
+      return materializeBuildScanTruncatedBlock_(sourceId, targetId, subcollection, maxDocsPerSource, counts);
+    }
+    affected[subcollection] = docs.length;
+    var moveResult = materializeAppendSubcollectionMoveWrites_(cfg, writes, docs, subcollection, sourceId, targetId, targetFullName, nowIso);
+    if (moveResult.collision) {
+      return {
+        blocked: true,
+        blockReason: 'target_document_collision',
+        writes: [],
+        sourceDeleted: false,
+        counts: counts,
+        sample: {
+          sourceId: sourceId,
+          targetId: targetId,
+          collection: subcollection,
+          targetDocumentName: moveResult.targetDocumentName,
+          reason: 'target_subdocument_already_exists'
+        }
+      };
+    }
+    counts.documentsMoved += docs.length;
+  }
+
+  var doctorLinks = materializeListTopLevelWhereEqual_(cfg, 'doctor_patient_links', 'patientFiscalCode', sourceId, maxDocsPerSource);
+  if (materializeListHitLimit_(doctorLinks, maxDocsPerSource)) {
+    return materializeBuildScanTruncatedBlock_(sourceId, targetId, 'doctor_patient_links', maxDocsPerSource, counts);
+  }
+  affected.doctorLinks = doctorLinks.length;
+  var linkResult = materializeAppendDoctorLinkMoveWrites_(cfg, writes, doctorLinks, sourceId, targetId, targetFullName, nowIso);
+  if (linkResult.collision) {
+    return {
+      blocked: true,
+      blockReason: 'target_document_collision',
+      writes: [],
+      sourceDeleted: false,
+      counts: counts,
+      sample: {
+        sourceId: sourceId,
+        targetId: targetId,
+        collection: 'doctor_patient_links',
+        targetDocumentName: linkResult.targetDocumentName,
+        reason: 'target_doctor_link_already_exists'
+      }
+    };
+  }
+  counts.doctorLinksMoved += doctorLinks.length;
+
+  var therapeuticResult = materializeAppendTherapeuticAdviceMoveWrites_(cfg, writes, sourceId, targetId, nowIso);
+  if (therapeuticResult.conflict) {
+    return {
+      blocked: true,
+      blockReason: 'therapeutic_advice_conflict',
+      writes: [],
+      sourceDeleted: false,
+      counts: counts,
+      sample: {
+        sourceId: sourceId,
+        targetId: targetId,
+        reason: 'source_and_target_therapeutic_advice_exist'
+      }
+    };
+  }
+  if (therapeuticResult.moved) {
+    affected.therapeuticAdvice = 1;
+    counts.therapeuticAdviceMoved++;
+  }
+
+  var families = materializeListFamiliesContaining_(cfg, sourceId, maxDocsPerSource);
+  if (materializeListHitLimit_(families, maxDocsPerSource)) {
+    return materializeBuildScanTruncatedBlock_(sourceId, targetId, 'families', maxDocsPerSource, counts);
+  }
+  affected.families = families.length;
+  materializeAppendFamilyRewriteWrites_(writes, families, sourceId, targetId, nowIso);
+  counts.familyGroupsPatched += families.length;
+
+  var sourceIndex = materializeGetTopLevelDocumentOrNull_(cfg, 'patient_dashboard_index', sourceId);
+  var targetIndex = materializeGetTopLevelDocumentOrNull_(cfg, 'patient_dashboard_index', targetId) || {};
+  var targetIndexPatch = materializeBuildTargetIndexPatch_(targetIndex, sourceIndex, targetPatient, sourceId, targetId, nowIso);
+  writes.push(buildFirestorePatchWrite_(cfg, 'patient_dashboard_index', targetId, targetIndexPatch, Object.keys(targetIndexPatch)));
+  counts.dashboardIndexesPatched++;
+  if (sourceIndex) {
+    writes.push(buildFirestoreDeleteWrite_(cfg, 'patient_dashboard_index', sourceId));
+    counts.dashboardIndexesDeleted++;
+    affected.dashboardIndexes = 1;
+  }
+
+  writes.push(buildFirestoreDeleteWrite_(cfg, 'patients', sourceId));
+  var sourceDeleted = true;
+
+  return {
+    blocked: false,
+    writes: writes,
+    sourceDeleted: sourceDeleted,
+    counts: counts,
+    sample: {
+      sourceId: sourceId,
+      targetId: targetId,
+      targetFullName: targetFullName,
+      writesPlanned: writes.length,
+      sourceDeleted: sourceDeleted,
+      affected: affected
+    }
+  };
+}
+
+
+function materializeListHitLimit_(items, limit) {
+  return Array.isArray(items) && items.length >= Math.max(1, Number(limit || 1));
+}
+
+function materializeBuildScanTruncatedBlock_(sourceId, targetId, collection, limit, counts) {
+  return {
+    blocked: true,
+    blockReason: 'scan_truncated',
+    writes: [],
+    sourceDeleted: false,
+    counts: counts,
+    sample: {
+      sourceId: sourceId,
+      targetId: targetId,
+      collection: collection,
+      limit: limit,
+      reason: 'source_related_documents_scan_reached_limit_fail_closed'
+    }
+  };
+}
+
+function materializeListMergedSourcePatients_(cfg, limit) {
+  return materializeRunQuery_(cfg, {
+    structuredQuery: {
+      from: [{ collectionId: 'patients' }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: 'identityMergeStatus' },
+          op: 'EQUAL',
+          value: { stringValue: 'merged_into' }
+        }
+      },
+      limit: Math.max(1, Number(limit || 1))
+    }
+  });
+}
+
+function materializeListTopLevelWhereEqual_(cfg, collectionId, fieldPath, value, limit) {
+  return materializeRunQuery_(cfg, {
+    structuredQuery: {
+      from: [{ collectionId: collectionId }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: fieldPath },
+          op: 'EQUAL',
+          value: { stringValue: String(value || '') }
+        }
+      },
+      limit: Math.max(1, Number(limit || 1))
+    }
+  });
+}
+
+function materializeListCollectionGroupByPatient_(cfg, collectionId, sourceId, limit) {
+  return materializeRunQuery_(cfg, {
+    structuredQuery: {
+      from: [{ collectionId: collectionId, allDescendants: true }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: 'patientFiscalCode' },
+          op: 'EQUAL',
+          value: { stringValue: sourceId }
+        }
+      },
+      limit: Math.max(1, Number(limit || 1))
+    }
+  });
+}
+
+function materializeListFamiliesContaining_(cfg, sourceId, limit) {
+  return materializeRunQuery_(cfg, {
+    structuredQuery: {
+      from: [{ collectionId: 'families' }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: 'memberFiscalCodes' },
+          op: 'ARRAY_CONTAINS',
+          value: { stringValue: sourceId }
+        }
+      },
+      limit: Math.max(1, Number(limit || 1))
+    }
+  });
+}
+
+function materializeRunQuery_(cfg, payload) {
+  var url = 'https://firestore.googleapis.com/v1/projects/' + encodeURIComponent(cfg.firestoreProjectId) + '/databases/(default)/documents:runQuery';
+  var response = UrlFetchApp.fetch(url, {
+    method: 'post',
+    muteHttpExceptions: true,
+    contentType: 'application/json',
+    headers: {
+      Authorization: 'Bearer ' + ScriptApp.getOAuthToken()
+    },
+    payload: JSON.stringify(payload)
+  });
+  var code = response.getResponseCode();
+  var body = response.getContentText() || '';
+  if (code < 200 || code >= 300) {
+    throw new Error('Firestore runQuery materialize identity failed [' + code + '] ' + body);
+  }
+  var parsed = parseJsonSafe_(body);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.map(function (row) {
+    if (!row || !row.document) return null;
+    var document = row.document;
+    var data = fromFirestoreFields_(document.fields || {});
+    data.documentName = document.name || '';
+    data.documentId = extractFirestoreDocumentId_(document.name || '');
+    data.updateTime = document.updateTime || '';
+    return data;
+  }).filter(function (item) {
+    return !!item;
+  });
+}
+
+function materializeGetTopLevelDocumentOrNull_(cfg, collectionId, documentId) {
+  var normalizedId = normalizeCf_(documentId);
+  if (!normalizedId) return null;
+  return materializeGetDocumentByNameOrNull_(buildFirestoreDocumentName_(cfg, collectionId, normalizedId));
+}
+
+function materializeGetDocumentByNameOrNull_(documentName) {
+  var url = 'https://firestore.googleapis.com/v1/' + String(documentName || '');
+  var response = UrlFetchApp.fetch(url, {
+    method: 'get',
+    muteHttpExceptions: true,
+    headers: {
+      Authorization: 'Bearer ' + ScriptApp.getOAuthToken()
+    }
+  });
+  var code = response.getResponseCode();
+  if (code === 404) return null;
+  if (code < 200 || code >= 300) {
+    throw new Error('Firestore GET materialize identity failed [' + code + '] ' + response.getContentText());
+  }
+  var parsed = parseJsonSafe_(response.getContentText() || '{}');
+  var data = fromFirestoreFields_((parsed && parsed.fields) || {});
+  data.documentName = parsed.name || documentName;
+  data.documentId = extractFirestoreDocumentId_(data.documentName || '');
+  data.updateTime = parsed.updateTime || '';
+  return data;
+}
+
+function materializeAppendTopLevelPatientPatchWrites_(writes, docs, targetId, targetFullName, nowIso, fieldPaths, patchFactory) {
+  for (var i = 0; i < docs.length; i++) {
+    var doc = docs[i] || {};
+    if (!doc.documentName) continue;
+    writes.push(materializeBuildPatchWriteByName_(doc.documentName, patchFactory(doc), fieldPaths));
+  }
+}
+
+function materializeAppendSubcollectionMoveWrites_(cfg, writes, docs, subcollection, sourceId, targetId, targetFullName, nowIso) {
+  for (var i = 0; i < docs.length; i++) {
+    var doc = docs[i] || {};
+    var sourceName = String(doc.documentName || '').trim();
+    if (!sourceName) continue;
+    var targetName = materializeRetargetPatientSubdocumentName_(sourceName, sourceId, targetId);
+    if (!targetName || materializeGetDocumentByNameOrNull_(targetName)) {
+      return { collision: true, targetDocumentName: targetName };
+    }
+    var nextData = materializeCleanDocumentForCopy_(doc);
+    nextData.patientFiscalCode = targetId;
+    nextData.patientName = targetFullName;
+    nextData.updatedAt = nowIso;
+    nextData.identityMaterializedFrom = sourceId;
+    nextData.identityMaterializedAt = nowIso;
+    writes.push(materializeBuildCreateOnlyWriteByName_(targetName, nextData));
+    writes.push(materializeBuildDeleteWriteByName_(sourceName));
+  }
+  return { collision: false };
+}
+
+function materializeAppendDoctorLinkMoveWrites_(cfg, writes, docs, sourceId, targetId, targetFullName, nowIso) {
+  for (var i = 0; i < docs.length; i++) {
+    var doc = docs[i] || {};
+    var sourceName = String(doc.documentName || '').trim();
+    if (!sourceName) continue;
+    var sourceDocId = extractFirestoreDocumentId_(sourceName);
+    var targetDocId = materializeRetargetDoctorLinkId_(sourceDocId, sourceId, targetId);
+    var targetName = buildFirestoreDocumentName_(cfg, 'doctor_patient_links', targetDocId);
+    if (materializeGetDocumentByNameOrNull_(targetName)) {
+      return { collision: true, targetDocumentName: targetName };
+    }
+    var nextData = materializeCleanDocumentForCopy_(doc);
+    nextData.id = targetDocId;
+    nextData.patientFiscalCode = targetId;
+    nextData.patientFullName = targetFullName;
+    nextData.updatedAt = nowIso;
+    nextData.identityMaterializedFrom = sourceId;
+    nextData.identityMaterializedAt = nowIso;
+    writes.push(materializeBuildCreateOnlyWriteByName_(targetName, nextData));
+    writes.push(materializeBuildDeleteWriteByName_(sourceName));
+  }
+  return { collision: false };
+}
+
+function materializeAppendTherapeuticAdviceMoveWrites_(cfg, writes, sourceId, targetId, nowIso) {
+  var sourceName = buildFirestoreDocumentName_(cfg, 'patient_therapeutic_advice', sourceId);
+  var sourceAdvice = materializeGetDocumentByNameOrNull_(sourceName);
+  if (!sourceAdvice) return { moved: false, conflict: false };
+  var targetName = buildFirestoreDocumentName_(cfg, 'patient_therapeutic_advice', targetId);
+  var targetAdvice = materializeGetDocumentByNameOrNull_(targetName);
+  if (targetAdvice) return { moved: false, conflict: true };
+  var nextData = materializeCleanDocumentForCopy_(sourceAdvice);
+  nextData.patientFiscalCode = targetId;
+  nextData.updatedAt = nowIso;
+  nextData.identityMaterializedFrom = sourceId;
+  nextData.identityMaterializedAt = nowIso;
+  writes.push(materializeBuildCreateOnlyWriteByName_(targetName, nextData));
+  writes.push(materializeBuildDeleteWriteByName_(sourceName));
+  return { moved: true, conflict: false };
+}
+
+function materializeAppendFamilyRewriteWrites_(writes, families, sourceId, targetId, nowIso) {
+  for (var i = 0; i < families.length; i++) {
+    var family = families[i] || {};
+    if (!family.documentName) continue;
+    var members = Array.isArray(family.memberFiscalCodes) ? family.memberFiscalCodes : [];
+    var nextMembersMap = {};
+    for (var j = 0; j < members.length; j++) {
+      var member = normalizeCf_(members[j]);
+      if (!member) continue;
+      nextMembersMap[member === sourceId ? targetId : member] = true;
+    }
+    var nextMembers = Object.keys(nextMembersMap).sort();
+    writes.push(materializeBuildPatchWriteByName_(family.documentName, {
+      memberFiscalCodes: nextMembers,
+      updatedAt: nowIso,
+      identityMaterializedFrom: sourceId,
+      identityMaterializedAt: nowIso
+    }, ['memberFiscalCodes', 'updatedAt', 'identityMaterializedFrom', 'identityMaterializedAt']));
+  }
+}
+
+function materializeBuildTargetPatientAggregatePatch_(targetPatient, sourcePatient, sourceId, nowIso) {
+  var existingSources = Array.isArray(targetPatient.identityMaterializedSourceIds)
+      ? targetPatient.identityMaterializedSourceIds.map(function (item) { return normalizeCf_(item); })
+      : [];
+  var sourceMap = {};
+  for (var i = 0; i < existingSources.length; i++) {
+    if (existingSources[i]) sourceMap[existingSources[i]] = true;
+  }
+  sourceMap[sourceId] = true;
+  var patch = {
+    fiscalCode: normalizeCf_(targetPatient.fiscalCode || targetPatient.documentId || ''),
+    hasDebt: materializeBoolOr_(targetPatient.hasDebt, sourcePatient.hasDebt),
+    hasAdvance: materializeBoolOr_(targetPatient.hasAdvance, sourcePatient.hasAdvance),
+    hasBooking: materializeBoolOr_(targetPatient.hasBooking, sourcePatient.hasBooking),
+    hasDpc: materializeBoolOr_(targetPatient.hasDpc, sourcePatient.hasDpc),
+    debtTotal: materializeNumber_(targetPatient.debtTotal) + materializeNumber_(sourcePatient.debtTotal),
+    archivedRecipeCount: materializeInt_(targetPatient.archivedRecipeCount) + materializeInt_(sourcePatient.archivedRecipeCount),
+    archivedPdfCount: materializeInt_(targetPatient.archivedPdfCount) + materializeInt_(sourcePatient.archivedPdfCount),
+    activeArchiveDocuments: materializeInt_(targetPatient.activeArchiveDocuments) + materializeInt_(sourcePatient.activeArchiveDocuments),
+    identityMaterializedAt: nowIso,
+    identityMaterializedSourceIds: Object.keys(sourceMap).sort(),
+    updatedAt: nowIso
+  };
+  return patch;
+}
+
+function materializeBuildTargetIndexPatch_(targetIndex, sourceIndex, targetPatient, sourceId, targetId, nowIso) {
+  var patch = {
+    fiscalCode: targetId,
+    fullName: String((targetIndex && targetIndex.fullName) || targetPatient.fullName || targetId).trim() || targetId,
+    hasRecipes: materializeBoolOr_(targetIndex && targetIndex.hasRecipes, sourceIndex && sourceIndex.hasRecipes),
+    hasDpc: materializeBoolOr_(targetIndex && targetIndex.hasDpc, sourceIndex && sourceIndex.hasDpc),
+    hasDebt: materializeBoolOr_(targetIndex && targetIndex.hasDebt, sourceIndex && sourceIndex.hasDebt),
+    hasAdvance: materializeBoolOr_(targetIndex && targetIndex.hasAdvance, sourceIndex && sourceIndex.hasAdvance),
+    hasBooking: materializeBoolOr_(targetIndex && targetIndex.hasBooking, sourceIndex && sourceIndex.hasBooking),
+    recipeCount: materializeInt_(targetIndex && targetIndex.recipeCount) + materializeInt_(sourceIndex && sourceIndex.recipeCount),
+    dpcCount: materializeInt_(targetIndex && targetIndex.dpcCount) + materializeInt_(sourceIndex && sourceIndex.dpcCount),
+    debtCount: materializeInt_(targetIndex && targetIndex.debtCount) + materializeInt_(sourceIndex && sourceIndex.debtCount),
+    debtAmount: materializeNumber_(targetIndex && targetIndex.debtAmount) + materializeNumber_(sourceIndex && sourceIndex.debtAmount),
+    advanceCount: materializeInt_(targetIndex && targetIndex.advanceCount) + materializeInt_(sourceIndex && sourceIndex.advanceCount),
+    bookingCount: materializeInt_(targetIndex && targetIndex.bookingCount) + materializeInt_(sourceIndex && sourceIndex.bookingCount),
+    identityMaterializedAt: nowIso,
+    identityMaterializedSourceIds: materializeMergeStringArrays_(targetIndex && targetIndex.identityMaterializedSourceIds, [sourceId]),
+    updatedAt: nowIso
+  };
+  return patch;
+}
+
+function materializeCleanDocumentForCopy_(doc) {
+  var out = {};
+  Object.keys(doc || {}).forEach(function (key) {
+    if (key === 'documentName' || key === 'documentId' || key === 'updateTime') return;
+    out[key] = doc[key];
+  });
+  return out;
+}
+
+function materializeBuildPatchWriteByName_(documentName, data, fieldPaths) {
+  return {
+    update: {
+      name: documentName,
+      fields: toFirestoreFields_(data)
+    },
+    updateMask: {
+      fieldPaths: uniqueNonEmptyStrings_(fieldPaths || Object.keys(data || {}))
+    }
+  };
+}
+
+function materializeBuildCreateOnlyWriteByName_(documentName, data) {
+  var write = {
+    update: {
+      name: documentName,
+      fields: toFirestoreFields_(data)
+    }
+  };
+  write.currentDocument = { exists: false };
+  return write;
+}
+
+function materializeBuildDeleteWriteByName_(documentName) {
+  return { delete: documentName };
+}
+
+function materializeRetargetPatientSubdocumentName_(documentName, sourceId, targetId) {
+  var sourceNeedle = '/patients/' + sourceId + '/';
+  var targetNeedle = '/patients/' + targetId + '/';
+  if (String(documentName || '').indexOf(sourceNeedle) < 0) return '';
+  return String(documentName).replace(sourceNeedle, targetNeedle);
+}
+
+function materializeRetargetDoctorLinkId_(sourceDocId, sourceId, targetId) {
+  var text = String(sourceDocId || '').trim();
+  if (!text) return targetId + '__materialized';
+  if (text.indexOf(sourceId) === 0) return targetId + text.substring(sourceId.length);
+  return targetId + '__' + text;
+}
+
+function materializeBoolOr_(a, b) {
+  return identityMergeIsTrue_(a) || identityMergeIsTrue_(b);
+}
+
+function materializeInt_(value) {
+  var n = Number(value || 0);
+  if (!isFinite(n)) return 0;
+  return Math.max(0, Math.floor(n));
+}
+
+function materializeNumber_(value) {
+  var n = Number(value || 0);
+  return isFinite(n) ? n : 0;
+}
+
+function materializeMergeStringArrays_(a, b) {
+  var map = {};
+  var push = function (items) {
+    if (!Array.isArray(items)) return;
+    for (var i = 0; i < items.length; i++) {
+      var text = normalizeCf_(items[i]);
+      if (text) map[text] = true;
+    }
+  };
+  push(a);
+  push(b);
+  return Object.keys(map).sort();
+}
