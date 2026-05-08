@@ -6,6 +6,7 @@ import '../../core/utils/patient_input_normalizer.dart';
 import '../datasources/firestore_datasource.dart';
 import '../datasources/firestore_firebase_datasource.dart';
 import '../models/patient.dart';
+import 'identity_resolution_requests_repository.dart';
 
 class PatientsRepository {
   final FirestoreDatasource datasource;
@@ -92,10 +93,35 @@ class PatientsRepository {
         isTemporaryPatientKey(normalizedCurrentDocumentId);
 
     if (isTemporaryKey && normalizedFiscalCode.isNotEmpty) {
-      throw const PatientProfileUpdateException(
-        'La migrazione diretta da TMP a codice fiscale reale è stata disabilitata. '
-        'L’app deve proporre la correzione nel contesto, raccogliere conferma utente '
-        'e creare una richiesta backend-owned in identity_resolution_requests.',
+      if (isTemporaryPatientKey(normalizedFiscalCode)) {
+        throw const PatientProfileUpdateException(
+          'Il codice fiscale corretto deve essere reale, non TMP.',
+        );
+      }
+      final String requestId = await IdentityResolutionRequestsRepository(
+        datasource: datasource,
+      ).createUserConfirmedRequest(
+        action: IdentityResolutionRequestAction.chooseCorrectFiscalCode,
+        sourceFiscalCode: normalizedCurrentDocumentId,
+        targetFiscalCode: normalizedFiscalCode,
+        sourcePatientId: normalizedCurrentDocumentId,
+        selectedFiscalCode: normalizedFiscalCode,
+        normalizedName: fullName,
+        candidateFiscalCodes: <String>[normalizedFiscalCode],
+        reason: 'frontend_contextual_tmp_cf_user_confirmed',
+      );
+      await _applyInPlacePatientProfileUpdate(
+        documentId: normalizedCurrentDocumentId,
+        storedFiscalCode: normalizedCurrentDocumentId,
+        fullName: fullName,
+        alias: normalizedAlias,
+      );
+      return PatientProfileUpdateResult(
+        effectiveDocumentId: normalizedCurrentDocumentId,
+        fiscalCode: normalizedCurrentDocumentId,
+        fullName: fullName,
+        migratedFromTemporaryKey: false,
+        identityResolutionRequestId: requestId,
       );
     }
 
@@ -356,12 +382,14 @@ class PatientProfileUpdateResult {
   final String fiscalCode;
   final String fullName;
   final bool migratedFromTemporaryKey;
+  final String? identityResolutionRequestId;
 
   const PatientProfileUpdateResult({
     required this.effectiveDocumentId,
     required this.fiscalCode,
     required this.fullName,
     required this.migratedFromTemporaryKey,
+    this.identityResolutionRequestId,
   });
 }
 
