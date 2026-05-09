@@ -308,7 +308,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     }
   }
 
-  Future<void> _syncPatientDashboardIndex(_PatientDetailData data) async {
+  Future<void> _syncPatientDashboardIndex(
+    _PatientDetailData data, {
+    bool includeArchiveFlags = false,
+  }) async {
     final Patient? patient = data.patient;
     if (patient == null) return;
     try {
@@ -323,6 +326,9 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         debtAmount: data.debts.fold<double>(0, (double sum, Debt item) => sum + item.residualAmount),
         advanceCount: data.advances.length,
         bookingCount: data.bookings.length,
+        recipeCount: includeArchiveFlags ? data.totalRecipeCount : null,
+        dpcCount: includeArchiveFlags ? _activeDpcCount(data) : null,
+        hasExpiry: includeArchiveFlags ? _hasExpiryAlert(data) : null,
       );
     } catch (e) {
       if (!mounted) return;
@@ -330,6 +336,34 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         _message = 'Dati salvati. Indice dashboard non riallineato: ' + e.toString();
       });
     }
+  }
+
+  int _activeDpcCount(_PatientDetailData data) {
+    if (data.allImports.isNotEmpty) {
+      return data.imports.where((DrivePdfImport item) => item.isDpc).length;
+    }
+    return data.prescriptions.where((Prescription item) => item.dpcFlag).length;
+  }
+
+  bool _hasExpiryAlert(_PatientDetailData data) {
+    if (data.allImports.isNotEmpty) {
+      return data.imports.any((DrivePdfImport item) {
+        final DateTime baseDate = item.prescriptionDate ?? item.createdAt;
+        return _isExpiryAlert(baseDate.add(const Duration(days: 30)));
+      });
+    }
+    return data.prescriptions.any((Prescription item) {
+      return _isExpiryAlert(
+        item.expiryDate ?? item.prescriptionDate.add(const Duration(days: 30)),
+      );
+    });
+  }
+
+  bool _isExpiryAlert(DateTime? expiryDate) {
+    final PrescriptionValidityStatus status =
+        PrescriptionExpiryUtils.evaluate(expiryDate).status;
+    return status == PrescriptionValidityStatus.expired ||
+        status == PrescriptionValidityStatus.expiringSoon;
   }
 
 
@@ -1343,12 +1377,14 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     final List<Prescription> nextPrescriptions = data.prescriptions
         .where((Prescription current) => current.id != item.id)
         .toList();
+    final _PatientDetailData nextData = data.copyWith(
+      imports: nextVisibleImports,
+      allImports: nextAllImports,
+      prescriptions: nextPrescriptions,
+    );
+    await _syncPatientDashboardIndex(nextData, includeArchiveFlags: true);
     _replaceData(
-      data.copyWith(
-        imports: nextVisibleImports,
-        allImports: nextAllImports,
-        prescriptions: nextPrescriptions,
-      ),
+      nextData,
       'Richiesta delete PDF registrata.',
     );
   }

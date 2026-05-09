@@ -550,17 +550,32 @@ class _DashboardPageState extends State<DashboardPage> {
     _replaceDashboardCache(_dashboardCache.copyWith(summaries: nextSummaries));
   }
 
-  void _replaceCachedSummary(_PatientDashboardSummary nextSummary) {
+  void _replaceCachedSummary(
+    _PatientDashboardSummary nextSummary, {
+    bool includeArchiveFlags = false,
+  }) {
     _replaceCachedSummaryLocal(nextSummary);
-    unawaited(_syncPatientDashboardIndex(nextSummary));
+    unawaited(_syncPatientDashboardIndex(
+      nextSummary,
+      includeArchiveFlags: includeArchiveFlags,
+    ));
   }
 
-  Future<void> _replaceCachedSummaryAwaitingIndex(_PatientDashboardSummary nextSummary) async {
+  Future<void> _replaceCachedSummaryAwaitingIndex(
+    _PatientDashboardSummary nextSummary, {
+    bool includeArchiveFlags = false,
+  }) async {
     _replaceCachedSummaryLocal(nextSummary);
-    await _syncPatientDashboardIndex(nextSummary);
+    await _syncPatientDashboardIndex(
+      nextSummary,
+      includeArchiveFlags: includeArchiveFlags,
+    );
   }
 
-  Future<void> _syncPatientDashboardIndex(_PatientDashboardSummary summary) async {
+  Future<void> _syncPatientDashboardIndex(
+    _PatientDashboardSummary summary, {
+    bool includeArchiveFlags = false,
+  }) async {
     try {
       await _patientDashboardIndexRepository.patchFrontendManagedState(
         fiscalCode: summary.patient.fiscalCode,
@@ -573,6 +588,9 @@ class _DashboardPageState extends State<DashboardPage> {
         debtAmount: summary.totalDebt,
         advanceCount: summary.advanceCount,
         bookingCount: summary.bookingCount,
+        recipeCount: includeArchiveFlags ? summary.recipeCount : null,
+        dpcCount: includeArchiveFlags ? (summary.hasDpc ? 1 : 0) : null,
+        hasExpiry: includeArchiveFlags ? summary.hasExpiryAlert : null,
       );
     } catch (e) {
       if (!mounted) return;
@@ -597,17 +615,11 @@ class _DashboardPageState extends State<DashboardPage> {
         .where((DrivePdfImport item) => item.id != removedImport.id)
         .toList();
     final int removedCount = removedImport.prescriptionCount > 0 ? removedImport.prescriptionCount : 1;
-    final bool nextHasDpc = nextImports.any((DrivePdfImport item) => item.isDpc) ||
-        summary.prescriptions.any((Prescription item) => item.dpcFlag);
+    final bool nextHasDpc = nextImports.any((DrivePdfImport item) => item.isDpc);
     final bool nextHasExpiryAlert = nextImports.any((DrivePdfImport item) {
-          final DateTime baseDate = item.prescriptionDate ?? item.createdAt;
-          return _DashboardTotals._isExpiryAlert(baseDate.add(const Duration(days: 30)));
-        }) ||
-        summary.prescriptions.any((Prescription item) {
-          return _DashboardTotals._isExpiryAlert(
-            item.expiryDate ?? item.prescriptionDate.add(const Duration(days: 30)),
-          );
-        });
+      final DateTime baseDate = item.prescriptionDate ?? item.createdAt;
+      return _DashboardTotals._isExpiryAlert(baseDate.add(const Duration(days: 30)));
+    });
     _replaceCachedSummary(
       summary.copyWith(
         imports: nextImports,
@@ -615,6 +627,7 @@ class _DashboardPageState extends State<DashboardPage> {
         hasDpc: nextHasDpc,
         hasExpiryAlert: nextHasExpiryAlert,
       ),
+      includeArchiveFlags: true,
     );
   }
 
@@ -3201,6 +3214,21 @@ class _DashboardPageState extends State<DashboardPage> {
         advanceCountDelta: -summary.advances.length,
         bookingCountDelta: -summary.bookings.length,
       );
+      await _patientDashboardIndexRepository.patchFrontendManagedState(
+        fiscalCode: summary.patient.fiscalCode,
+        fullName: summary.patient.fullName,
+        alias: summary.patient.alias,
+        doctorFullName: summary.doctorName == '-' ? summary.patient.doctorName : summary.doctorName,
+        city: summary.city == '-' ? summary.patient.city : summary.city,
+        exemptionCode: summary.exemptionCode == '-' ? summary.patient.primaryExemption : summary.exemptionCode,
+        debtCount: 0,
+        debtAmount: 0,
+        advanceCount: 0,
+        bookingCount: 0,
+        recipeCount: 0,
+        dpcCount: 0,
+        hasExpiry: false,
+      );
       _removeCachedSummary(summary.patient.fiscalCode);
       setState(() {
         _message = 'Dati operativi rimossi e delete PDF richiesta.';
@@ -3240,6 +3268,9 @@ class _DashboardPageState extends State<DashboardPage> {
             _isRouteCovered = false;
           });
           _startDashboardTotalsListener();
+          if (_hasUserRequestedDashboardData) {
+            _issueLoad(force: true);
+          }
         });
   }
 
