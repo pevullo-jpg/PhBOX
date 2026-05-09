@@ -235,7 +235,9 @@ function buildPatientDashboardArchiveFields_(cf, activeManifests, historicalMani
     if (expiry && (!nearestExpiry || expiry.getTime() < nearestExpiry.getTime())) nearestExpiry = expiry;
   });
 
-  var fullName = String((first && first.patientFullName) || cf).trim();
+  var fullName = patientDashboardChoosePreferredName_(cf, (source || []).map(function (item) {
+    return item && (item.patientFullName || item.patientName || item.fullName || item.name || '');
+  })) || 'Assistito senza nome';
   var doctorFullName = String((first && first.doctorFullName) || '').trim();
   var city = String((first && first.city) || '').trim();
   var exemptions = uniqueNonEmptyStrings_([first && first.exemptionCode, first && first.exemption].concat((first && first.exemptions) || []));
@@ -281,15 +283,15 @@ function buildPatientDashboardIndexDataForCf_(cf, sources) {
   var nearestExpiryDate = archiveRecipeCount > 0 ? (archive.nearestExpiryDate || null) : (prescriptions.nearestExpiryDate || null);
   var lastPrescriptionDate = archiveRecipeCount > 0 ? (archive.lastPrescriptionDate || null) : (prescriptions.lastPrescriptionDate || null);
 
-  var fullName = keepExistingIfEmpty_(choosePreferredValue_([
-    patient.fullName,
-    patient.patientFullName,
-    archive.fullName,
-    prescriptions.fullName,
-    firstPatientDashboardListValue_(debts.names),
-    firstPatientDashboardListValue_(advances.names),
-    firstPatientDashboardListValue_(bookings.names)
-  ]), existing.fullName, cf);
+  var fullName = patientDashboardResolveIndexFullName_(cf, {
+    patient: patient,
+    archive: archive,
+    prescriptions: prescriptions,
+    debts: debts,
+    advances: advances,
+    bookings: bookings,
+    existing: existing
+  });
   var alias = keepExistingIfEmpty_(patient.alias, existing.alias, '');
   var doctorFullName = keepExistingIfEmpty_(choosePreferredValue_([
     patient.doctorFullName,
@@ -324,7 +326,7 @@ function buildPatientDashboardIndexDataForCf_(cf, sources) {
   return {
     schemaVersion: 1,
     fiscalCode: cf,
-    fullName: String(fullName || cf).trim() || cf,
+    fullName: String(fullName || 'Assistito senza nome').trim() || 'Assistito senza nome',
     alias: String(alias || '').trim() || null,
     doctorFullName: String(doctorFullName || '').trim(),
     city: String(city || '').trim(),
@@ -350,6 +352,142 @@ function buildPatientDashboardIndexDataForCf_(cf, sources) {
     source: sources.source || 'phbox_backend_index_sync',
     updatedAt: sources.nowIso || new Date().toISOString()
   };
+}
+
+function patientDashboardResolveIndexFullName_(cf, sources) {
+  sources = sources || {};
+  var patient = sources.patient || {};
+  var archive = sources.archive || {};
+  var prescriptions = sources.prescriptions || {};
+  var debts = sources.debts || {};
+  var advances = sources.advances || {};
+  var bookings = sources.bookings || {};
+  var existing = sources.existing || {};
+  return patientDashboardChoosePreferredName_(cf, [
+    patient.fullName,
+    patient.patientFullName,
+    patient.displayName,
+    patient.patientName,
+    patientDashboardBuildNameFromParts_(patient),
+    archive.fullName,
+    archive.patientFullName,
+    archive.patientName,
+    prescriptions.fullName,
+    prescriptions.patientFullName,
+    prescriptions.patientName,
+    firstPatientDashboardListValue_(debts.names),
+    firstPatientDashboardListValue_(advances.names),
+    firstPatientDashboardListValue_(bookings.names),
+    existing.fullName
+  ]) || 'Assistito senza nome';
+}
+
+function patientDashboardBestNameFromDocument_(cf, item) {
+  item = item || {};
+  return patientDashboardChoosePreferredName_(cf, [
+    item.fullName,
+    item.patientFullName,
+    item.displayName,
+    item.patientName,
+    patientDashboardBuildNameFromParts_(item)
+  ]);
+}
+
+function patientDashboardBuildNameFromParts_(item) {
+  item = item || {};
+  var firstCandidates = [
+    item.firstName,
+    item.name,
+    item.nome,
+    item.patientFirstName,
+    item.patientNameOnly,
+    item.givenName
+  ];
+  var lastCandidates = [
+    item.lastName,
+    item.surname,
+    item.cognome,
+    item.patientLastName,
+    item.familyName
+  ];
+  for (var i = 0; i < firstCandidates.length; i++) {
+    var first = patientDashboardNormalizeDisplayNameCandidate_(firstCandidates[i]);
+    if (!first) continue;
+    for (var j = 0; j < lastCandidates.length; j++) {
+      var last = patientDashboardNormalizeDisplayNameCandidate_(lastCandidates[j]);
+      if (!last) continue;
+      var combined = patientDashboardNormalizeDisplayNameCandidate_(first + ' ' + last);
+      if (combined) return combined;
+    }
+  }
+  return '';
+}
+
+function patientDashboardChoosePreferredName_(cf, values) {
+  var seen = {};
+  var cleaned = [];
+  (values || []).forEach(function (value) {
+    var name = patientDashboardCleanDisplayName_(value, cf);
+    var key = patientDashboardComparableName_(name);
+    if (!name || seen[key]) return;
+    seen[key] = true;
+    cleaned.push(name);
+  });
+  return choosePreferredValue_(cleaned) || '';
+}
+
+function patientDashboardCleanDisplayName_(value, cf) {
+  var name = patientDashboardNormalizeDisplayNameCandidate_(value);
+  if (!name) return '';
+  if (patientDashboardIsPlaceholderName_(name, cf)) return '';
+  if (patientDashboardLooksLikeOcrOrCfNoise_(name, cf)) return '';
+  return name;
+}
+
+function patientDashboardNormalizeDisplayNameCandidate_(value) {
+  var text = String(value == null ? '' : value)
+      .replace(/[\r\n\t]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  return text;
+}
+
+function patientDashboardIsPlaceholderName_(value, cf) {
+  var name = patientDashboardComparableName_(value);
+  var normalizedCf = normalizeCf_(cf);
+  if (!name) return true;
+  if (normalizedCf && name === normalizedCf) return true;
+  if (name === 'ASSISTITO' || name === 'SENZA NOME' || name === 'ASSISTITO SENZA NOME') return true;
+  if (name === 'NOME' || name === 'COGNOME' || name === 'PAZIENTE' || name === 'PAZIENTE SENZA NOME') return true;
+  if (name.indexOf('ASSISTITO SENZA NOME') >= 0) return true;
+  return false;
+}
+
+function patientDashboardLooksLikeOcrOrCfNoise_(value, cf) {
+  var normalizedCf = normalizeCf_(cf);
+  if (!normalizedCf) return false;
+  var name = String(value == null ? '' : value).toUpperCase();
+  var compact = name.replace(/[^A-Z0-9]/g, '');
+  if (!compact) return true;
+  if (compact === normalizedCf) return true;
+  if (compact.indexOf(normalizedCf) >= 0) return true;
+  var tokens = name.split(/\s+/).map(function (token) {
+    return String(token || '').replace(/[^A-Z0-9]/g, '');
+  }).filter(function (token) { return !!token; });
+  for (var i = 0; i < tokens.length; i++) {
+    var token = tokens[i];
+    if (token.length >= 6 && normalizedCf.indexOf(token) >= 0) return true;
+    if (token.length >= 7 && token.charAt(0) === 'I' && normalizedCf.indexOf(token.substring(1)) >= 0) return true;
+    if (token.length >= 8 && token.charAt(0) === 'L' && normalizedCf.indexOf(token.substring(1)) >= 0) return true;
+  }
+  return false;
+}
+
+function patientDashboardComparableName_(value) {
+  return String(value == null ? '' : value)
+      .trim()
+      .replace(/\s+/g, ' ')
+      .toUpperCase();
 }
 
 function buildPatientDashboardPatientMap_(cfg) {
@@ -583,7 +721,7 @@ function finalizePatientDashboardArchiveAggregate_(aggregate) {
   return {
     recipeCount: Math.max(0, Number(aggregate.recipeCount || 0)),
     dpcCount: Math.max(0, Number(aggregate.dpcCount || 0)),
-    fullName: choosePreferredValue_(uniqueNonEmptyStrings_(aggregate.names || [])) || '',
+    fullName: patientDashboardChoosePreferredName_(aggregate.cf, uniqueNonEmptyStrings_(aggregate.names || [])) || '',
     doctorFullName: choosePreferredValue_(uniqueNonEmptyStrings_(aggregate.doctors || [])) || '',
     city: choosePreferredValue_(uniqueNonEmptyStrings_(aggregate.cities || [])) || '',
     exemptionCode: exemptions.length ? exemptions[0] : '',
@@ -616,7 +754,7 @@ function normalizePatientDashboardPatientDoc_(item) {
   item = item || {};
   return {
     fiscalCode: normalizeCf_(item.fiscalCode || item.patientFiscalCode || item.documentId),
-    fullName: String(item.fullName || item.patientFullName || '').trim(),
+    fullName: patientDashboardBestNameFromDocument_(normalizeCf_(item.fiscalCode || item.patientFiscalCode || item.documentId), item),
     alias: String(item.alias || '').trim(),
     doctorFullName: String(item.doctorFullName || item.doctorName || item.doctor || '').trim(),
     doctorName: String(item.doctorName || '').trim(),
