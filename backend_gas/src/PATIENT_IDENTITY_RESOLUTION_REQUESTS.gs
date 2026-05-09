@@ -1193,6 +1193,7 @@ function processMaterializePatientIdentityMerges(options) {
     dashboardIndexesDeleted: 0,
     therapeuticAdviceMoved: 0,
     doctorLinksMoved: 0,
+    doctorLinkDuplicatesRemoved: 0,
     writesPlanned: 0,
     writesAttempted: 0,
     writesSucceeded: 0,
@@ -1310,6 +1311,7 @@ function processMaterializePatientIdentityMerges(options) {
     result.dashboardIndexesDeleted += plan.counts.dashboardIndexesDeleted;
     result.therapeuticAdviceMoved += plan.counts.therapeuticAdviceMoved;
     result.doctorLinksMoved += plan.counts.doctorLinksMoved;
+    result.doctorLinkDuplicatesRemoved += plan.counts.doctorLinkDuplicatesRemoved;
 
     if (dryRun) {
       result.writesPlanned += plan.writes.length;
@@ -1404,7 +1406,8 @@ function materializeBuildSourcePlan_(cfg, sourcePatient, targetPatient, sourceId
     dashboardIndexesPatched: 0,
     dashboardIndexesDeleted: 0,
     therapeuticAdviceMoved: 0,
-    doctorLinksMoved: 0
+    doctorLinksMoved: 0,
+    doctorLinkDuplicatesRemoved: 0
   };
   var affected = {
     drivePdfImports: 0,
@@ -1488,9 +1491,10 @@ function materializeBuildSourcePlan_(cfg, sourcePatient, targetPatient, sourceId
   affected.doctorLinks = doctorLinks.length;
   var linkResult = materializeAppendDoctorLinkMoveWrites_(cfg, writes, doctorLinks, sourceId, targetId, targetFullName, nowIso);
   if (linkResult.collision) {
-    return materializeBuildCollisionBlock_(sourceId, targetId, 'doctor_patient_links', linkResult.targetDocumentName, counts, 'target_doctor_link_already_exists');
+    return materializeBuildCollisionBlock_(sourceId, targetId, 'doctor_patient_links', linkResult.targetDocumentName, counts, linkResult.reason || 'target_doctor_link_already_exists');
   }
-  counts.doctorLinksMoved += doctorLinks.length;
+  counts.doctorLinksMoved += linkResult.movedCount || 0;
+  counts.doctorLinkDuplicatesRemoved += linkResult.duplicateRemovedCount || 0;
 
   var therapeuticResult = materializeAppendTherapeuticAdviceMoveWrites_(cfg, writes, sourceId, targetId, nowIso);
   if (therapeuticResult.conflict) {
@@ -1860,6 +1864,8 @@ function materializeAppendSubcollectionMoveWrites_(writes, docs, subcollection, 
 }
 
 function materializeAppendDoctorLinkMoveWrites_(cfg, writes, docs, sourceId, targetId, targetFullName, nowIso) {
+  var movedCount = 0;
+  var duplicateRemovedCount = 0;
   for (var i = 0; i < docs.length; i++) {
     var doc = docs[i] || {};
     var sourceName = String(doc.documentName || '').trim();
@@ -1867,8 +1873,18 @@ function materializeAppendDoctorLinkMoveWrites_(cfg, writes, docs, sourceId, tar
     var sourceDocId = extractFirestoreDocumentId_(sourceName);
     var targetDocId = materializeRetargetDoctorLinkId_(sourceDocId, sourceId, targetId);
     var targetName = buildFirestoreDocumentName_(cfg, 'doctor_patient_links', targetDocId);
-    if (materializeGetDocumentByNameOrNull_(targetName)) {
-      return { collision: true, targetDocumentName: targetName };
+    var targetLink = materializeGetDocumentByNameOrNull_(targetName);
+    if (targetLink) {
+      if (materializeDoctorLinksEquivalent_(doc, targetLink)) {
+        writes.push(materializeBuildDeleteWriteByName_(sourceName));
+        duplicateRemovedCount++;
+        continue;
+      }
+      return {
+        collision: true,
+        targetDocumentName: targetName,
+        reason: 'doctor_link_conflict_requires_user_choice'
+      };
     }
     var nextData = materializeCleanDocumentForCopy_(doc);
     nextData.id = targetDocId;
@@ -1879,8 +1895,34 @@ function materializeAppendDoctorLinkMoveWrites_(cfg, writes, docs, sourceId, tar
     nextData.identityMaterializedAt = nowIso;
     writes.push(materializeBuildCreateOnlyWriteByName_(targetName, nextData));
     writes.push(materializeBuildDeleteWriteByName_(sourceName));
+    movedCount++;
   }
-  return { collision: false };
+  return {
+    collision: false,
+    movedCount: movedCount,
+    duplicateRemovedCount: duplicateRemovedCount
+  };
+}
+
+function materializeDoctorLinksEquivalent_(sourceLink, targetLink) {
+  var sourceDoctorId = identityMergeComparableString_(sourceLink && (sourceLink.doctorId || sourceLink.doctorFiscalCode || sourceLink.medicalDoctorId));
+  var targetDoctorId = identityMergeComparableString_(targetLink && (targetLink.doctorId || targetLink.doctorFiscalCode || targetLink.medicalDoctorId));
+  if (sourceDoctorId && targetDoctorId) {
+    return sourceDoctorId === targetDoctorId;
+  }
+
+  var sourceDoctor = materializeDoctorLinkComparableDoctor_(sourceLink);
+  var targetDoctor = materializeDoctorLinkComparableDoctor_(targetLink);
+  return !!sourceDoctor && !!targetDoctor && sourceDoctor === targetDoctor;
+}
+
+function materializeDoctorLinkComparableDoctor_(link) {
+  var fullName = identityMergeComparableString_(link && (link.doctorFullName || link.doctorDisplayName || link.doctor || link.medico));
+  if (fullName) return fullName;
+
+  var surname = identityMergeComparableString_(link && link.doctorSurname);
+  var name = identityMergeComparableString_(link && link.doctorName);
+  return identityMergeComparableString_((surname + ' ' + name).trim());
 }
 
 function materializeAppendTherapeuticAdviceMoveWrites_(cfg, writes, sourceId, targetId, nowIso) {
