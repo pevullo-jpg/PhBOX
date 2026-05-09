@@ -2192,6 +2192,11 @@ function processRepairMaterializedPatientDashboardIndexNames(options) {
     repairCursorWriteSkippedDryRun: false,
     rowsNeedingRepair: 0,
     patientDocsRead: 0,
+    backendNameSourceDocsRead: 0,
+    repairedFromPatients: 0,
+    repairedFromDrivePdfImports: 0,
+    repairedFromPrescriptionIntakes: 0,
+    skippedNameSourceConflict: 0,
     repairsPlanned: 0,
     repairsApplied: 0,
     skippedMissingPatient: 0,
@@ -2227,16 +2232,32 @@ function processRepairMaterializedPatientDashboardIndexNames(options) {
       continue;
     }
 
-    var repairedFullName = materializeCanonicalPatientDisplayName_(patient, fiscalCode);
+    var nameResolution = materializeResolveDashboardRepairName_(cfg, patient, fiscalCode, 10);
+    result.backendNameSourceDocsRead += Number(nameResolution.docsRead || 0);
+    var repairedFullName = String(nameResolution.fullName || '').trim();
+    if (nameResolution.conflict) {
+      result.skippedNameSourceConflict++;
+      identityResolutionRequestsAddSample_(result.samples.skipped, {
+        fiscalCode: fiscalCode,
+        currentFullName: String(row.fullName || row.patientFullName || '').trim(),
+        reason: 'backend_name_source_conflict',
+        conflictingNames: nameResolution.conflictingNames || []
+      }, maxSamples);
+      continue;
+    }
     if (materializeIsPlaceholderPatientName_(repairedFullName, fiscalCode)) {
       result.skippedMissingPatientName++;
       identityResolutionRequestsAddSample_(result.samples.skipped, {
         fiscalCode: fiscalCode,
         currentFullName: String(row.fullName || row.patientFullName || '').trim(),
-        reason: 'patient_full_name_missing_or_placeholder'
+        reason: 'backend_name_source_missing_or_placeholder'
       }, maxSamples);
       continue;
     }
+
+    if (nameResolution.source === 'patients') result.repairedFromPatients++;
+    if (nameResolution.source === 'drive_pdf_imports') result.repairedFromDrivePdfImports++;
+    if (nameResolution.source === 'prescription_intakes') result.repairedFromPrescriptionIntakes++;
 
     if (!identityResolutionRequestsCanConsumeWrites_(result, dryRun, maxWrites, 1)) {
       break;
@@ -2263,6 +2284,7 @@ function processRepairMaterializedPatientDashboardIndexNames(options) {
         fiscalCode: fiscalCode,
         previousFullName: String(row.fullName || row.patientFullName || '').trim(),
         repairedFullName: repairedFullName,
+        nameSource: nameResolution.source || '',
         writesPlanned: 1
       }, maxSamples);
       continue;
@@ -2277,6 +2299,7 @@ function processRepairMaterializedPatientDashboardIndexNames(options) {
       fiscalCode: fiscalCode,
       previousFullName: String(row.fullName || row.patientFullName || '').trim(),
       repairedFullName: repairedFullName,
+      nameSource: nameResolution.source || '',
       writesSucceeded: 1
     }, maxSamples);
   }
@@ -2286,6 +2309,120 @@ function processRepairMaterializedPatientDashboardIndexNames(options) {
   result.checkedAt = new Date().toISOString();
   logInfo_(cfg, 'processRepairMaterializedPatientDashboardIndexNames completato', result);
   return result;
+}
+
+function materializeResolveDashboardRepairName_(cfg, patient, fiscalCode, maxDocsPerSource) {
+  var targetCf = normalizeCf_(fiscalCode);
+  var canonicalName = materializeCanonicalPatientDisplayName_(patient, targetCf);
+  if (!materializeIsPlaceholderPatientName_(canonicalName, targetCf)) {
+    return {
+      fullName: canonicalName,
+      source: 'patients',
+      docsRead: 0,
+      conflict: false,
+      conflictingNames: []
+    };
+  }
+  return materializeFindBackendOwnedPatientName_(cfg, targetCf, maxDocsPerSource);
+}
+
+function materializeFindBackendOwnedPatientName_(cfg, fiscalCode, maxDocsPerSource) {
+  var targetCf = normalizeCf_(fiscalCode);
+  var limit = identityResolutionRequestsBoundedInt_(maxDocsPerSource, 10, 1, 25);
+  var docsRead = 0;
+  var namesByComparable = {};
+  var ordered = [];
+
+  var driveImports = materializeListTopLevelWhereEqual_(cfg, 'drive_pdf_imports', 'patientFiscalCode', targetCf, limit);
+  docsRead += driveImports.length;
+  materializeCollectBackendOwnedPatientNames_(namesByComparable, ordered, driveImports, 'drive_pdf_imports', targetCf);
+
+  var intakes = materializeListTopLevelWhereEqual_(cfg, 'prescription_intakes', 'fiscalCode', targetCf, limit);
+  docsRead += intakes.length;
+  materializeCollectBackendOwnedPatientNames_(namesByComparable, ordered, intakes, 'prescription_intakes', targetCf);
+
+  if (ordered.length === 1) {
+    return {
+      fullName: ordered[0].fullName,
+      source: ordered[0].source,
+      docsRead: docsRead,
+      conflict: false,
+      conflictingNames: []
+    };
+  }
+  if (ordered.length > 1) {
+    return {
+      fullName: '',
+      source: '',
+      docsRead: docsRead,
+      conflict: true,
+      conflictingNames: ordered.map(function (item) { return item.fullName; }).slice(0, 10)
+    };
+  }
+  return {
+    fullName: '',
+    source: '',
+    docsRead: docsRead,
+    conflict: false,
+    conflictingNames: []
+  };
+}
+
+function materializeCollectBackendOwnedPatientNames_(namesByComparable, ordered, docs, source, fiscalCode) {
+  for (var i = 0; i < docs.length; i++) {
+    var doc = docs[i] || {};
+    var fullName = materializeBestBackendOwnedNameFromDocument_(doc, fiscalCode);
+    if (materializeIsPlaceholderPatientName_(fullName, fiscalCode)) continue;
+    var key = identityMergeComparableString_(fullName);
+    if (!key || namesByComparable[key]) continue;
+    namesByComparable[key] = true;
+    ordered.push({ fullName: fullName, source: source });
+  }
+}
+
+function materializeBestBackendOwnedNameFromDocument_(doc, fiscalCode) {
+  var targetCf = normalizeCf_(fiscalCode);
+  var directCandidates = [
+    doc && doc.patientFullName,
+    doc && doc.patientName,
+    doc && doc.fullName,
+    doc && doc.displayName,
+    doc && doc.name
+  ];
+  for (var i = 0; i < directCandidates.length; i++) {
+    var directName = materializeNormalizeDisplayNameCandidate_(directCandidates[i]);
+    if (directName && !materializeIsPlaceholderPatientName_(directName, targetCf)) {
+      return directName;
+    }
+  }
+
+  var firstNameCandidates = [
+    doc && doc.patientFirstName,
+    doc && doc.firstName,
+    doc && doc.givenName,
+    doc && doc.nome
+  ];
+  var lastNameCandidates = [
+    doc && doc.patientLastName,
+    doc && doc.patientSurname,
+    doc && doc.lastName,
+    doc && doc.surname,
+    doc && doc.familyName,
+    doc && doc.cognome
+  ];
+  for (var j = 0; j < firstNameCandidates.length; j++) {
+    var firstName = materializeNormalizeDisplayNameCandidate_(firstNameCandidates[j]);
+    if (!firstName || materializeIsPlaceholderPatientName_(firstName, targetCf)) continue;
+    for (var k = 0; k < lastNameCandidates.length; k++) {
+      var lastName = materializeNormalizeDisplayNameCandidate_(lastNameCandidates[k]);
+      if (!lastName || materializeIsPlaceholderPatientName_(lastName, targetCf)) continue;
+      var combinedName = materializeNormalizeDisplayNameCandidate_(firstName + ' ' + lastName);
+      if (combinedName && !materializeIsPlaceholderPatientName_(combinedName, targetCf)) {
+        return combinedName;
+      }
+    }
+  }
+  return '';
 }
 
 function materializePersistDashboardNameRepairCursor_(cfg, result, dryRun, maxWrites, repairScan, nowIso) {
