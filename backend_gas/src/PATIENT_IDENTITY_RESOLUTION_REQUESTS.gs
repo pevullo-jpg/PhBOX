@@ -2373,11 +2373,44 @@ function materializeCollectBackendOwnedPatientNames_(namesByComparable, ordered,
     var doc = docs[i] || {};
     var fullName = materializeBestBackendOwnedNameFromDocument_(doc, fiscalCode);
     if (materializeIsPlaceholderPatientName_(fullName, fiscalCode)) continue;
+    if (materializeIsSuspiciousBackendOwnedPatientName_(fullName, fiscalCode)) continue;
     var key = identityMergeComparableString_(fullName);
     if (!key || namesByComparable[key]) continue;
     namesByComparable[key] = true;
     ordered.push({ fullName: fullName, source: source });
   }
+}
+
+
+function materializeIsSuspiciousBackendOwnedPatientName_(value, fiscalCode) {
+  var name = materializeNormalizeDisplayNameCandidate_(value);
+  var cf = normalizeCf_(fiscalCode);
+  if (!name || !cf) return false;
+  var compactName = identityMergeComparableString_(name).replace(/[^A-Z0-9]/g, '');
+  if (compactName.indexOf(cf) >= 0) return true;
+  var cfFragments = [];
+  for (var size = 5; size <= 8; size++) {
+    for (var i = 0; i <= cf.length - size; i++) {
+      cfFragments.push(cf.substring(i, i + size));
+    }
+  }
+  var rawTokens = identityMergeComparableString_(name).split(/[^A-Z0-9]+/).filter(function (token) {
+    return token && token.length >= 5;
+  });
+  for (var t = 0; t < rawTokens.length; t++) {
+    var token = rawTokens[t];
+    var tokenVariants = [token];
+    if (token.charAt(0) === 'I' && token.length > 5) tokenVariants.push(token.substring(1));
+    for (var v = 0; v < tokenVariants.length; v++) {
+      var candidate = tokenVariants[v];
+      if (candidate.length < 5) continue;
+      if (cf.indexOf(candidate) >= 0) return true;
+      for (var f = 0; f < cfFragments.length; f++) {
+        if (candidate.indexOf(cfFragments[f]) >= 0) return true;
+      }
+    }
+  }
+  return false;
 }
 
 function materializeBestBackendOwnedNameFromDocument_(doc, fiscalCode) {
