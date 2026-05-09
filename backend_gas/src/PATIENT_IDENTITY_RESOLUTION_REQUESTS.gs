@@ -2115,6 +2115,8 @@ function materializeIsPlaceholderPatientName_(value, fiscalCode) {
   var cf = normalizeCf_(fiscalCode);
   if (cf && comparableName === cf) return true;
   if (auditPatientIdentityIsTmp_(comparableName)) return true;
+  if (comparableName === 'ASSISTITO SENZA NOME') return true;
+  if (comparableName === 'SENZA NOME') return true;
   return false;
 }
 
