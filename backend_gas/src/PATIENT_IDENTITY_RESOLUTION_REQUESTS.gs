@@ -1991,7 +1991,7 @@ function materializeBuildTargetPatientAggregatePatch_(targetPatient, sourcePatie
 function materializeBuildTargetIndexPatch_(targetIndex, sourceIndex, targetPatient, sourceId, targetId, nowIso) {
   sourceIndex = sourceIndex || {};
   targetIndex = targetIndex || {};
-  var fullName = String(targetIndex.fullName || targetPatient.fullName || targetPatient.patientFullName || targetId).trim() || targetId;
+  var fullName = materializeBestPatientDisplayName_(targetIndex, targetPatient, sourceIndex, targetId);
   var alias = String(targetIndex.alias || targetPatient.alias || '').trim();
   var doctorFullName = String(targetIndex.doctorFullName || targetPatient.doctorFullName || targetPatient.doctorName || '').trim();
   var city = String(targetIndex.city || targetPatient.city || '').trim();
@@ -2032,6 +2032,387 @@ function materializeBuildTargetIndexPatch_(targetIndex, sourceIndex, targetPatie
     searchPrefixes: buildPatientDashboardSearchPrefixes_([targetId, fullName, alias, doctorFullName, city, exemptionCode].concat(exemptions)),
     updatedAt: nowIso
   };
+}
+
+
+function materializeBestPatientDisplayName_(targetIndex, targetPatient, sourceIndex, targetId) {
+  var targetCf = normalizeCf_(targetId);
+  var canonicalName = materializeCanonicalPatientDisplayName_(targetPatient, targetCf);
+  if (!materializeIsPlaceholderPatientName_(canonicalName, targetCf)) {
+    return canonicalName;
+  }
+  var candidates = [
+    targetIndex && targetIndex.fullName,
+    targetIndex && targetIndex.patientFullName,
+    sourceIndex && sourceIndex.fullName,
+    sourceIndex && sourceIndex.patientFullName
+  ];
+  for (var i = 0; i < candidates.length; i++) {
+    var name = materializeNormalizeDisplayNameCandidate_(candidates[i]);
+    if (name && !materializeIsPlaceholderPatientName_(name, targetCf)) {
+      return name;
+    }
+  }
+  return targetCf || String(targetId || '').trim();
+}
+
+function materializeCanonicalPatientDisplayName_(patient, fiscalCode) {
+  var targetCf = normalizeCf_(fiscalCode);
+  var directCandidates = [
+    patient && patient.fullName,
+    patient && patient.patientFullName,
+    patient && patient.displayName,
+    patient && patient.patientName
+  ];
+  for (var i = 0; i < directCandidates.length; i++) {
+    var directName = materializeNormalizeDisplayNameCandidate_(directCandidates[i]);
+    if (directName && !materializeIsPlaceholderPatientName_(directName, targetCf)) {
+      return directName;
+    }
+  }
+
+  var firstNameCandidates = [
+    patient && patient.name,
+    patient && patient.firstName,
+    patient && patient.givenName,
+    patient && patient.nome,
+    patient && patient.patientFirstName,
+    patient && patient.patientGivenName
+  ];
+  var lastNameCandidates = [
+    patient && patient.surname,
+    patient && patient.lastName,
+    patient && patient.familyName,
+    patient && patient.cognome,
+    patient && patient.patientLastName,
+    patient && patient.patientSurname,
+    patient && patient.patientFamilyName
+  ];
+  for (var j = 0; j < firstNameCandidates.length; j++) {
+    for (var k = 0; k < lastNameCandidates.length; k++) {
+      var combinedName = materializeNormalizeDisplayNameCandidate_([
+        firstNameCandidates[j],
+        lastNameCandidates[k]
+      ].filter(function (part) {
+        return String(part == null ? '' : part).trim() !== '';
+      }).join(' '));
+      if (combinedName && !materializeIsPlaceholderPatientName_(combinedName, targetCf)) {
+        return combinedName;
+      }
+    }
+  }
+
+  return targetCf || String(fiscalCode || '').trim();
+}
+
+function materializeNormalizeDisplayNameCandidate_(value) {
+  return String(value == null ? '' : value).trim().replace(/\s+/g, ' ');
+}
+
+function materializeIsPlaceholderPatientName_(value, fiscalCode) {
+  var name = materializeNormalizeDisplayNameCandidate_(value);
+  if (!name) return true;
+  var comparableName = identityMergeComparableString_(name);
+  var cf = normalizeCf_(fiscalCode);
+  if (cf && comparableName === cf) return true;
+  if (auditPatientIdentityIsTmp_(comparableName)) return true;
+  return false;
+}
+
+function dryRunRepairMaterializedPatientDashboardIndexNames() {
+  return processRepairMaterializedPatientDashboardIndexNames({
+    dryRun: true,
+    maxRows: 500,
+    maxWrites: 25,
+    maxSamples: 30
+  });
+}
+
+function runRepairMaterializedPatientDashboardIndexNamesBatch() {
+  return processRepairMaterializedPatientDashboardIndexNames({
+    dryRun: false,
+    applyToken: 'REPAIR_MATERIALIZED_PATIENT_DASHBOARD_NAMES',
+    maxRows: 500,
+    maxWrites: 25,
+    maxSamples: 30
+  });
+}
+
+function processRepairMaterializedPatientDashboardIndexNames(options) {
+  options = options || {};
+  var cfg = getPhboxConfig_();
+  var startedAt = new Date().toISOString();
+  var dryRun = options.dryRun !== false;
+  var applyToken = String(options.applyToken || '').trim();
+  var maxRows = identityResolutionRequestsBoundedInt_(options.maxRows, 500, 1, 1000);
+  var maxWrites = identityResolutionRequestsBoundedInt_(options.maxWrites, 25, 1, 100);
+  var maxSamples = identityResolutionRequestsBoundedInt_(options.maxSamples, 30, 1, 100);
+  var nowIso = new Date().toISOString();
+
+  if (!dryRun && applyToken !== 'REPAIR_MATERIALIZED_PATIENT_DASHBOARD_NAMES') {
+    var blocked = {
+      ok: false,
+      mode: 'repair_materialized_patient_dashboard_names_blocked',
+      source: 'patient_identity_materializer',
+      dryRun: false,
+      startedAt: startedAt,
+      checkedAt: new Date().toISOString(),
+      reason: 'blocked_missing_apply_token',
+      writesAttempted: 0,
+      writesSucceeded: 0,
+      firestoreWritesDelta: 0
+    };
+    logInfo_(cfg, 'processRepairMaterializedPatientDashboardIndexNames bloccato', blocked);
+    return blocked;
+  }
+
+  var repairScan = materializeListDashboardIndexRowsForNameRepair_(cfg, maxRows);
+  var rows = repairScan.items || [];
+  var result = {
+    ok: true,
+    mode: dryRun ? 'repair_materialized_patient_dashboard_names_dry_run' : 'repair_materialized_patient_dashboard_names_apply',
+    source: 'patient_identity_materializer',
+    dryRun: dryRun,
+    startedAt: startedAt,
+    checkedAt: '',
+    maxRows: maxRows,
+    maxWrites: maxWrites,
+    maxSamples: maxSamples,
+    rowsScanned: rows.length,
+    rowsRawScanned: repairScan.rawScanned || rows.length,
+    rowsScanLimitReached: !!repairScan.scanLimitReached,
+    repairCursorPreviousDocumentName: String(repairScan.cursorPreviousDocumentName || ''),
+    repairCursorNextDocumentName: String(repairScan.cursorNextDocumentName || ''),
+    repairCursorShouldPersist: !!repairScan.cursorShouldPersist,
+    repairCursorReset: !!repairScan.cursorReset,
+    repairCursorWrapped: !!repairScan.cursorWrapped,
+    repairCursorWritePlanned: false,
+    repairCursorWriteApplied: false,
+    repairCursorWriteSkippedDryRun: false,
+    rowsNeedingRepair: 0,
+    patientDocsRead: 0,
+    repairsPlanned: 0,
+    repairsApplied: 0,
+    skippedMissingPatient: 0,
+    skippedMissingPatientName: 0,
+    writesPlanned: 0,
+    writesAttempted: 0,
+    writesSucceeded: 0,
+    firestoreWritesDelta: 0,
+    maxWritesReached: false,
+    samples: {
+      planned: [],
+      applied: [],
+      skipped: []
+    }
+  };
+
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i] || {};
+    var fiscalCode = normalizeCf_(row.fiscalCode || row.patientFiscalCode || row.documentId || '');
+    if (!fiscalCode) continue;
+    if (!materializeDashboardIndexNameNeedsRepair_(row, fiscalCode)) continue;
+    result.rowsNeedingRepair++;
+
+    var patient = materializeGetTopLevelDocumentOrNull_(cfg, 'patients', fiscalCode);
+    result.patientDocsRead++;
+    if (!patient) {
+      result.skippedMissingPatient++;
+      identityResolutionRequestsAddSample_(result.samples.skipped, {
+        fiscalCode: fiscalCode,
+        currentFullName: String(row.fullName || row.patientFullName || '').trim(),
+        reason: 'patient_missing'
+      }, maxSamples);
+      continue;
+    }
+
+    var repairedFullName = materializeCanonicalPatientDisplayName_(patient, fiscalCode);
+    if (materializeIsPlaceholderPatientName_(repairedFullName, fiscalCode)) {
+      result.skippedMissingPatientName++;
+      identityResolutionRequestsAddSample_(result.samples.skipped, {
+        fiscalCode: fiscalCode,
+        currentFullName: String(row.fullName || row.patientFullName || '').trim(),
+        reason: 'patient_full_name_missing_or_placeholder'
+      }, maxSamples);
+      continue;
+    }
+
+    if (!identityResolutionRequestsCanConsumeWrites_(result, dryRun, maxWrites, 1)) {
+      break;
+    }
+
+    var alias = String(row.alias || patient.alias || '').trim();
+    var doctorFullName = String(row.doctorFullName || patient.doctorFullName || patient.doctorName || '').trim();
+    var city = String(row.city || patient.city || '').trim();
+    var exemptionCode = String(row.exemptionCode || patient.exemptionCode || '').trim();
+    var exemptions = materializeMergeStringArrays_(row.exemptions, patient.exemptions || []);
+    if (exemptionCode) exemptions = materializeMergeStringArrays_([exemptionCode], exemptions);
+    var patch = {
+      fiscalCode: fiscalCode,
+      fullName: repairedFullName,
+      searchPrefixes: buildPatientDashboardSearchPrefixes_([fiscalCode, repairedFullName, alias, doctorFullName, city, exemptionCode].concat(exemptions)),
+      identityDashboardNameRepairedAt: nowIso,
+      updatedAt: nowIso
+    };
+
+    result.repairsPlanned++;
+    if (dryRun) {
+      result.writesPlanned++;
+      identityResolutionRequestsAddSample_(result.samples.planned, {
+        fiscalCode: fiscalCode,
+        previousFullName: String(row.fullName || row.patientFullName || '').trim(),
+        repairedFullName: repairedFullName,
+        writesPlanned: 1
+      }, maxSamples);
+      continue;
+    }
+
+    executeFirestoreCommit_(cfg, [buildFirestorePatchWrite_(cfg, 'patient_dashboard_index', fiscalCode, patch, Object.keys(patch))]);
+    result.repairsApplied++;
+    result.writesAttempted++;
+    result.writesSucceeded++;
+    result.firestoreWritesDelta++;
+    identityResolutionRequestsAddSample_(result.samples.applied, {
+      fiscalCode: fiscalCode,
+      previousFullName: String(row.fullName || row.patientFullName || '').trim(),
+      repairedFullName: repairedFullName,
+      writesSucceeded: 1
+    }, maxSamples);
+  }
+
+  materializePersistDashboardNameRepairCursor_(cfg, result, dryRun, maxWrites, repairScan, nowIso);
+
+  result.checkedAt = new Date().toISOString();
+  logInfo_(cfg, 'processRepairMaterializedPatientDashboardIndexNames completato', result);
+  return result;
+}
+
+function materializePersistDashboardNameRepairCursor_(cfg, result, dryRun, maxWrites, repairScan, nowIso) {
+  if (!repairScan || !repairScan.cursorShouldPersist) return;
+  if (result.maxWritesReached) return;
+  result.repairCursorWritePlanned = true;
+  if (dryRun) {
+    result.repairCursorWriteSkippedDryRun = true;
+    return;
+  }
+  if (!identityResolutionRequestsCanConsumeWrites_(result, false, maxWrites, 1)) return;
+  var nextDocumentName = repairScan.cursorReset ? '' : String(repairScan.cursorNextDocumentName || '');
+  executeFirestoreCommit_(cfg, [buildFirestorePatchWrite_(cfg, 'phbox_runtime', 'patient_dashboard_name_repair_cursor', {
+    materializer: 'patient_dashboard_name_repair',
+    cursorVersion: 1,
+    dashboardNameRepairCursorDocumentName: nextDocumentName,
+    dashboardNameRepairCursorReset: !!repairScan.cursorReset,
+    dashboardNameRepairCursorWrapped: !!repairScan.cursorWrapped,
+    dashboardNameRepairCursorUpdatedAt: nowIso,
+    updatedAt: nowIso
+  }, [
+    'materializer',
+    'cursorVersion',
+    'dashboardNameRepairCursorDocumentName',
+    'dashboardNameRepairCursorReset',
+    'dashboardNameRepairCursorWrapped',
+    'dashboardNameRepairCursorUpdatedAt',
+    'updatedAt'
+  ])]);
+  result.writesAttempted++;
+  result.writesSucceeded++;
+  result.firestoreWritesDelta++;
+  result.repairCursorWriteApplied = true;
+}
+
+function materializeDashboardIndexNameNeedsRepair_(row, fiscalCode) {
+  var currentName = String(row && (row.fullName || row.patientFullName) || '').trim();
+  if (materializeIsPlaceholderPatientName_(currentName, fiscalCode)) return true;
+  return false;
+}
+
+function materializeListDashboardIndexRowsForNameRepair_(cfg, limit) {
+  var pageSize = 50;
+  var rawScanned = 0;
+  var maxRawScan = Math.max(1, Number(limit || 1));
+  var cursor = materializeReadDashboardNameRepairCursor_(cfg);
+  var cursorPreviousDocumentName = String(cursor.dashboardNameRepairCursorDocumentName || '');
+  var startAfterDocumentName = cursorPreviousDocumentName;
+  var lastDocumentName = '';
+  var items = [];
+  var scanLimitReached = false;
+  var cursorShouldPersist = false;
+  var cursorReset = false;
+  var cursorWrapped = false;
+
+  while (items.length < maxRawScan && rawScanned < maxRawScan) {
+    var remainingRaw = maxRawScan - rawScanned;
+    var queryLimit = Math.min(pageSize, remainingRaw);
+    var page = materializeRunDashboardIndexNameRepairPage_(cfg, queryLimit, startAfterDocumentName);
+    if (!page.length) {
+      if (startAfterDocumentName && !cursorWrapped) {
+        startAfterDocumentName = '';
+        cursorWrapped = true;
+        cursorReset = true;
+        cursorShouldPersist = true;
+        continue;
+      }
+      cursorReset = true;
+      cursorShouldPersist = !!cursorPreviousDocumentName;
+      break;
+    }
+
+    for (var i = 0; i < page.length; i++) {
+      var item = page[i] || {};
+      rawScanned++;
+      lastDocumentName = String(item.documentName || lastDocumentName || '');
+      items.push(item);
+      if (items.length >= maxRawScan || rawScanned >= maxRawScan) break;
+    }
+
+    if (page.length < queryLimit) {
+      cursorReset = true;
+      cursorShouldPersist = !!cursorPreviousDocumentName || cursorWrapped;
+      break;
+    }
+    if (lastDocumentName) startAfterDocumentName = lastDocumentName;
+  }
+
+  if (rawScanned >= maxRawScan) scanLimitReached = true;
+  if (rawScanned >= maxRawScan && lastDocumentName) {
+    cursorShouldPersist = true;
+    cursorReset = false;
+  }
+
+  return {
+    items: items,
+    rawScanned: rawScanned,
+    scanLimitReached: scanLimitReached,
+    cursorPreviousDocumentName: cursorPreviousDocumentName,
+    cursorNextDocumentName: cursorReset ? '' : String(lastDocumentName || ''),
+    cursorShouldPersist: cursorShouldPersist,
+    cursorReset: cursorReset,
+    cursorWrapped: cursorWrapped
+  };
+}
+
+function materializeReadDashboardNameRepairCursor_(cfg) {
+  var cursor = materializeGetDocumentByNameOrNull_(buildFirestoreDocumentName_(cfg, 'phbox_runtime', 'patient_dashboard_name_repair_cursor'));
+  if (!cursor) return {};
+  return cursor;
+}
+
+function materializeRunDashboardIndexNameRepairPage_(cfg, limit, startAfterDocumentName) {
+  var query = {
+    from: [{ collectionId: 'patient_dashboard_index' }],
+    orderBy: [{
+      field: { fieldPath: '__name__' },
+      direction: 'ASCENDING'
+    }],
+    limit: Math.max(1, Number(limit || 1))
+  };
+  if (startAfterDocumentName) {
+    query.startAt = {
+      values: [{ referenceValue: startAfterDocumentName }],
+      before: false
+    };
+  }
+  return materializeRunQuery_(cfg, { structuredQuery: query });
 }
 
 function materializeCleanDocumentForCopy_(doc) {
