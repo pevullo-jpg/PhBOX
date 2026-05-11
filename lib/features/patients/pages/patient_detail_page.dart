@@ -1154,8 +1154,8 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
 
           Future<void> submit(StateSetter setLocalState) async {
             final String doctor = selectedDoctor.trim();
-            final String drugName = drugController.text.trim();
-            if (drugName.isEmpty || doctor.isEmpty || doctor == '-') {
+            final List<String> drugNames = _splitMultiEntryInput(drugController.text);
+            if (drugNames.isEmpty || doctor.isEmpty || doctor == '-') {
               setLocalState(() => localError = 'Farmaco e medico sono obbligatori.');
               return;
             }
@@ -1163,19 +1163,27 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               busy = true;
               localError = '';
             });
+            final DateTime now = DateTime.now();
+            final String? note = noteController.text.trim().isEmpty ? null : noteController.text.trim();
+            final List<Advance> advances = <Advance>[
+              for (int i = 0; i < drugNames.length; i++)
+                Advance(
+                  id: _localId('advance_${i + 1}'),
+                  patientFiscalCode: patient.fiscalCode,
+                  patientName: patient.fullName,
+                  drugName: drugNames[i],
+                  doctorName: doctor,
+                  note: note,
+                  createdAt: now,
+                  updatedAt: now,
+                ),
+            ];
+            final List<Advance> savedAdvances = <Advance>[];
             try {
-              final DateTime now = DateTime.now();
-              final Advance advance = Advance(
-                id: _localId('advance'),
-                patientFiscalCode: patient.fiscalCode,
-                patientName: patient.fullName,
-                drugName: drugName,
-                doctorName: doctor,
-                note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
-                createdAt: now,
-                updatedAt: now,
-              );
-              await _advancesRepository.saveAdvance(advance);
+              for (final Advance advance in advances) {
+                await _advancesRepository.saveAdvance(advance);
+                savedAdvances.add(advance);
+              }
               await _doctorPatientLinksRepository.saveManualOverride(
                 patientFiscalCode: patient.fiscalCode,
                 patientFullName: patient.fullName,
@@ -1186,18 +1194,34 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                 Navigator.of(dialogContext).pop();
               }
               if (mounted) {
-                await _applyFrontendManagedTotalsDelta(advanceCountDelta: 1);
+                await _applyFrontendManagedTotalsDelta(advanceCountDelta: savedAdvances.length);
                 final _PatientDetailData nextData = data.copyWith(
-                  advances: <Advance>[advance, ...data.advances],
+                  advances: <Advance>[...savedAdvances, ...data.advances],
                   resolvedDoctorName: doctor,
                 );
                 await _syncPatientDashboardIndex(nextData);
                 _replaceData(
                   nextData,
-                  'Anticipo aggiunto.',
+                  savedAdvances.length == 1 ? 'Anticipo aggiunto.' : 'Anticipi aggiunti: ${savedAdvances.length}.',
                 );
               }
             } catch (e) {
+              if (savedAdvances.isNotEmpty && mounted) {
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop();
+                }
+                await _applyFrontendManagedTotalsDelta(advanceCountDelta: savedAdvances.length);
+                final _PatientDetailData nextData = data.copyWith(
+                  advances: <Advance>[...savedAdvances, ...data.advances],
+                  resolvedDoctorName: doctor,
+                );
+                await _syncPatientDashboardIndex(nextData);
+                _replaceData(
+                  nextData,
+                  'Anticipi parzialmente aggiunti: ${savedAdvances.length}/${advances.length}. Verifica prima di reinserire. Errore: $e',
+                );
+                return;
+              }
               if (dialogContext.mounted) {
                 setLocalState(() {
                   busy = false;
@@ -1217,7 +1241,12 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _dialogField(drugController, 'Farmaco / articolo'),
+                      _dialogField(
+                        drugController,
+                        'Farmaco / articolo',
+                        maxLines: 4,
+                        helperText: 'Per più voci usa virgola o vai a capo.',
+                      ),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
                         value: selectedDoctor == '-' || selectedDoctor.isEmpty ? null : selectedDoctor,
@@ -1291,6 +1320,14 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     }
   }
 
+  List<String> _splitMultiEntryInput(String value) {
+    return value
+        .split(RegExp(r'[,\n\r]+'))
+        .map((String item) => item.trim())
+        .where((String item) => item.isNotEmpty)
+        .toList(growable: false);
+  }
+
   String _fallbackDoctorFromHistory(_PatientDetailData data) {
     if (data.resolvedDoctorName != '-' && data.resolvedDoctorName.trim().isNotEmpty) {
       return data.resolvedDoctorName.trim();
@@ -1320,7 +1357,12 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _dialogField(drugController, 'Farmaco / articolo'),
+              _dialogField(
+                drugController,
+                'Farmaco / articolo',
+                maxLines: 4,
+                helperText: 'Per più voci usa virgola o vai a capo.',
+              ),
               const SizedBox(height: 12),
               _dialogField(
                 quantityController,
@@ -1345,27 +1387,52 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       ),
     );
     if (confirmed != true) return;
+    final List<Booking> savedBookings = <Booking>[];
+    List<Booking> bookings = const <Booking>[];
     try {
+      final List<String> drugNames = _splitMultiEntryInput(drugController.text);
+      if (drugNames.isEmpty) {
+        setState(() => _message = 'Farmaco / articolo obbligatorio.');
+        return;
+      }
       final DateTime now = DateTime.now();
-      final Booking booking = Booking(
-        id: _localId('booking'),
-        patientFiscalCode: patient.fiscalCode,
-        patientName: patient.fullName,
-        drugName: drugController.text.trim(),
-        quantity: int.tryParse(quantityController.text.trim()) ?? 1,
-        createdAt: now,
-        expectedDate: now,
-        note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
-      );
-      await _bookingsRepository.saveBooking(booking);
-      await _applyFrontendManagedTotalsDelta(bookingCountDelta: 1);
-      final _PatientDetailData nextData = data.copyWith(bookings: <Booking>[booking, ...data.bookings]);
+      final int quantity = int.tryParse(quantityController.text.trim()) ?? 1;
+      final String? note = noteController.text.trim().isEmpty ? null : noteController.text.trim();
+      bookings = <Booking>[
+        for (int i = 0; i < drugNames.length; i++)
+          Booking(
+            id: _localId('booking_${i + 1}'),
+            patientFiscalCode: patient.fiscalCode,
+            patientName: patient.fullName,
+            drugName: drugNames[i],
+            quantity: quantity,
+            createdAt: now,
+            expectedDate: now,
+            note: note,
+          ),
+      ];
+      for (final Booking booking in bookings) {
+        await _bookingsRepository.saveBooking(booking);
+        savedBookings.add(booking);
+      }
+      await _applyFrontendManagedTotalsDelta(bookingCountDelta: savedBookings.length);
+      final _PatientDetailData nextData = data.copyWith(bookings: <Booking>[...savedBookings, ...data.bookings]);
       await _syncPatientDashboardIndex(nextData);
       _replaceData(
         nextData,
-        'Prenotazione aggiunta.',
+        savedBookings.length == 1 ? 'Prenotazione aggiunta.' : 'Prenotazioni aggiunte: ${savedBookings.length}.',
       );
     } catch (e) {
+      if (savedBookings.isNotEmpty) {
+        await _applyFrontendManagedTotalsDelta(bookingCountDelta: savedBookings.length);
+        final _PatientDetailData nextData = data.copyWith(bookings: <Booking>[...savedBookings, ...data.bookings]);
+        await _syncPatientDashboardIndex(nextData);
+        _replaceData(
+          nextData,
+          'Prenotazioni parzialmente aggiunte: ${savedBookings.length}/${bookings.length}. Verifica prima di reinserire. Errore: $e',
+        );
+        return;
+      }
       setState(() => _message = 'Errore salvataggio prenotazione: $e');
     } finally {
       drugController.dispose();
