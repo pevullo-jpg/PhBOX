@@ -1256,6 +1256,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                       _dialogField(
                         drugController,
                         'Farmaco / articolo',
+                        keyboardType: TextInputType.multiline,
                         maxLines: 4,
                         helperText: 'Per più voci usa virgola o vai a capo.',
                       ),
@@ -1334,7 +1335,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
 
   List<String> _splitMultiEntryInput(String value) {
     return value
-        .split(RegExp(r'[,\n\r]+'))
+        .split(RegExp(r'[,;，、\n\r]+'))
         .map((String item) => item.trim())
         .where((String item) => item.isNotEmpty)
         .toList(growable: false);
@@ -1372,6 +1373,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               _dialogField(
                 drugController,
                 'Farmaco / articolo',
+                keyboardType: TextInputType.multiline,
                 maxLines: 4,
                 helperText: 'Per più voci usa virgola o vai a capo.',
               ),
