@@ -308,9 +308,35 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     }
   }
 
-  Future<void> _syncPatientDashboardIndex(_PatientDetailData data) async {
+  bool _isDashboardExpiryAlert(DateTime? value) {
+    final PrescriptionExpiryInfo info = PrescriptionExpiryUtils.evaluate(value);
+    return info.status == PrescriptionValidityStatus.expiringSoon ||
+        info.status == PrescriptionValidityStatus.expired;
+  }
+
+  Future<void> _syncPatientDashboardIndex(
+    _PatientDetailData data, {
+    bool includeArchiveFlags = false,
+  }) async {
     final Patient? patient = data.patient;
     if (patient == null) return;
+    final int recipeCount = PhboxContractUtils.resolveDashboardRecipeCount(
+      allImports: data.allImports,
+      visibleImports: data.imports,
+      legacyPrescriptions: data.prescriptions,
+    );
+    final int dpcCount = PhboxContractUtils.resolveDashboardDpcCount(
+      allImports: data.allImports,
+      visibleImports: data.imports,
+      legacyPrescriptions: data.prescriptions,
+      fallbackHasDpc: patient.hasHasDpcAggregate && patient.hasDpc,
+    );
+    final bool hasExpiry = PhboxContractUtils.resolveDashboardHasExpiryAlert(
+      allImports: data.allImports,
+      visibleImports: data.imports,
+      legacyPrescriptions: data.prescriptions,
+      isExpiryAlert: _isDashboardExpiryAlert,
+    );
     try {
       await _patientDashboardIndexRepository.patchFrontendManagedState(
         fiscalCode: patient.fiscalCode,
@@ -319,6 +345,9 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         doctorFullName: data.resolvedDoctorName == '-' ? patient.doctorName : data.resolvedDoctorName,
         city: patient.city,
         exemptionCode: patient.primaryExemption,
+        recipeCount: includeArchiveFlags ? recipeCount : null,
+        dpcCount: includeArchiveFlags ? dpcCount : null,
+        hasExpiry: includeArchiveFlags ? hasExpiry : null,
         debtCount: data.debts.length,
         debtAmount: data.debts.fold<double>(0, (double sum, Debt item) => sum + item.residualAmount),
         advanceCount: data.advances.length,
@@ -1343,12 +1372,14 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     final List<Prescription> nextPrescriptions = data.prescriptions
         .where((Prescription current) => current.id != item.id)
         .toList();
+    final _PatientDetailData nextData = data.copyWith(
+      imports: nextVisibleImports,
+      allImports: nextAllImports,
+      prescriptions: nextPrescriptions,
+    );
+    await _syncPatientDashboardIndex(nextData, includeArchiveFlags: true);
     _replaceData(
-      data.copyWith(
-        imports: nextVisibleImports,
-        allImports: nextAllImports,
-        prescriptions: nextPrescriptions,
-      ),
+      nextData,
       'Richiesta delete PDF registrata.',
     );
   }

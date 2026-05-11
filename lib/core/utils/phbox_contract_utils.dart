@@ -212,6 +212,54 @@ class PhboxContractUtils {
     return legacyPrescriptions.any((Prescription item) => item.dpcFlag);
   }
 
+  static int resolveDashboardRecipeCount({
+    required List<DrivePdfImport> allImports,
+    required List<DrivePdfImport> visibleImports,
+    required List<Prescription> legacyPrescriptions,
+  }) {
+    if (allImports.isNotEmpty) {
+      return visibleImports.fold<int>(0, (int sum, DrivePdfImport item) {
+        return sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1);
+      });
+    }
+    return legacyPrescriptions.fold<int>(0, (int sum, Prescription item) {
+      return sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1);
+    });
+  }
+
+  static int resolveDashboardDpcCount({
+    required List<DrivePdfImport> allImports,
+    required List<DrivePdfImport> visibleImports,
+    required List<Prescription> legacyPrescriptions,
+    bool fallbackHasDpc = false,
+  }) {
+    if (allImports.isNotEmpty) {
+      return visibleImports.where((DrivePdfImport item) => item.isDpc).length;
+    }
+    final int legacyCount = legacyPrescriptions.where((Prescription item) => item.dpcFlag).length;
+    if (legacyCount > 0) {
+      return legacyCount;
+    }
+    return fallbackHasDpc ? 1 : 0;
+  }
+
+  static bool resolveDashboardHasExpiryAlert({
+    required List<DrivePdfImport> allImports,
+    required List<DrivePdfImport> visibleImports,
+    required List<Prescription> legacyPrescriptions,
+    required bool Function(DateTime? value) isExpiryAlert,
+  }) {
+    if (allImports.isNotEmpty) {
+      return visibleImports.any((DrivePdfImport item) {
+        final DateTime baseDate = item.prescriptionDate ?? item.createdAt;
+        return isExpiryAlert(baseDate.add(const Duration(days: 30)));
+      });
+    }
+    return legacyPrescriptions.any((Prescription item) {
+      return isExpiryAlert(item.expiryDate ?? item.prescriptionDate.add(const Duration(days: 30)));
+    });
+  }
+
   static DateTime? resolveLastPrescriptionDate({
     required Patient patient,
     required List<DrivePdfImport> allImports,
