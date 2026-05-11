@@ -71,8 +71,11 @@ class _DashboardPageState extends State<DashboardPage> {
   _DashboardTotals _dashboardTotals = _DashboardTotals.empty();
   int _pendingArchiveRecipeCountDelta = 0;
   int _pendingArchiveDpcCountDelta = 0;
+  int _pendingExpiringPatientCountDelta = 0;
   int? _lastBackendArchiveRecipeCount;
   int? _lastBackendArchiveDpcCount;
+  int? _lastBackendExpiringPatientCount;
+  String _lastBackendExpiringRecipesSignature = '';
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
   bool _searchInFlags = false;
@@ -201,7 +204,7 @@ class _DashboardPageState extends State<DashboardPage> {
           _dashboardTotals = visibleTotals;
           _lastRefreshAt = snapshot.updatedAt ?? DateTime.now();
         });
-        unawaited(_loadExpiringRecipesSectionIfNeeded(visibleTotals));
+        unawaited(_loadExpiringRecipesSectionIfNeeded(snapshotTotals));
       },
       onError: (Object error) {
         if (!mounted) {
@@ -243,8 +246,15 @@ class _DashboardPageState extends State<DashboardPage> {
       previousBackendCount: _lastBackendArchiveDpcCount,
       nextBackendCount: snapshotTotals.dpcCount,
     );
+    _pendingExpiringPatientCountDelta = _reconcilePendingArchiveDelta(
+      pendingDelta: _pendingExpiringPatientCountDelta,
+      previousBackendCount: _lastBackendExpiringPatientCount,
+      nextBackendCount: snapshotTotals.expiringCount,
+    );
     _lastBackendArchiveRecipeCount = snapshotTotals.recipeCount;
     _lastBackendArchiveDpcCount = snapshotTotals.dpcCount;
+    _lastBackendExpiringPatientCount = snapshotTotals.expiringCount;
+    _lastBackendExpiringRecipesSignature = snapshotTotals.expiringRecipesSignature;
   }
 
   int _reconcilePendingArchiveDelta({
@@ -270,7 +280,9 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   _DashboardTotals _applyPendingArchiveTotalsOverlay(_DashboardTotals snapshotTotals) {
-    if (_pendingArchiveRecipeCountDelta == 0 && _pendingArchiveDpcCountDelta == 0) {
+    if (_pendingArchiveRecipeCountDelta == 0 &&
+        _pendingArchiveDpcCountDelta == 0 &&
+        _pendingExpiringPatientCountDelta == 0) {
       return snapshotTotals;
     }
     return _DashboardTotals(
@@ -279,7 +291,7 @@ class _DashboardPageState extends State<DashboardPage> {
       debtAmount: snapshotTotals.debtAmount,
       advanceCount: snapshotTotals.advanceCount,
       bookingCount: snapshotTotals.bookingCount,
-      expiringCount: snapshotTotals.expiringCount,
+      expiringCount: _clampDashboardTotalInt(snapshotTotals.expiringCount + _pendingExpiringPatientCountDelta),
       expiringRecipesSignature: snapshotTotals.expiringRecipesSignature,
     );
   }
@@ -387,6 +399,23 @@ class _DashboardPageState extends State<DashboardPage> {
     ].join('|');
   }
 
+  _DashboardTotals _backendExpiringLoaderTotalsFromVisibleTotals(_DashboardTotals visibleTotals) {
+    final int rawExpiringCount = _lastBackendExpiringPatientCount ??
+        _clampDashboardTotalInt(visibleTotals.expiringCount - _pendingExpiringPatientCountDelta);
+    final String rawExpiringSignature = _lastBackendExpiringRecipesSignature.isNotEmpty
+        ? _lastBackendExpiringRecipesSignature
+        : visibleTotals.expiringRecipesSignature;
+    return _DashboardTotals(
+      recipeCount: visibleTotals.recipeCount,
+      dpcCount: visibleTotals.dpcCount,
+      debtAmount: visibleTotals.debtAmount,
+      advanceCount: visibleTotals.advanceCount,
+      bookingCount: visibleTotals.bookingCount,
+      expiringCount: rawExpiringCount,
+      expiringRecipesSignature: rawExpiringSignature,
+    );
+  }
+
   Future<void> _loadExpiringRecipesSectionIfNeeded(
     _DashboardTotals totals, {
     bool force = false,
@@ -480,12 +509,24 @@ class _DashboardPageState extends State<DashboardPage> {
               'Indice ricette in scadenza in aggiornamento. Premi aggiorna se il dato non si aggiorna automaticamente.';
           return;
         }
+        final int visibleExpiringCount = _visibleExpiringPatientCount(visibleItems);
         _expiringRecipes = visibleItems;
         _expiringRecipesSignature = signature;
         _expiringRecipesLoading = false;
         _expiringRecipesMessage = visibleItems.isEmpty && totals.expiringCount > 0
             ? 'Scadenze segnalate dai totali, ma nessuna ricetta visibile nell’indice dedicato.'
             : '';
+        if (visibleExpiringCount != _dashboardTotals.expiringCount) {
+          _dashboardTotals = _DashboardTotals(
+            recipeCount: _dashboardTotals.recipeCount,
+            dpcCount: _dashboardTotals.dpcCount,
+            debtAmount: _dashboardTotals.debtAmount,
+            advanceCount: _dashboardTotals.advanceCount,
+            bookingCount: _dashboardTotals.bookingCount,
+            expiringCount: visibleExpiringCount,
+            expiringRecipesSignature: _visibleExpiringRecipesSignature(visibleItems),
+          );
+        }
       });
       _runQueuedExpiringRecipesLoadIfNeeded();
     } catch (e) {
@@ -548,6 +589,31 @@ class _DashboardPageState extends State<DashboardPage> {
     return items.where((DashboardExpiringRecipe item) {
       return !pendingByImportId.containsKey(item.importId);
     }).toList();
+  }
+
+  int _visibleExpiringPatientCount(List<DashboardExpiringRecipe> items) {
+    final Set<String> keys = <String>{};
+    for (final DashboardExpiringRecipe item in items) {
+      final String cf = _normalizeFiscalCode(item.patientFiscalCode);
+      final String key = cf.isNotEmpty ? cf : item.importId.trim();
+      if (key.isNotEmpty) {
+        keys.add(key);
+      }
+    }
+    return keys.length;
+  }
+
+  String _visibleExpiringRecipesSignature(List<DashboardExpiringRecipe> items) {
+    final Set<String> keys = <String>{};
+    for (final DashboardExpiringRecipe item in items) {
+      final String cf = _normalizeFiscalCode(item.patientFiscalCode);
+      final String key = cf.isNotEmpty ? cf : item.importId.trim();
+      if (key.isNotEmpty) {
+        keys.add(key);
+      }
+    }
+    final List<String> sortedKeys = keys.toList()..sort();
+    return sortedKeys.join('|');
   }
 
   List<_ExpiringPatientDashboardRow> _expiringPatientRowsForZeroPosition() {
@@ -798,6 +864,10 @@ class _DashboardPageState extends State<DashboardPage> {
       ),
       includeArchiveFlags: true,
     );
+    _removeDeletedRecipesFromExpiringSection(
+      fiscalCode: summary.patient.fiscalCode,
+      deletedImportIds: <String>[removedImport.id],
+    );
   }
 
   void _clearDisplayedDashboardRows() {
@@ -809,7 +879,10 @@ class _DashboardPageState extends State<DashboardPage> {
   void _manualRefreshRequestedData() {
     if (!_hasUserRequestedDashboardData) {
       if (_isDashboardAtZeroPosition && _dashboardTotals.expiringCount > 0) {
-        unawaited(_loadExpiringRecipesSectionIfNeeded(_dashboardTotals, force: true));
+        unawaited(_loadExpiringRecipesSectionIfNeeded(
+          _backendExpiringLoaderTotalsFromVisibleTotals(_dashboardTotals),
+          force: true,
+        ));
         setState(() {
           _future = Future<_DashboardData>.value(_DashboardData.empty());
           _message = 'Aggiornamento ricette in scadenza richiesto.';
@@ -1499,6 +1572,7 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     bool needsArchive = false;
+    bool needsLegacyPrescriptions = false;
     bool needsDebts = false;
     bool needsAdvances = false;
     bool needsBookings = false;
@@ -1507,6 +1581,7 @@ class _DashboardPageState extends State<DashboardPage> {
       case 'ricette':
       case 'dpc':
         needsArchive = summary.recipeCount > 0 && summary.imports.isEmpty && summary.prescriptions.isEmpty;
+        needsLegacyPrescriptions = needsArchive;
         break;
       case 'debiti':
         needsDebts = summary.hasDebt && summary.debts.isEmpty;
@@ -1522,6 +1597,13 @@ class _DashboardPageState extends State<DashboardPage> {
         needsAdvances = summary.hasAdvance && summary.advances.isEmpty;
         needsBookings = summary.hasBooking && summary.bookings.isEmpty;
         break;
+      case 'bulk-delete':
+        needsArchive = true;
+        needsLegacyPrescriptions = false;
+        needsDebts = true;
+        needsAdvances = true;
+        needsBookings = true;
+        break;
     }
 
     if (!needsArchive && !needsDebts && !needsAdvances && !needsBookings) {
@@ -1530,7 +1612,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
     final List<Future<dynamic>> futures = <Future<dynamic>>[
       if (needsArchive) _drivePdfImportsRepository.getImportsByPatient(cf, includeHidden: true),
-      if (needsArchive) _prescriptionsRepository.getLegacyPatientPrescriptions(cf),
+      if (needsLegacyPrescriptions) _prescriptionsRepository.getLegacyPatientPrescriptions(cf),
       if (needsDebts) _debtsRepository.getPatientDebts(cf),
       if (needsAdvances) _advancesRepository.getPatientAdvances(cf),
       if (needsBookings) _bookingsRepository.getPatientBookings(cf),
@@ -1549,7 +1631,9 @@ class _DashboardPageState extends State<DashboardPage> {
       imports = loadedImports
           .where((DrivePdfImport item) => !item.isHiddenFromFrontend)
           .toList();
-      prescriptions = results[cursor++] as List<Prescription>;
+      prescriptions = needsLegacyPrescriptions
+          ? results[cursor++] as List<Prescription>
+          : summary.prescriptions;
     }
     if (needsDebts) {
       debts = results[cursor++] as List<Debt>;
@@ -3350,6 +3434,61 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+
+  void _removeDeletedRecipesFromExpiringSection({
+    required String fiscalCode,
+    required Iterable<String> deletedImportIds,
+    bool removeWholePatient = false,
+  }) {
+    if (!mounted) {
+      return;
+    }
+    final String normalizedCf = _normalizeFiscalCode(fiscalCode);
+    final Set<String> ids = deletedImportIds
+        .map((String id) => id.trim())
+        .where((String id) => id.isNotEmpty)
+        .toSet();
+    if (normalizedCf.isEmpty && ids.isEmpty) {
+      return;
+    }
+    final List<DashboardExpiringRecipe> nextExpiringRecipes = _expiringRecipes.where((DashboardExpiringRecipe item) {
+      final String itemImportId = item.importId.trim();
+      if (itemImportId.isNotEmpty && ids.contains(itemImportId)) {
+        return false;
+      }
+      final String itemCf = _normalizeFiscalCode(item.patientFiscalCode);
+      if (removeWholePatient && normalizedCf.isNotEmpty && itemCf == normalizedCf) {
+        return false;
+      }
+      return true;
+    }).toList();
+    if (nextExpiringRecipes.length == _expiringRecipes.length) {
+      return;
+    }
+    final int previousExpiringCount = _visibleExpiringPatientCount(_expiringRecipes);
+    final int visibleExpiringCount = _visibleExpiringPatientCount(nextExpiringRecipes);
+    final int expiringCountDelta = visibleExpiringCount - previousExpiringCount;
+    if (expiringCountDelta != 0) {
+      _lastBackendExpiringPatientCount ??=
+          _clampDashboardTotalInt(_dashboardTotals.expiringCount - _pendingExpiringPatientCountDelta);
+      _pendingExpiringPatientCountDelta += expiringCountDelta;
+    }
+    final String visibleSignature = _visibleExpiringRecipesSignature(nextExpiringRecipes);
+    setState(() {
+      _expiringRecipes = nextExpiringRecipes;
+      _expiringRecipesSignature = visibleSignature;
+      _dashboardTotals = _DashboardTotals(
+        recipeCount: _dashboardTotals.recipeCount,
+        dpcCount: _dashboardTotals.dpcCount,
+        debtAmount: _dashboardTotals.debtAmount,
+        advanceCount: _dashboardTotals.advanceCount,
+        bookingCount: _dashboardTotals.bookingCount,
+        expiringCount: visibleExpiringCount,
+        expiringRecipesSignature: visibleSignature,
+      );
+    });
+  }
+
   Future<void> _deletePatientEverything(_PatientDashboardSummary summary) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -3378,28 +3517,36 @@ class _DashboardPageState extends State<DashboardPage> {
     if (confirmed != true) return;
 
     try {
-      for (final debt in summary.debts) {
-        await _debtsRepository.deleteDebt(summary.patient.fiscalCode, debt.id);
+      final _PatientDashboardSummary detailSummary =
+          await _ensureSummaryDetailsForKey(summary, 'bulk-delete');
+      if (!mounted) return;
+      for (final debt in detailSummary.debts) {
+        await _debtsRepository.deleteDebt(detailSummary.patient.fiscalCode, debt.id);
       }
-      for (final advance in summary.advances) {
-        await _advancesRepository.deleteAdvance(summary.patient.fiscalCode, advance.id);
+      for (final advance in detailSummary.advances) {
+        await _advancesRepository.deleteAdvance(detailSummary.patient.fiscalCode, advance.id);
       }
-      for (final booking in summary.bookings) {
-        await _bookingsRepository.deleteBooking(summary.patient.fiscalCode, booking.id);
+      for (final booking in detailSummary.bookings) {
+        await _bookingsRepository.deleteBooking(detailSummary.patient.fiscalCode, booking.id);
       }
-      final recipeImports = summary.imports;
+      final List<DrivePdfImport> recipeImports = detailSummary.imports;
       for (final importItem in recipeImports) {
         await _drivePdfImportsRepository.requestPdfDelete(importItem.id, fiscalCode: importItem.patientFiscalCode);
         await savePendingPdfDelete(importId: importItem.id, fiscalCode: importItem.patientFiscalCode);
       }
-      await _applyDashboardTotalsDelta(
-        recipeCountDelta: -summary.imports.fold<int>(0, (int sum, DrivePdfImport item) => sum + _recipeCountForImport(item)),
-        dpcCountDelta: -summary.imports.where((DrivePdfImport item) => item.isDpc).length,
-        debtAmountDelta: -summary.totalDebt,
-        advanceCountDelta: -summary.advances.length,
-        bookingCountDelta: -summary.bookings.length,
+      _removeDeletedRecipesFromExpiringSection(
+        fiscalCode: detailSummary.patient.fiscalCode,
+        deletedImportIds: recipeImports.map((DrivePdfImport item) => item.id),
+        removeWholePatient: true,
       );
-      final _PatientDashboardSummary clearedSummary = summary.copyWith(
+      await _applyDashboardTotalsDelta(
+        recipeCountDelta: -detailSummary.imports.fold<int>(0, (int sum, DrivePdfImport item) => sum + _recipeCountForImport(item)),
+        dpcCountDelta: -detailSummary.imports.where((DrivePdfImport item) => item.isDpc).length,
+        debtAmountDelta: -detailSummary.totalDebt,
+        advanceCountDelta: -detailSummary.advances.length,
+        bookingCountDelta: -detailSummary.bookings.length,
+      );
+      final _PatientDashboardSummary clearedSummary = detailSummary.copyWith(
         imports: const <DrivePdfImport>[],
         prescriptions: const <Prescription>[],
         debts: const <Debt>[],
@@ -3458,11 +3605,19 @@ class _DashboardPageState extends State<DashboardPage> {
             _isRouteCovered = false;
           });
           _startDashboardTotalsListener();
-          if (archiveDelta != null && archiveDelta.hasDelta) {
-            _applyDashboardTotalsDeltaLocal(
-              recipeCountDelta: archiveDelta.recipeCountDelta,
-              dpcCountDelta: archiveDelta.dpcCountDelta,
-            );
+          if (archiveDelta != null) {
+            if (archiveDelta.hasDelta) {
+              _applyDashboardTotalsDeltaLocal(
+                recipeCountDelta: archiveDelta.recipeCountDelta,
+                dpcCountDelta: archiveDelta.dpcCountDelta,
+              );
+            }
+            if (archiveDelta.deletedImportIds.isNotEmpty) {
+              _removeDeletedRecipesFromExpiringSection(
+                fiscalCode: archiveDelta.patientFiscalCode,
+                deletedImportIds: archiveDelta.deletedImportIds,
+              );
+            }
           }
           if (_hasUserRequestedDashboardData) {
             _issueLoad(force: true);
