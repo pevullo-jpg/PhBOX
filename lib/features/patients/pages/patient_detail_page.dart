@@ -43,13 +43,19 @@ import '../../../theme/app_theme.dart';
 class PatientDetailDashboardArchiveDelta {
   final int recipeCountDelta;
   final int dpcCountDelta;
+  final String patientFiscalCode;
+  final List<String> deletedImportIds;
 
   const PatientDetailDashboardArchiveDelta({
     this.recipeCountDelta = 0,
     this.dpcCountDelta = 0,
+    this.patientFiscalCode = '',
+    this.deletedImportIds = const <String>[],
   });
 
   bool get hasDelta => recipeCountDelta != 0 || dpcCountDelta != 0;
+  bool get hasDeletedImports => deletedImportIds.isNotEmpty;
+  bool get hasAnyResult => hasDelta || hasDeletedImports;
 }
 
 class PatientDetailPage extends StatefulWidget {
@@ -81,6 +87,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   late String _currentFiscalCode;
   int _archiveRecipeCountDeltaForDashboard = 0;
   int _archiveDpcCountDeltaForDashboard = 0;
+  final Set<String> _deletedArchiveImportIdsForDashboard = <String>{};
 
   @override
   void initState() {
@@ -118,12 +125,16 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
 
 
   PatientDetailDashboardArchiveDelta? _buildDashboardArchiveDeltaResult() {
-    if (_archiveRecipeCountDeltaForDashboard == 0 && _archiveDpcCountDeltaForDashboard == 0) {
+    if (_archiveRecipeCountDeltaForDashboard == 0 &&
+        _archiveDpcCountDeltaForDashboard == 0 &&
+        _deletedArchiveImportIdsForDashboard.isEmpty) {
       return null;
     }
     return PatientDetailDashboardArchiveDelta(
       recipeCountDelta: _archiveRecipeCountDeltaForDashboard,
       dpcCountDelta: _archiveDpcCountDeltaForDashboard,
+      patientFiscalCode: _currentFiscalCode,
+      deletedImportIds: _deletedArchiveImportIdsForDashboard.toList()..sort(),
     );
   }
 
@@ -1409,6 +1420,9 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     if (!await _confirmDelete(message: 'Eliminare questa ricetta?')) return;
     await _drivePdfImportsRepository.requestPdfDelete(item.id, fiscalCode: item.patientFiscalCode);
     await savePendingPdfDelete(importId: item.id, fiscalCode: item.patientFiscalCode);
+    if (item.id.trim().isNotEmpty) {
+      _deletedArchiveImportIdsForDashboard.add(item.id.trim());
+    }
     // Archive totals are backend-owned and will be converged by the deletePdf signal.
     _archiveRecipeCountDeltaForDashboard -= _recipeCountForImport(item);
     if (item.isDpc) {
