@@ -555,10 +555,7 @@ class _DashboardPageState extends State<DashboardPage> {
     bool includeArchiveFlags = false,
   }) {
     _replaceCachedSummaryLocal(nextSummary);
-    unawaited(_syncPatientDashboardIndex(
-      nextSummary,
-      includeArchiveFlags: includeArchiveFlags,
-    ));
+    unawaited(_syncPatientDashboardIndex(nextSummary, includeArchiveFlags: includeArchiveFlags));
   }
 
   Future<void> _replaceCachedSummaryAwaitingIndex(
@@ -566,15 +563,13 @@ class _DashboardPageState extends State<DashboardPage> {
     bool includeArchiveFlags = false,
   }) async {
     _replaceCachedSummaryLocal(nextSummary);
-    await _syncPatientDashboardIndex(
-      nextSummary,
-      includeArchiveFlags: includeArchiveFlags,
-    );
+    await _syncPatientDashboardIndex(nextSummary, includeArchiveFlags: includeArchiveFlags);
   }
 
   Future<void> _syncPatientDashboardIndex(
     _PatientDashboardSummary summary, {
     bool includeArchiveFlags = false,
+    bool rethrowOnError = false,
   }) async {
     try {
       await _patientDashboardIndexRepository.patchFrontendManagedState(
@@ -584,15 +579,18 @@ class _DashboardPageState extends State<DashboardPage> {
         doctorFullName: summary.doctorName == '-' ? summary.patient.doctorName : summary.doctorName,
         city: summary.city == '-' ? summary.patient.city : summary.city,
         exemptionCode: summary.exemptionCode == '-' ? summary.patient.primaryExemption : summary.exemptionCode,
+        recipeCount: includeArchiveFlags ? summary.recipeCount : null,
+        dpcCount: includeArchiveFlags ? summary.dpcCount : null,
+        hasExpiry: includeArchiveFlags ? summary.hasExpiryAlert : null,
         debtCount: summary.debtCount,
         debtAmount: summary.totalDebt,
         advanceCount: summary.advanceCount,
         bookingCount: summary.bookingCount,
-        recipeCount: includeArchiveFlags ? summary.recipeCount : null,
-        dpcCount: includeArchiveFlags ? summary.dpcCount : null,
-        hasExpiry: includeArchiveFlags ? summary.hasExpiryAlert : null,
       );
     } catch (e) {
+      if (rethrowOnError) {
+        rethrow;
+      }
       if (!mounted) return;
       setState(() {
         _message = 'Dati salvati. Indice dashboard non riallineato: ' + e.toString();
@@ -611,35 +609,44 @@ class _DashboardPageState extends State<DashboardPage> {
     _replaceDashboardCache(_dashboardCache.copyWith(summaries: nextSummaries));
   }
   void _removeRecipeFromCachedSummary(_PatientDashboardSummary summary, DrivePdfImport removedImport) {
-    final List<DrivePdfImport> nextImports = summary.imports
+    final List<DrivePdfImport> previousImports = summary.imports;
+    final List<DrivePdfImport> nextImports = previousImports
         .where((DrivePdfImport item) => item.id != removedImport.id)
         .toList();
-    final int removedCount = removedImport.prescriptionCount > 0 ? removedImport.prescriptionCount : 1;
-    final int nextDpcCount = nextImports.isNotEmpty
-        ? nextImports.where((DrivePdfImport item) => item.isDpc).length
-        : summary.prescriptions.where((Prescription item) => item.dpcFlag).length;
-    final bool nextHasDpc = nextDpcCount > 0;
-    final bool nextHasExpiryAlert = nextImports.any((DrivePdfImport item) {
-          final DateTime baseDate = item.prescriptionDate ?? item.createdAt;
-          return _DashboardTotals._isExpiryAlert(baseDate.add(const Duration(days: 30)));
-        }) ||
-        summary.prescriptions.any((Prescription item) {
-          return _DashboardTotals._isExpiryAlert(
-            item.expiryDate ?? item.prescriptionDate.add(const Duration(days: 30)),
-          );
-        });
+    final List<Prescription> nextPrescriptions = summary.prescriptions
+        .where((Prescription item) => item.id != removedImport.id)
+        .toList();
+    final int removedRecipeCount = removedImport.prescriptionCount > 0
+        ? removedImport.prescriptionCount
+        : 1;
+    final int nextRecipeCount = _resolveDashboardRecipeCountAfterRecipeDelete(
+      allImports: nextImports,
+      visibleImports: nextImports,
+      currentRecipeCount: summary.recipeCount,
+      removedRecipeCount: removedRecipeCount,
+    );
+    final int nextDpcCount = _resolveDashboardDpcCountForArchiveState(
+      allImports: nextImports,
+      visibleImports: nextImports,
+      legacyPrescriptions: nextPrescriptions,
+    );
+    final bool nextHasExpiryAlert = _resolveDashboardHasExpiryAlertForArchiveState(
+      allImports: nextImports,
+      visibleImports: nextImports,
+      legacyPrescriptions: nextPrescriptions,
+    );
     _replaceCachedSummary(
       summary.copyWith(
         imports: nextImports,
-        recipeCount: math.max(0, summary.recipeCount - removedCount),
-        hasDpc: nextHasDpc,
+        prescriptions: nextPrescriptions,
+        recipeCount: nextRecipeCount,
         dpcCount: nextDpcCount,
+        hasDpc: nextDpcCount > 0,
         hasExpiryAlert: nextHasExpiryAlert,
       ),
       includeArchiveFlags: true,
     );
   }
-
 
   void _clearDisplayedDashboardRows() {
     setState(() {
@@ -895,8 +902,8 @@ class _DashboardPageState extends State<DashboardPage> {
               advances: const <Advance>[],
               bookings: const <Booking>[],
               hasDpc: false,
-              dpcCount: 0,
               recipeCount: 0,
+              dpcCount: 0,
               hasExpiryAlert: false,
               familyId: '',
               familyName: '',
@@ -1386,7 +1393,8 @@ class _DashboardPageState extends State<DashboardPage> {
     List<Booking>? bookings;
 
     if (needsArchive) {
-      imports = (results[cursor++] as List<DrivePdfImport>)
+      final List<DrivePdfImport> loadedImports = results[cursor++] as List<DrivePdfImport>;
+      imports = loadedImports
           .where((DrivePdfImport item) => !item.isHiddenFromFrontend)
           .toList();
       prescriptions = results[cursor++] as List<Prescription>;
@@ -1402,9 +1410,11 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     final int? loadedDpcCount = needsArchive
-        ? ((imports ?? const <DrivePdfImport>[]).isNotEmpty
-            ? (imports ?? const <DrivePdfImport>[]).where((DrivePdfImport item) => item.isDpc).length
-            : (prescriptions ?? const <Prescription>[]).where((Prescription item) => item.dpcFlag).length)
+        ? _resolveDashboardDpcCountForArchiveState(
+            allImports: imports ?? const <DrivePdfImport>[],
+            visibleImports: imports ?? const <DrivePdfImport>[],
+            legacyPrescriptions: prescriptions ?? const <Prescription>[],
+          )
         : null;
     final _PatientDashboardSummary next = summary.copyWith(
       imports: imports,
@@ -3231,22 +3241,27 @@ class _DashboardPageState extends State<DashboardPage> {
         advanceCountDelta: -summary.advances.length,
         bookingCountDelta: -summary.bookings.length,
       );
-      await _patientDashboardIndexRepository.patchFrontendManagedState(
-        fiscalCode: summary.patient.fiscalCode,
-        fullName: summary.patient.fullName,
-        alias: summary.patient.alias,
-        doctorFullName: summary.doctorName == '-' ? summary.patient.doctorName : summary.doctorName,
-        city: summary.city == '-' ? summary.patient.city : summary.city,
-        exemptionCode: summary.exemptionCode == '-' ? summary.patient.primaryExemption : summary.exemptionCode,
-        debtCount: 0,
-        debtAmount: 0,
-        advanceCount: 0,
-        bookingCount: 0,
+      final _PatientDashboardSummary clearedSummary = summary.copyWith(
+        imports: const <DrivePdfImport>[],
+        prescriptions: const <Prescription>[],
+        debts: const <Debt>[],
+        advances: const <Advance>[],
+        bookings: const <Booking>[],
         recipeCount: 0,
         dpcCount: 0,
-        hasExpiry: false,
+        hasDpc: false,
+        hasExpiryAlert: false,
+        indexedDebtAmount: 0,
+        indexedDebtCount: 0,
+        indexedAdvanceCount: 0,
+        indexedBookingCount: 0,
       );
-      _removeCachedSummary(summary.patient.fiscalCode);
+      await _syncPatientDashboardIndex(
+        clearedSummary,
+        includeArchiveFlags: true,
+        rethrowOnError: true,
+      );
+      _replaceCachedSummaryLocal(clearedSummary);
       setState(() {
         _message = 'Dati operativi rimossi e delete PDF richiesta.';
       });
@@ -3715,7 +3730,9 @@ class _DashboardPageState extends State<DashboardPage> {
       );
     }
     if (item.hasDpc) {
-      final int dpcCount = item.dpcItems.isNotEmpty ? item.dpcItems.length : math.max(1, item.dpcCount);
+      final int dpcCount = item.dpcCount > 0
+          ? item.dpcCount
+          : (item.dpcItems.isNotEmpty ? item.dpcItems.length : 1);
       widgets.add(_FlagChip(label: 'DPC $dpcCount', color: AppColors.coral, onTap: () => _handleFlagTap(item, 'dpc')));
     }
     if (item.hasDebt) {
@@ -3944,6 +3961,54 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 }
 
+int _resolveDashboardRecipeCountAfterRecipeDelete({
+  required List<DrivePdfImport> allImports,
+  required List<DrivePdfImport> visibleImports,
+  required int currentRecipeCount,
+  required int removedRecipeCount,
+}) {
+  if (allImports.isNotEmpty) {
+    return visibleImports.fold<int>(0, (int sum, DrivePdfImport item) {
+      return sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1);
+    });
+  }
+  return math.max(0, currentRecipeCount - math.max(1, removedRecipeCount));
+}
+
+int _resolveDashboardDpcCountForArchiveState({
+  required List<DrivePdfImport> allImports,
+  required List<DrivePdfImport> visibleImports,
+  required List<Prescription> legacyPrescriptions,
+  bool fallbackHasDpc = false,
+}) {
+  if (allImports.isNotEmpty) {
+    return visibleImports.where((DrivePdfImport item) => item.isDpc).length;
+  }
+  final int legacyDpcCount = legacyPrescriptions.where((Prescription item) => item.dpcFlag).length;
+  if (legacyDpcCount > 0) {
+    return legacyDpcCount;
+  }
+  return fallbackHasDpc ? 1 : 0;
+}
+
+bool _resolveDashboardHasExpiryAlertForArchiveState({
+  required List<DrivePdfImport> allImports,
+  required List<DrivePdfImport> visibleImports,
+  required List<Prescription> legacyPrescriptions,
+}) {
+  if (allImports.isNotEmpty) {
+    return visibleImports.any((DrivePdfImport item) {
+      final DateTime baseDate = item.prescriptionDate ?? item.createdAt;
+      return _DashboardTotals._isExpiryAlert(baseDate.add(const Duration(days: 30)));
+    });
+  }
+  return legacyPrescriptions.any((Prescription item) {
+    return _DashboardTotals._isExpiryAlert(
+      item.expiryDate ?? item.prescriptionDate.add(const Duration(days: 30)),
+    );
+  });
+}
+
 class _DashboardTotals {
   final int recipeCount;
   final int dpcCount;
@@ -4132,8 +4197,8 @@ class _PatientDashboardSummary {
   final List<Advance> advances;
   final List<Booking> bookings;
   final bool hasDpc;
-  final int dpcCount;
   final int recipeCount;
+  final int dpcCount;
   final bool hasExpiryAlert;
   final String familyId;
   final String familyName;
@@ -4154,8 +4219,8 @@ class _PatientDashboardSummary {
     required this.advances,
     required this.bookings,
     required this.hasDpc,
-    required this.dpcCount,
     required this.recipeCount,
+    required this.dpcCount,
     required this.hasExpiryAlert,
     required this.familyId,
     required this.familyName,
@@ -4177,8 +4242,8 @@ class _PatientDashboardSummary {
     List<Advance>? advances,
     List<Booking>? bookings,
     bool? hasDpc,
-    int? dpcCount,
     int? recipeCount,
+    int? dpcCount,
     bool? hasExpiryAlert,
     String? familyId,
     String? familyName,
@@ -4199,8 +4264,8 @@ class _PatientDashboardSummary {
       advances: advances ?? this.advances,
       bookings: bookings ?? this.bookings,
       hasDpc: hasDpc ?? this.hasDpc,
-      dpcCount: dpcCount ?? this.dpcCount,
       recipeCount: recipeCount ?? this.recipeCount,
+      dpcCount: dpcCount ?? this.dpcCount,
       hasExpiryAlert: hasExpiryAlert ?? this.hasExpiryAlert,
       familyId: familyId ?? this.familyId,
       familyName: familyName ?? this.familyName,
@@ -4291,9 +4356,9 @@ class _PatientDashboardSummary {
       debts: const <Debt>[],
       advances: const <Advance>[],
       bookings: const <Booking>[],
-      hasDpc: item.hasDpc,
-      dpcCount: item.dpcCount,
+      hasDpc: item.hasDpc || item.dpcCount > 0,
       recipeCount: item.recipeCount,
+      dpcCount: item.dpcCount,
       hasExpiryAlert: item.hasExpiry,
       familyId: item.familyId,
       familyName: item.familyName,
@@ -4352,9 +4417,12 @@ class _PatientDashboardSummary {
       visibleImports: visibleImportsForPatient,
       legacyPrescriptions: prescriptions,
     );
-    final int dpcCount = allImportsForPatient.isNotEmpty
-        ? visibleImportsForPatient.where((DrivePdfImport item) => item.isDpc).length
-        : prescriptions.where((Prescription item) => item.dpcFlag).length;
+    final int dpcCount = _resolveDashboardDpcCountForArchiveState(
+      allImports: allImportsForPatient,
+      visibleImports: visibleImportsForPatient,
+      legacyPrescriptions: prescriptions,
+      fallbackHasDpc: patient.hasHasDpcAggregate && patient.hasDpc,
+    );
     final DateTime? lastPrescriptionDate =
         PhboxContractUtils.resolveLastPrescriptionDate(
       patient: patient,
@@ -4411,8 +4479,8 @@ class _PatientDashboardSummary {
       advances: advances,
       bookings: bookings,
       hasDpc: hasDpc || dpcCount > 0,
-      dpcCount: dpcCount,
       recipeCount: recipeCount,
+      dpcCount: dpcCount,
       hasExpiryAlert: hasExpiryAlert,
       familyId: familyId,
       familyName: familyName,
