@@ -109,6 +109,9 @@ class PatientDashboardIndexRepository {
     double? debtAmount,
     int? advanceCount,
     int? bookingCount,
+    int? recipeCount,
+    int? dpcCount,
+    bool? hasExpiry,
   }) {
     final String cf = fiscalCode.trim().toUpperCase();
     if (cf.isEmpty) {
@@ -130,6 +133,11 @@ class PatientDashboardIndexRepository {
       if (advanceCount != null) 'hasAdvance': advanceCount > 0,
       if (bookingCount != null) 'bookingCount': bookingCount < 0 ? 0 : bookingCount,
       if (bookingCount != null) 'hasBooking': bookingCount > 0,
+      if (recipeCount != null) 'recipeCount': recipeCount < 0 ? 0 : recipeCount,
+      if (recipeCount != null) 'hasRecipes': recipeCount > 0,
+      if (dpcCount != null) 'dpcCount': dpcCount < 0 ? 0 : dpcCount,
+      if (dpcCount != null) 'hasDpc': dpcCount > 0,
+      if (hasExpiry != null) 'hasExpiry': hasExpiry,
       'searchPrefixes': buildSearchPrefixes(<String>[
         cf,
         fullName,
