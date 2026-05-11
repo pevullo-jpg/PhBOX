@@ -69,6 +69,8 @@ class _DashboardPageState extends State<DashboardPage> {
   bool _dashboardCacheLoaded = false;
   String _dashboardCacheSignature = '';
   _DashboardTotals _dashboardTotals = _DashboardTotals.empty();
+  int _pendingArchiveRecipeCountDelta = 0;
+  int _pendingArchiveDpcCountDelta = 0;
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
   bool _searchInFlags = false;
@@ -188,14 +190,15 @@ class _DashboardPageState extends State<DashboardPage> {
           return;
         }
         final _DashboardTotals snapshotTotals = _DashboardTotals.fromSnapshot(snapshot);
-        if (!_canAcceptDashboardTotalsSnapshot(snapshotTotals)) {
+        if (!_canAcceptDashboardTotalsSnapshot(snapshotTotals, snapshot)) {
           return;
         }
+        final _DashboardTotals visibleTotals = _applyPendingArchiveTotalsOverlay(snapshotTotals);
         setState(() {
-          _dashboardTotals = snapshotTotals;
+          _dashboardTotals = visibleTotals;
           _lastRefreshAt = snapshot.updatedAt ?? DateTime.now();
         });
-        unawaited(_loadExpiringRecipesSectionIfNeeded(snapshotTotals));
+        unawaited(_loadExpiringRecipesSectionIfNeeded(visibleTotals));
       },
       onError: (Object error) {
         if (!mounted) {
@@ -213,11 +216,120 @@ class _DashboardPageState extends State<DashboardPage> {
     _dashboardTotalsSubscription = null;
   }
 
-  bool _canAcceptDashboardTotalsSnapshot(_DashboardTotals snapshotTotals) {
+  bool _canAcceptDashboardTotalsSnapshot(
+    _DashboardTotals snapshotTotals,
+    DashboardTotalsSnapshot snapshot,
+  ) {
     if (snapshotTotals.hasAnyValue) {
       return true;
     }
-    return !_dashboardTotals.hasAnyValue;
+    if (!_dashboardTotals.hasAnyValue) {
+      return true;
+    }
+    return snapshot.updatedAt != null;
+  }
+
+  _DashboardTotals _applyPendingArchiveTotalsOverlay(_DashboardTotals snapshotTotals) {
+    if (_pendingArchiveRecipeCountDelta < 0 && snapshotTotals.recipeCount <= _dashboardTotals.recipeCount) {
+      _pendingArchiveRecipeCountDelta = 0;
+    }
+    if (_pendingArchiveDpcCountDelta < 0 && snapshotTotals.dpcCount <= _dashboardTotals.dpcCount) {
+      _pendingArchiveDpcCountDelta = 0;
+    }
+    if (_pendingArchiveRecipeCountDelta == 0 && _pendingArchiveDpcCountDelta == 0) {
+      return snapshotTotals;
+    }
+    return _DashboardTotals(
+      recipeCount: _clampDashboardTotalInt(snapshotTotals.recipeCount + _pendingArchiveRecipeCountDelta),
+      dpcCount: _clampDashboardTotalInt(snapshotTotals.dpcCount + _pendingArchiveDpcCountDelta),
+      debtAmount: snapshotTotals.debtAmount,
+      advanceCount: snapshotTotals.advanceCount,
+      bookingCount: snapshotTotals.bookingCount,
+      expiringCount: snapshotTotals.expiringCount,
+      expiringRecipesSignature: snapshotTotals.expiringRecipesSignature,
+    );
+  }
+
+  int _clampDashboardTotalInt(int value) {
+    return value < 0 ? 0 : value;
+  }
+
+  double _clampDashboardTotalAmount(double value) {
+    return value.abs() <= 0.005 ? 0 : value;
+  }
+
+  void _applyDashboardTotalsDeltaLocal({
+    int recipeCountDelta = 0,
+    int dpcCountDelta = 0,
+    double debtAmountDelta = 0,
+    int advanceCountDelta = 0,
+    int bookingCountDelta = 0,
+  }) {
+    if (!mounted) {
+      return;
+    }
+    if (recipeCountDelta == 0 &&
+        dpcCountDelta == 0 &&
+        debtAmountDelta == 0 &&
+        advanceCountDelta == 0 &&
+        bookingCountDelta == 0) {
+      return;
+    }
+    if (recipeCountDelta != 0) {
+      _pendingArchiveRecipeCountDelta += recipeCountDelta;
+    }
+    if (dpcCountDelta != 0) {
+      _pendingArchiveDpcCountDelta += dpcCountDelta;
+    }
+    setState(() {
+      _dashboardTotals = _DashboardTotals(
+        recipeCount: _clampDashboardTotalInt(_dashboardTotals.recipeCount + recipeCountDelta),
+        dpcCount: _clampDashboardTotalInt(_dashboardTotals.dpcCount + dpcCountDelta),
+        debtAmount: _clampDashboardTotalAmount(_dashboardTotals.debtAmount + debtAmountDelta),
+        advanceCount: _clampDashboardTotalInt(_dashboardTotals.advanceCount + advanceCountDelta),
+        bookingCount: _clampDashboardTotalInt(_dashboardTotals.bookingCount + bookingCountDelta),
+        expiringCount: _dashboardTotals.expiringCount,
+        expiringRecipesSignature: _dashboardTotals.expiringRecipesSignature,
+      );
+      _lastRefreshAt = DateTime.now();
+    });
+  }
+
+  Future<void> _applyDashboardTotalsDelta({
+    int recipeCountDelta = 0,
+    int dpcCountDelta = 0,
+    double debtAmountDelta = 0,
+    int advanceCountDelta = 0,
+    int bookingCountDelta = 0,
+  }) async {
+    if (recipeCountDelta == 0 &&
+        dpcCountDelta == 0 &&
+        debtAmountDelta == 0 &&
+        advanceCountDelta == 0 &&
+        bookingCountDelta == 0) {
+      return;
+    }
+    _applyDashboardTotalsDeltaLocal(
+      recipeCountDelta: recipeCountDelta,
+      dpcCountDelta: dpcCountDelta,
+      debtAmountDelta: debtAmountDelta,
+      advanceCountDelta: advanceCountDelta,
+      bookingCountDelta: bookingCountDelta,
+    );
+    try {
+      await _dashboardTotalsRepository.applyFrontendManagedDelta(
+        debtAmountDelta: debtAmountDelta,
+        advanceCountDelta: advanceCountDelta,
+        bookingCountDelta: bookingCountDelta,
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _message = 'Dati salvati. Totali rapidi non riallineati: $e';
+      });
+    }
   }
 
   bool get _isDashboardAtZeroPosition {
@@ -555,6 +667,7 @@ class _DashboardPageState extends State<DashboardPage> {
     bool includeArchiveFlags = false,
   }) {
     _replaceCachedSummaryLocal(nextSummary);
+    _refresh();
     unawaited(_syncPatientDashboardIndex(nextSummary, includeArchiveFlags: includeArchiveFlags));
   }
 
@@ -563,6 +676,7 @@ class _DashboardPageState extends State<DashboardPage> {
     bool includeArchiveFlags = false,
   }) async {
     _replaceCachedSummaryLocal(nextSummary);
+    _refresh();
     await _syncPatientDashboardIndex(nextSummary, includeArchiveFlags: includeArchiveFlags);
   }
 
@@ -1478,6 +1592,10 @@ class _DashboardPageState extends State<DashboardPage> {
                                   if (!confirmed) return;
                                   await _drivePdfImportsRepository.requestPdfDelete(item.id, fiscalCode: item.patientFiscalCode);
                                   await savePendingPdfDelete(importId: item.id, fiscalCode: item.patientFiscalCode);
+                                  await _applyDashboardTotalsDelta(
+                                    recipeCountDelta: -_recipeCountForImport(item),
+                                    dpcCountDelta: item.isDpc ? -1 : 0,
+                                  );
                                   _removeRecipeFromCachedSummary(summary, item);
                                   if (mounted) {
                                     Navigator.of(context).pop();
@@ -1581,7 +1699,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
               );
               await _debtsRepository.saveDebt(debt);
-              await _dashboardTotalsRepository.applyFrontendManagedDelta(debtAmountDelta: amount);
+              await _applyDashboardTotalsDelta(debtAmountDelta: amount);
               await _replaceCachedSummaryAwaitingIndex(summary.copyWith(debts: <Debt>[debt, ...summary.debts]));
               saved = true;
               if (dialogContext.mounted) {
@@ -1702,7 +1820,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 updatedAt: now,
               );
               await _advancesRepository.saveAdvance(advance);
-              await _dashboardTotalsRepository.applyFrontendManagedDelta(advanceCountDelta: 1);
+              await _applyDashboardTotalsDelta(advanceCountDelta: 1);
               await _replaceCachedSummaryAwaitingIndex(summary.copyWith(
                 advances: <Advance>[advance, ...summary.advances],
                 doctorName: doctorName,
@@ -1866,7 +1984,7 @@ class _DashboardPageState extends State<DashboardPage> {
         note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
       );
       await _bookingsRepository.saveBooking(booking);
-      await _dashboardTotalsRepository.applyFrontendManagedDelta(bookingCountDelta: 1);
+      await _applyDashboardTotalsDelta(bookingCountDelta: 1);
       await _replaceCachedSummaryAwaitingIndex(summary.copyWith(bookings: <Booking>[booking, ...summary.bookings]));
       _refresh();
       return true;
@@ -1886,7 +2004,7 @@ class _DashboardPageState extends State<DashboardPage> {
       debtDelta -= item.residualAmount;
       await _debtsRepository.deleteDebt(summary.patient.fiscalCode, item.id);
     }
-    await _dashboardTotalsRepository.applyFrontendManagedDelta(debtAmountDelta: debtDelta);
+    await _applyDashboardTotalsDelta(debtAmountDelta: debtDelta);
     await _replaceCachedSummaryAwaitingIndex(summary.copyWith(debts: const <Debt>[]));
     _refresh();
     return true;
@@ -1898,7 +2016,7 @@ class _DashboardPageState extends State<DashboardPage> {
       advanceDelta -= 1;
       await _advancesRepository.deleteAdvance(summary.patient.fiscalCode, item.id);
     }
-    await _dashboardTotalsRepository.applyFrontendManagedDelta(advanceCountDelta: advanceDelta);
+    await _applyDashboardTotalsDelta(advanceCountDelta: advanceDelta);
     await _replaceCachedSummaryAwaitingIndex(summary.copyWith(advances: const <Advance>[]));
     _refresh();
     return true;
@@ -1910,7 +2028,7 @@ class _DashboardPageState extends State<DashboardPage> {
       bookingDelta -= 1;
       await _bookingsRepository.deleteBooking(summary.patient.fiscalCode, item.id);
     }
-    await _dashboardTotalsRepository.applyFrontendManagedDelta(bookingCountDelta: bookingDelta);
+    await _applyDashboardTotalsDelta(bookingCountDelta: bookingDelta);
     await _replaceCachedSummaryAwaitingIndex(summary.copyWith(bookings: const <Booking>[]));
     _refresh();
     return true;
@@ -2000,7 +2118,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   note: debtNoteController.text.trim().isEmpty ? null : debtNoteController.text.trim(),
                 );
                 await _debtsRepository.saveDebt(debt);
-                await _dashboardTotalsRepository.applyFrontendManagedDelta(debtAmountDelta: amount);
+                await _applyDashboardTotalsDelta(debtAmountDelta: amount);
                 currentSummary = currentSummary.copyWith(debts: <Debt>[debt, ...currentSummary.debts]);
                 await _replaceCachedSummaryAwaitingIndex(currentSummary);
               } else if (key == 'anticipi') {
@@ -2021,7 +2139,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   updatedAt: now,
                 );
                 await _advancesRepository.saveAdvance(advance);
-                await _dashboardTotalsRepository.applyFrontendManagedDelta(advanceCountDelta: 1);
+                await _applyDashboardTotalsDelta(advanceCountDelta: 1);
                 await _doctorPatientLinksRepository.saveManualOverride(
                   patientFiscalCode: fiscalCode,
                   patientFullName: patientName,
@@ -2051,7 +2169,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   note: bookingNoteController.text.trim().isEmpty ? null : bookingNoteController.text.trim(),
                 );
                 await _bookingsRepository.saveBooking(booking);
-                await _dashboardTotalsRepository.applyFrontendManagedDelta(bookingCountDelta: 1);
+                await _applyDashboardTotalsDelta(bookingCountDelta: 1);
                 currentSummary = currentSummary.copyWith(bookings: <Booking>[booking, ...currentSummary.bookings]);
                 await _replaceCachedSummaryAwaitingIndex(currentSummary);
               }
@@ -2078,7 +2196,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         onDelete: () async {
                           await runBusyAction(setLocalState, () async {
                             await _debtsRepository.deleteDebt(currentSummary.patient.fiscalCode, item.id);
-                            await _dashboardTotalsRepository.applyFrontendManagedDelta(debtAmountDelta: -item.residualAmount);
+                            await _applyDashboardTotalsDelta(debtAmountDelta: -item.residualAmount);
                             currentSummary = currentSummary.copyWith(
                               debts: currentSummary.debts.where((Debt debt) => debt.id != item.id).toList(),
                             );
@@ -2097,7 +2215,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         onDelete: () async {
                           await runBusyAction(setLocalState, () async {
                             await _advancesRepository.deleteAdvance(currentSummary.patient.fiscalCode, item.id);
-                            await _dashboardTotalsRepository.applyFrontendManagedDelta(advanceCountDelta: -1);
+                            await _applyDashboardTotalsDelta(advanceCountDelta: -1);
                             currentSummary = currentSummary.copyWith(
                               advances: currentSummary.advances.where((Advance advance) => advance.id != item.id).toList(),
                             );
@@ -2115,7 +2233,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       onDelete: () async {
                         await runBusyAction(setLocalState, () async {
                           await _bookingsRepository.deleteBooking(currentSummary.patient.fiscalCode, item.id);
-                          await _dashboardTotalsRepository.applyFrontendManagedDelta(bookingCountDelta: -1);
+                          await _applyDashboardTotalsDelta(bookingCountDelta: -1);
                           currentSummary = currentSummary.copyWith(
                             bookings: currentSummary.bookings.where((Booking booking) => booking.id != item.id).toList(),
                           );
@@ -2287,7 +2405,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   debtDelta -= item.residualAmount;
                                   await _debtsRepository.deleteDebt(currentSummary.patient.fiscalCode, item.id);
                                 }
-                                await _dashboardTotalsRepository.applyFrontendManagedDelta(debtAmountDelta: debtDelta);
+                                await _applyDashboardTotalsDelta(debtAmountDelta: debtDelta);
                                 currentSummary = currentSummary.copyWith(debts: const <Debt>[]);
                                 await _replaceCachedSummaryAwaitingIndex(currentSummary);
                               } else if (key == 'anticipi') {
@@ -2296,7 +2414,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   advanceDelta -= 1;
                                   await _advancesRepository.deleteAdvance(currentSummary.patient.fiscalCode, item.id);
                                 }
-                                await _dashboardTotalsRepository.applyFrontendManagedDelta(advanceCountDelta: advanceDelta);
+                                await _applyDashboardTotalsDelta(advanceCountDelta: advanceDelta);
                                 currentSummary = currentSummary.copyWith(advances: const <Advance>[]);
                                 await _replaceCachedSummaryAwaitingIndex(currentSummary);
                               } else {
@@ -2305,7 +2423,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   bookingDelta -= 1;
                                   await _bookingsRepository.deleteBooking(currentSummary.patient.fiscalCode, item.id);
                                 }
-                                await _dashboardTotalsRepository.applyFrontendManagedDelta(bookingCountDelta: bookingDelta);
+                                await _applyDashboardTotalsDelta(bookingCountDelta: bookingDelta);
                                 currentSummary = currentSummary.copyWith(bookings: const <Booking>[]);
                                 await _replaceCachedSummaryAwaitingIndex(currentSummary);
                               }
@@ -3011,7 +3129,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 );
               }
 
-              await _dashboardTotalsRepository.applyFrontendManagedDelta(
+              await _applyDashboardTotalsDelta(
                 debtAmountDelta: debtValue,
                 advanceCountDelta: advanceText.isNotEmpty ? 1 : 0,
                 bookingCountDelta: bookingText.isNotEmpty ? 1 : 0,
@@ -3236,7 +3354,9 @@ class _DashboardPageState extends State<DashboardPage> {
         await _drivePdfImportsRepository.requestPdfDelete(importItem.id, fiscalCode: importItem.patientFiscalCode);
         await savePendingPdfDelete(importId: importItem.id, fiscalCode: importItem.patientFiscalCode);
       }
-      await _dashboardTotalsRepository.applyFrontendManagedDelta(
+      await _applyDashboardTotalsDelta(
+        recipeCountDelta: -summary.imports.fold<int>(0, (int sum, DrivePdfImport item) => sum + _recipeCountForImport(item)),
+        dpcCountDelta: -summary.imports.where((DrivePdfImport item) => item.isDpc).length,
         debtAmountDelta: -summary.totalDebt,
         advanceCountDelta: -summary.advances.length,
         bookingCountDelta: -summary.bookings.length,
@@ -3287,12 +3407,12 @@ class _DashboardPageState extends State<DashboardPage> {
       _isRouteCovered = true;
     });
     Navigator.of(context)
-        .push(
-          MaterialPageRoute<void>(
+        .push<PatientDetailDashboardArchiveDelta>(
+          MaterialPageRoute<PatientDetailDashboardArchiveDelta>(
             builder: (_) => PatientDetailPage(fiscalCode: normalizedCf),
           ),
         )
-        .whenComplete(() {
+        .then((PatientDetailDashboardArchiveDelta? archiveDelta) {
           if (!mounted) {
             return;
           }
@@ -3300,6 +3420,12 @@ class _DashboardPageState extends State<DashboardPage> {
             _isRouteCovered = false;
           });
           _startDashboardTotalsListener();
+          if (archiveDelta != null && archiveDelta.hasDelta) {
+            _applyDashboardTotalsDeltaLocal(
+              recipeCountDelta: archiveDelta.recipeCountDelta,
+              dpcCountDelta: archiveDelta.dpcCountDelta,
+            );
+          }
           if (_hasUserRequestedDashboardData) {
             _issueLoad(force: true);
           }
@@ -3762,6 +3888,10 @@ class _DashboardPageState extends State<DashboardPage> {
       if (!confirmed) return;
       await _drivePdfImportsRepository.requestPdfDelete(item.id, fiscalCode: item.patientFiscalCode);
       await savePendingPdfDelete(importId: item.id, fiscalCode: item.patientFiscalCode);
+      await _applyDashboardTotalsDelta(
+        recipeCountDelta: -_recipeCountForImport(item),
+        dpcCountDelta: item.isDpc ? -1 : 0,
+      );
       _removeRecipeFromCachedSummary(detailSummary, item);
       _refresh();
       return;
@@ -3777,6 +3907,10 @@ class _DashboardPageState extends State<DashboardPage> {
             setLocalState(() => busy = true);
             await _drivePdfImportsRepository.requestPdfDelete(item.id, fiscalCode: item.patientFiscalCode);
             await savePendingPdfDelete(importId: item.id, fiscalCode: item.patientFiscalCode);
+            await _applyDashboardTotalsDelta(
+              recipeCountDelta: -_recipeCountForImport(item),
+              dpcCountDelta: item.isDpc ? -1 : 0,
+            );
             _removeRecipeFromCachedSummary(detailSummary, item);
             _refresh();
             setLocalState(() => busy = false);
@@ -3961,6 +4095,10 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 }
 
+int _recipeCountForImport(DrivePdfImport item) {
+  return item.prescriptionCount > 0 ? item.prescriptionCount : 1;
+}
+
 int _resolveDashboardRecipeCountAfterRecipeDelete({
   required List<DrivePdfImport> allImports,
   required List<DrivePdfImport> visibleImports,
@@ -3969,7 +4107,7 @@ int _resolveDashboardRecipeCountAfterRecipeDelete({
 }) {
   if (allImports.isNotEmpty) {
     return visibleImports.fold<int>(0, (int sum, DrivePdfImport item) {
-      return sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1);
+      return sum + _recipeCountForImport(item);
     });
   }
   return math.max(0, currentRecipeCount - math.max(1, removedRecipeCount));

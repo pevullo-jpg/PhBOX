@@ -40,6 +40,18 @@ import '../../../shared/navigation/app_navigation.dart';
 import '../../../shared/widgets/floating_page_menu.dart';
 import '../../../theme/app_theme.dart';
 
+class PatientDetailDashboardArchiveDelta {
+  final int recipeCountDelta;
+  final int dpcCountDelta;
+
+  const PatientDetailDashboardArchiveDelta({
+    this.recipeCountDelta = 0,
+    this.dpcCountDelta = 0,
+  });
+
+  bool get hasDelta => recipeCountDelta != 0 || dpcCountDelta != 0;
+}
+
 class PatientDetailPage extends StatefulWidget {
   final String fiscalCode;
 
@@ -67,6 +79,8 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   Future<_PatientDetailData>? _future;
   String _message = '';
   late String _currentFiscalCode;
+  int _archiveRecipeCountDeltaForDashboard = 0;
+  int _archiveDpcCountDeltaForDashboard = 0;
 
   @override
   void initState() {
@@ -102,6 +116,16 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     }
   }
 
+
+  PatientDetailDashboardArchiveDelta? _buildDashboardArchiveDeltaResult() {
+    if (_archiveRecipeCountDeltaForDashboard == 0 && _archiveDpcCountDeltaForDashboard == 0) {
+      return null;
+    }
+    return PatientDetailDashboardArchiveDelta(
+      recipeCountDelta: _archiveRecipeCountDeltaForDashboard,
+      dpcCountDelta: _archiveDpcCountDeltaForDashboard,
+    );
+  }
 
   Future<void> _copyToClipboard(String value, {String message = 'CF copiato negli appunti.'}) async {
     final String normalized = value.trim();
@@ -284,6 +308,54 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     return normalized.isEmpty ? null : normalized;
   }
 
+  int _recipeCountForImport(DrivePdfImport item) {
+    return item.prescriptionCount > 0 ? item.prescriptionCount : 1;
+  }
+
+  int _recipeCountForVisibleArchive(
+    List<DrivePdfImport> imports,
+    List<Prescription> prescriptions,
+  ) {
+    if (imports.isNotEmpty) {
+      return imports.fold<int>(0, (int sum, DrivePdfImport item) => sum + _recipeCountForImport(item));
+    }
+    return prescriptions.fold<int>(0, (int sum, Prescription item) {
+      return sum + (item.prescriptionCount > 0 ? item.prescriptionCount : 1);
+    });
+  }
+
+  int _dpcCountForVisibleArchive(
+    List<DrivePdfImport> imports,
+    List<Prescription> prescriptions,
+  ) {
+    if (imports.isNotEmpty) {
+      return imports.where((DrivePdfImport item) => item.isDpc).length;
+    }
+    return prescriptions.where((Prescription item) => item.dpcFlag).length;
+  }
+
+  bool _hasExpiryAlertForVisibleArchive(
+    List<DrivePdfImport> imports,
+    List<Prescription> prescriptions,
+  ) {
+    final bool hasImportExpiry = imports.any((DrivePdfImport item) {
+      final DateTime baseDate = item.prescriptionDate ?? item.createdAt;
+      final PrescriptionExpiryInfo info = PrescriptionExpiryUtils.evaluate(
+        baseDate.add(const Duration(days: 30)),
+      );
+      return info.status == PrescriptionValidityStatus.expiringSoon ||
+          info.status == PrescriptionValidityStatus.expired;
+    });
+    final bool hasPrescriptionExpiry = prescriptions.any((Prescription item) {
+      final PrescriptionExpiryInfo info = PrescriptionExpiryUtils.evaluate(
+        item.expiryDate ?? item.prescriptionDate.add(const Duration(days: 30)),
+      );
+      return info.status == PrescriptionValidityStatus.expiringSoon ||
+          info.status == PrescriptionValidityStatus.expired;
+    });
+    return hasImportExpiry || hasPrescriptionExpiry;
+  }
+
   Future<void> _applyFrontendManagedTotalsDelta({
     double debtAmountDelta = 0,
     int advanceCountDelta = 0,
@@ -319,6 +391,9 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         doctorFullName: data.resolvedDoctorName == '-' ? patient.doctorName : data.resolvedDoctorName,
         city: patient.city,
         exemptionCode: patient.primaryExemption,
+        recipeCount: _recipeCountForVisibleArchive(data.imports, data.prescriptions),
+        dpcCount: _dpcCountForVisibleArchive(data.imports, data.prescriptions),
+        hasExpiry: _hasExpiryAlertForVisibleArchive(data.imports, data.prescriptions),
         debtCount: data.debts.length,
         debtAmount: data.debts.fold<double>(0, (double sum, Debt item) => sum + item.residualAmount),
         advanceCount: data.advances.length,
@@ -1330,6 +1405,11 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     if (!await _confirmDelete(message: 'Eliminare questa ricetta?')) return;
     await _drivePdfImportsRepository.requestPdfDelete(item.id, fiscalCode: item.patientFiscalCode);
     await savePendingPdfDelete(importId: item.id, fiscalCode: item.patientFiscalCode);
+    // Archive totals are backend-owned and will be converged by the deletePdf signal.
+    _archiveRecipeCountDeltaForDashboard -= _recipeCountForImport(item);
+    if (item.isDpc) {
+      _archiveDpcCountDeltaForDashboard -= 1;
+    }
     final DrivePdfImport hiddenItem = item.copyWith(
       deletePdfRequested: true,
       deleteRequestedAt: DateTime.now(),
@@ -1343,12 +1423,14 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     final List<Prescription> nextPrescriptions = data.prescriptions
         .where((Prescription current) => current.id != item.id)
         .toList();
+    final _PatientDetailData nextData = data.copyWith(
+      imports: nextVisibleImports,
+      allImports: nextAllImports,
+      prescriptions: nextPrescriptions,
+    );
+    await _syncPatientDashboardIndex(nextData);
     _replaceData(
-      data.copyWith(
-        imports: nextVisibleImports,
-        allImports: nextAllImports,
-        prescriptions: nextPrescriptions,
-      ),
+      nextData,
       'Richiesta delete PDF registrata.',
     );
   }
@@ -1757,7 +1839,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         FloatingPageMenu(
           currentIndex: appNavigationIndex.value,
           includeBack: true,
-          onBack: () => Navigator.of(context).maybePop(),
+          onBack: () => Navigator.of(context).maybePop(_buildDashboardArchiveDeltaResult()),
           pageIcon: Icons.badge_outlined,
           pageTooltip: 'Scheda assistito',
           onPageTap: _editCurrentPatientFromMenu,
