@@ -17,6 +17,9 @@
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/datastore",
     "https://www.googleapis.com/auth/documents",
-    "https://www.googleapis.com/auth/cloud-platform"
+    "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/script.scriptapp",
+    "https://www.googleapis.com/auth/script.storage",
+    "https://www.googleapis.com/auth/userinfo.email"
   ]
 }
