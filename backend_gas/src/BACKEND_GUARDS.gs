@@ -42,6 +42,147 @@ function diagnosePhboxAuthorizations() {
   });
 }
 
+
+
+function installPhboxTenant() {
+  var cfg = getPhboxConfig_();
+  var health = checkPhboxBackendHealth_({ persist: false, requireTrigger: false });
+  if (!health.ok) {
+    writePhboxBackendHealthSnapshot_(health);
+    throw new Error('Installazione PhBOX bloccata: health-check non OK. ' + summarizePhboxHealthErrors_(health));
+  }
+
+  var trigger = reinstallPhboxMainTrigger_();
+  health.trigger = getPhboxMainTriggerStatus_();
+  health.ok = !!(health.authorizations && health.authorizations.ok && health.trigger && health.trigger.ok);
+  health.installed = true;
+  health.installedAt = new Date().toISOString();
+  health.triggerInstall = trigger;
+  writePhboxBackendHealthSnapshot_(health);
+
+  logInfo_(cfg, 'installPhboxTenant completato', {
+    ok: true,
+    trigger: trigger,
+    healthOk: health.ok
+  });
+
+  return health;
+}
+
+function checkPhboxBackendHealth() {
+  return checkPhboxBackendHealth_({ persist: true });
+}
+
+function checkPhboxBackendHealth_(options) {
+  options = options || {};
+  var cfg = getPhboxConfig_();
+  var health = {
+    ok: true,
+    checkedAt: new Date().toISOString(),
+    config: {
+      folderIdConfigured: !!cfg.folderId && !/^REPLACE_/i.test(String(cfg.folderId)),
+      firestoreProjectIdConfigured: !!cfg.firestoreProjectId && !/^REPLACE_/i.test(String(cfg.firestoreProjectId)),
+      gmailProcessedLabel: cfg.gmailProcessedLabel || '',
+      gmailRejectedLabel: cfg.gmailRejectedLabel || ''
+    },
+    authorizations: diagnosePhboxAuthorizations_({
+      includeDriveOcrProbe: true,
+      includeFirestoreProbe: true,
+      includeGmailProbe: true
+    }),
+    trigger: getPhboxMainTriggerStatus_()
+  };
+
+  var requireTrigger = options.requireTrigger !== false;
+  health.ok = !!(health.authorizations && health.authorizations.ok && (!requireTrigger || (health.trigger && health.trigger.ok)));
+  if (options.persist !== false) {
+    writePhboxBackendHealthSnapshot_(health);
+  }
+  return health;
+}
+
+function reinstallPhboxMainTrigger_() {
+  var intervalMinutes = readPhboxMainTriggerIntervalMinutes_();
+  var triggers = ScriptApp.getProjectTriggers();
+  var deleted = 0;
+
+  triggers.forEach(function (trigger) {
+    if (trigger && trigger.getHandlerFunction && trigger.getHandlerFunction() === 'runPhboxBackendSimple') {
+      ScriptApp.deleteTrigger(trigger);
+      deleted++;
+    }
+  });
+
+  var created = ScriptApp.newTrigger('runPhboxBackendSimple')
+    .timeBased()
+    .everyMinutes(intervalMinutes)
+    .create();
+
+  return {
+    ok: true,
+    functionName: 'runPhboxBackendSimple',
+    intervalMinutes: intervalMinutes,
+    deletedExistingTriggers: deleted,
+    createdTriggerUid: created && created.getUniqueId ? created.getUniqueId() : ''
+  };
+}
+
+function getPhboxMainTriggerStatus_() {
+  var intervalMinutes = readPhboxMainTriggerIntervalMinutes_();
+  var triggers = ScriptApp.getProjectTriggers();
+  var matches = [];
+
+  triggers.forEach(function (trigger) {
+    if (!trigger || !trigger.getHandlerFunction || trigger.getHandlerFunction() !== 'runPhboxBackendSimple') return;
+    matches.push({
+      functionName: trigger.getHandlerFunction(),
+      source: trigger.getTriggerSource ? String(trigger.getTriggerSource()) : '',
+      eventType: trigger.getEventType ? String(trigger.getEventType()) : '',
+      uniqueId: trigger.getUniqueId ? trigger.getUniqueId() : ''
+    });
+  });
+
+  return {
+    ok: matches.length === 1,
+    functionName: 'runPhboxBackendSimple',
+    expectedIntervalMinutes: intervalMinutes,
+    triggerCount: matches.length,
+    duplicateTriggers: Math.max(0, matches.length - 1),
+    triggers: matches
+  };
+}
+
+function readPhboxMainTriggerIntervalMinutes_() {
+  var raw = PropertiesService.getScriptProperties().getProperty('PHBOX_MAIN_TRIGGER_INTERVAL_MINUTES');
+  var value = parseInt(raw || '5', 10);
+  var allowed = [1, 5, 10, 15, 30];
+  if (allowed.indexOf(value) === -1) return 5;
+  return value;
+}
+
+function writePhboxBackendHealthSnapshot_(health) {
+  PropertiesService.getScriptProperties().setProperty(
+    'PHBOX_BACKEND_HEALTH_LAST_JSON',
+    JSON.stringify(health || {})
+  );
+}
+
+function summarizePhboxHealthErrors_(health) {
+  health = health || {};
+  var messages = [];
+  var auth = health.authorizations || {};
+  Object.keys(auth).forEach(function (key) {
+    if (key === 'ok' || key === 'checkedAt') return;
+    if (auth[key] && auth[key].ok === false) {
+      messages.push(key + ': ' + String(auth[key].message || 'KO'));
+    }
+  });
+  if (health.trigger && health.trigger.ok === false) {
+    messages.push('trigger: count=' + String(health.trigger.triggerCount || 0));
+  }
+  return messages.join(' | ') || 'errore non specificato';
+}
+
 function diagnosePhboxAuthorizations_(options) {
   options = options || {};
   var cfg = getPhboxConfig_();
