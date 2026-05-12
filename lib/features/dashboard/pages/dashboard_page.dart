@@ -3409,8 +3409,8 @@ class _DashboardPageState extends State<DashboardPage> {
             final String surname = PatientInputNormalizer.normalizeNamePart(surnameController.text);
             final String fullName = PatientInputNormalizer.buildFullName(name: name, surname: surname);
             final String alias = aliasController.text.trim();
-            final String advanceText = advanceController.text.trim();
-            final String bookingText = bookingController.text.trim();
+            final List<String> advanceEntries = _splitMultiEntryInput(advanceController.text);
+            final List<String> bookingEntries = _splitBookingEntryInput(bookingController.text);
             final double debtValue = _parseEuro(debtController.text);
             final String debtDescription = debtDescriptionController.text.trim();
 
@@ -3418,8 +3418,18 @@ class _DashboardPageState extends State<DashboardPage> {
               setLocalState(() => localError = 'Inserisci almeno uno tra codice fiscale, nome e cognome.');
               return;
             }
-            if (advanceText.isNotEmpty && selectedDoctor.trim().isEmpty) {
+            if (advanceEntries.isNotEmpty && selectedDoctor.trim().isEmpty) {
               setLocalState(() => localError = "Per l'anticipo devi selezionare il medico.");
+              return;
+            }
+            final String? advanceLimitError = _multiEntryLimitError(advanceEntries, 'anticipo');
+            if (advanceLimitError != null) {
+              setLocalState(() => localError = advanceLimitError);
+              return;
+            }
+            final String? bookingLimitError = _multiEntryLimitError(bookingEntries, 'prenotazione');
+            if (bookingLimitError != null) {
+              setLocalState(() => localError = bookingLimitError);
               return;
             }
             if (debtValue != 0 && debtDescription.isEmpty) {
@@ -3432,20 +3442,56 @@ class _DashboardPageState extends State<DashboardPage> {
               localError = '';
             });
 
-            try {
-              final DateTime now = DateTime.now();
-              final _PatientDashboardSummary? existingPatient =
-                  fiscalCode.isEmpty ? null : _findExactPatientByCf(fiscalCode);
-              final String patientDocumentId = existingPatient?.patient.fiscalCode ?? buildManualPatientDocumentId(
-                fiscalCode: fiscalCode,
-                name: name,
-                surname: surname,
-                now: now,
-              );
-              final String effectivePatientName = fullName.isNotEmpty
-                  ? fullName
-                  : (existingPatient?.patient.fullName.trim() ?? '');
+            final DateTime now = DateTime.now();
+            final _PatientDashboardSummary? existingPatient =
+                fiscalCode.isEmpty ? null : _findExactPatientByCf(fiscalCode);
+            final String patientDocumentId = existingPatient?.patient.fiscalCode ?? buildManualPatientDocumentId(
+              fiscalCode: fiscalCode,
+              name: name,
+              surname: surname,
+              now: now,
+            );
+            final String effectivePatientName = fullName.isNotEmpty
+                ? fullName
+                : (existingPatient?.patient.fullName.trim() ?? '');
+            final String doctorName = selectedDoctor.trim();
+            final int baseDebtCount = existingPatient?.debtCount ?? 0;
+            final double baseDebtAmount = existingPatient?.totalDebt ?? 0;
+            final int baseAdvanceCount = existingPatient?.advanceCount ?? 0;
+            final int baseBookingCount = existingPatient?.bookingCount ?? 0;
+            final List<Advance> savedAdvances = <Advance>[];
+            final List<Booking> savedBookings = <Booking>[];
+            bool debtSaved = false;
+            bool patientSaved = false;
+            bool totalsReconciled = false;
+            bool indexReconciled = false;
+            String postSaveWarning = '';
 
+            Future<void> reconcileSavedState() async {
+              if (!totalsReconciled) {
+                await _applyDashboardTotalsDelta(
+                  debtAmountDelta: debtSaved ? debtValue : 0,
+                  advanceCountDelta: savedAdvances.length,
+                  bookingCountDelta: savedBookings.length,
+                );
+                totalsReconciled = true;
+              }
+              if (!indexReconciled) {
+                await _patientDashboardIndexRepository.patchFrontendManagedState(
+                  fiscalCode: patientDocumentId,
+                  fullName: effectivePatientName,
+                  alias: alias,
+                  doctorFullName: doctorName,
+                  debtCount: baseDebtCount + (debtSaved ? 1 : 0),
+                  debtAmount: baseDebtAmount + (debtSaved ? debtValue : 0),
+                  advanceCount: baseAdvanceCount + savedAdvances.length,
+                  bookingCount: baseBookingCount + savedBookings.length,
+                );
+                indexReconciled = true;
+              }
+            }
+
+            try {
               await _patientsRepository.createManualPatient(
                 Patient(
                   fiscalCode: patientDocumentId,
@@ -3455,37 +3501,45 @@ class _DashboardPageState extends State<DashboardPage> {
                   updatedAt: now,
                 ),
               );
+              patientSaved = true;
 
-              if (advanceText.isNotEmpty) {
-                await _advancesRepository.saveAdvance(
-                  Advance(
-                    id: 'adv_${now.microsecondsSinceEpoch}',
-                    patientFiscalCode: patientDocumentId,
-                    patientName: effectivePatientName,
-                    drugName: advanceText,
-                    doctorName: selectedDoctor.trim(),
-                    createdAt: now,
-                    updatedAt: now,
-                  ),
-                );
-                await _doctorPatientLinksRepository.saveManualOverride(
+              for (int i = 0; i < advanceEntries.length; i++) {
+                final Advance advance = Advance(
+                  id: 'adv_${now.microsecondsSinceEpoch}_${i + 1}',
                   patientFiscalCode: patientDocumentId,
-                  patientFullName: effectivePatientName,
-                  doctorFullName: selectedDoctor.trim(),
+                  patientName: effectivePatientName,
+                  drugName: advanceEntries[i],
+                  doctorName: doctorName,
+                  createdAt: now,
+                  updatedAt: now,
                 );
+                await _advancesRepository.saveAdvance(advance);
+                savedAdvances.add(advance);
               }
 
-              if (bookingText.isNotEmpty) {
-                await _bookingsRepository.saveBooking(
-                  Booking(
-                    id: 'book_${now.microsecondsSinceEpoch}',
+              if (savedAdvances.isNotEmpty) {
+                try {
+                  await _doctorPatientLinksRepository.saveManualOverride(
                     patientFiscalCode: patientDocumentId,
-                    patientName: effectivePatientName,
-                    drugName: bookingText,
-                    createdAt: now,
-                    expectedDate: now,
-                  ),
+                    patientFullName: effectivePatientName,
+                    doctorFullName: doctorName,
+                  );
+                } catch (e) {
+                  postSaveWarning = ' Override medico non riallineato: $e';
+                }
+              }
+
+              for (int i = 0; i < bookingEntries.length; i++) {
+                final Booking booking = Booking(
+                  id: 'book_${now.microsecondsSinceEpoch}_${i + 1}',
+                  patientFiscalCode: patientDocumentId,
+                  patientName: effectivePatientName,
+                  drugName: bookingEntries[i],
+                  createdAt: now,
+                  expectedDate: now,
                 );
+                await _bookingsRepository.saveBooking(booking);
+                savedBookings.add(booking);
               }
 
               if (debtValue != 0) {
@@ -3501,34 +3555,46 @@ class _DashboardPageState extends State<DashboardPage> {
                     dueDate: now,
                   ),
                 );
+                debtSaved = true;
               }
 
-              await _applyDashboardTotalsDelta(
-                debtAmountDelta: debtValue,
-                advanceCountDelta: advanceText.isNotEmpty ? 1 : 0,
-                bookingCountDelta: bookingText.isNotEmpty ? 1 : 0,
-              );
-              await _patientDashboardIndexRepository.patchFrontendManagedState(
-                fiscalCode: patientDocumentId,
-                fullName: effectivePatientName,
-                alias: alias,
-                doctorFullName: selectedDoctor.trim(),
-                debtCount: debtValue == 0 ? 0 : 1,
-                debtAmount: debtValue,
-                advanceCount: advanceText.isNotEmpty ? 1 : 0,
-                bookingCount: bookingText.isNotEmpty ? 1 : 0,
-              );
+              await reconcileSavedState();
 
               if (dialogContext.mounted) {
                 Navigator.of(dialogContext).pop();
               }
               if (mounted) {
                 setState(() {
-                  _message = 'Assistito inserito correttamente.';
+                  _message = 'Assistito inserito correttamente.$postSaveWarning';
                 });
                 _refresh();
               }
             } catch (e) {
+              if (patientSaved && (savedAdvances.isNotEmpty || savedBookings.isNotEmpty || debtSaved)) {
+                try {
+                  await reconcileSavedState();
+                  if (dialogContext.mounted) {
+                    Navigator.of(dialogContext).pop();
+                  }
+                  if (mounted) {
+                    setState(() {
+                      _message = 'Assistito parzialmente inserito: anticipi ${savedAdvances.length}/${advanceEntries.length}, prenotazioni ${savedBookings.length}/${bookingEntries.length}. Verifica prima di reinserire. Errore: $e$postSaveWarning';
+                    });
+                    _refresh();
+                  }
+                } catch (reconcileError) {
+                  if (dialogContext.mounted) {
+                    Navigator.of(dialogContext).pop();
+                  }
+                  if (mounted) {
+                    setState(() {
+                      _message = 'Assistito parzialmente salvato, ma indice/totali non riallineati: $reconcileError. Verifica prima di reinserire. Errore originale: $e$postSaveWarning';
+                    });
+                    _refresh();
+                  }
+                }
+                return;
+              }
               if (dialogContext.mounted) {
                 setLocalState(() {
                   busy = false;
@@ -3576,7 +3642,14 @@ class _DashboardPageState extends State<DashboardPage> {
                           ),
                         ),
                         const SizedBox(height: 12),
-                        _dialogField(advanceController, 'Eventuale anticipo', onChanged: (_) => setLocalState(() {})),
+                        _dialogField(
+                          advanceController,
+                          'Eventuale anticipo',
+                          keyboardType: TextInputType.multiline,
+                          maxLines: 3,
+                          helperText: 'Per più voci usa virgola o vai a capo.',
+                          onChanged: (_) => setLocalState(() {}),
+                        ),
                         if (advanceController.text.trim().isNotEmpty) ...[
                           const SizedBox(height: 12),
                           DropdownButtonFormField<String>(
@@ -3612,7 +3685,14 @@ class _DashboardPageState extends State<DashboardPage> {
                           ),
                         ],
                         const SizedBox(height: 12),
-                        _dialogField(bookingController, 'Eventuale prenotazione', onChanged: (_) => setLocalState(() {})),
+                        _dialogField(
+                          bookingController,
+                          'Eventuale prenotazione',
+                          keyboardType: TextInputType.multiline,
+                          maxLines: 3,
+                          helperText: 'Per più prenotazioni usa una riga per voce. Le virgole restano nel testo.',
+                          onChanged: (_) => setLocalState(() {}),
+                        ),
                         if (bookingController.text.trim().isNotEmpty) ...[
                           const SizedBox(height: 8),
                           Align(
