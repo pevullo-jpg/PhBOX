@@ -319,13 +319,13 @@ function finalizeRuntimeEmails_(options) {
       stats.orphanedThreads++;
     }
 
-    if (evaluation.status === 'processed' || evaluation.status === 'rejected') {
+    if (evaluation.status === 'processed') {
       for (var m = 0; m < messages.length; m++) {
         try {
           messages[m].markRead();
           stats.markedRead++;
         } catch (_) {}
-        if (evaluation.status === 'processed' && cfg.trashValidEmails) {
+        if (cfg.trashValidEmails) {
           try {
             messages[m].moveToTrash();
             stats.trashed++;
@@ -333,7 +333,7 @@ function finalizeRuntimeEmails_(options) {
         }
       }
       threadState.markedRead = true;
-      threadState.trashed = evaluation.status === 'processed' && !!cfg.trashValidEmails;
+      threadState.trashed = !!cfg.trashValidEmails;
     }
 
     threadState.finalizationStatus = evaluation.status;
