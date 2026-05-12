@@ -71,8 +71,11 @@ class _DashboardPageState extends State<DashboardPage> {
   _DashboardTotals _dashboardTotals = _DashboardTotals.empty();
   int _pendingArchiveRecipeCountDelta = 0;
   int _pendingArchiveDpcCountDelta = 0;
+  int _pendingExpiringPatientCountDelta = 0;
   int? _lastBackendArchiveRecipeCount;
   int? _lastBackendArchiveDpcCount;
+  int? _lastBackendExpiringPatientCount;
+  String _lastBackendExpiringRecipesSignature = '';
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
   bool _searchInFlags = false;
@@ -93,6 +96,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   static const Duration _inactiveFilterResetDelay = Duration(minutes: 2);
   static const Duration _userRequestRefreshDebounceDelay = Duration(milliseconds: 450);
+  static const int _maxMultiEntryItems = 20;
 
   @override
   void initState() {
@@ -201,7 +205,7 @@ class _DashboardPageState extends State<DashboardPage> {
           _dashboardTotals = visibleTotals;
           _lastRefreshAt = snapshot.updatedAt ?? DateTime.now();
         });
-        unawaited(_loadExpiringRecipesSectionIfNeeded(visibleTotals));
+        unawaited(_loadExpiringRecipesSectionIfNeeded(snapshotTotals));
       },
       onError: (Object error) {
         if (!mounted) {
@@ -243,8 +247,15 @@ class _DashboardPageState extends State<DashboardPage> {
       previousBackendCount: _lastBackendArchiveDpcCount,
       nextBackendCount: snapshotTotals.dpcCount,
     );
+    _pendingExpiringPatientCountDelta = _reconcilePendingArchiveDelta(
+      pendingDelta: _pendingExpiringPatientCountDelta,
+      previousBackendCount: _lastBackendExpiringPatientCount,
+      nextBackendCount: snapshotTotals.expiringCount,
+    );
     _lastBackendArchiveRecipeCount = snapshotTotals.recipeCount;
     _lastBackendArchiveDpcCount = snapshotTotals.dpcCount;
+    _lastBackendExpiringPatientCount = snapshotTotals.expiringCount;
+    _lastBackendExpiringRecipesSignature = snapshotTotals.expiringRecipesSignature;
   }
 
   int _reconcilePendingArchiveDelta({
@@ -270,7 +281,9 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   _DashboardTotals _applyPendingArchiveTotalsOverlay(_DashboardTotals snapshotTotals) {
-    if (_pendingArchiveRecipeCountDelta == 0 && _pendingArchiveDpcCountDelta == 0) {
+    if (_pendingArchiveRecipeCountDelta == 0 &&
+        _pendingArchiveDpcCountDelta == 0 &&
+        _pendingExpiringPatientCountDelta == 0) {
       return snapshotTotals;
     }
     return _DashboardTotals(
@@ -279,7 +292,7 @@ class _DashboardPageState extends State<DashboardPage> {
       debtAmount: snapshotTotals.debtAmount,
       advanceCount: snapshotTotals.advanceCount,
       bookingCount: snapshotTotals.bookingCount,
-      expiringCount: snapshotTotals.expiringCount,
+      expiringCount: _clampDashboardTotalInt(snapshotTotals.expiringCount + _pendingExpiringPatientCountDelta),
       expiringRecipesSignature: snapshotTotals.expiringRecipesSignature,
     );
   }
@@ -387,6 +400,23 @@ class _DashboardPageState extends State<DashboardPage> {
     ].join('|');
   }
 
+  _DashboardTotals _backendExpiringLoaderTotalsFromVisibleTotals(_DashboardTotals visibleTotals) {
+    final int rawExpiringCount = _lastBackendExpiringPatientCount ??
+        _clampDashboardTotalInt(visibleTotals.expiringCount - _pendingExpiringPatientCountDelta);
+    final String rawExpiringSignature = _lastBackendExpiringRecipesSignature.isNotEmpty
+        ? _lastBackendExpiringRecipesSignature
+        : visibleTotals.expiringRecipesSignature;
+    return _DashboardTotals(
+      recipeCount: visibleTotals.recipeCount,
+      dpcCount: visibleTotals.dpcCount,
+      debtAmount: visibleTotals.debtAmount,
+      advanceCount: visibleTotals.advanceCount,
+      bookingCount: visibleTotals.bookingCount,
+      expiringCount: rawExpiringCount,
+      expiringRecipesSignature: rawExpiringSignature,
+    );
+  }
+
   Future<void> _loadExpiringRecipesSectionIfNeeded(
     _DashboardTotals totals, {
     bool force = false,
@@ -480,12 +510,24 @@ class _DashboardPageState extends State<DashboardPage> {
               'Indice ricette in scadenza in aggiornamento. Premi aggiorna se il dato non si aggiorna automaticamente.';
           return;
         }
+        final int visibleExpiringCount = _visibleExpiringPatientCount(visibleItems);
         _expiringRecipes = visibleItems;
         _expiringRecipesSignature = signature;
         _expiringRecipesLoading = false;
         _expiringRecipesMessage = visibleItems.isEmpty && totals.expiringCount > 0
             ? 'Scadenze segnalate dai totali, ma nessuna ricetta visibile nell’indice dedicato.'
             : '';
+        if (visibleExpiringCount != _dashboardTotals.expiringCount) {
+          _dashboardTotals = _DashboardTotals(
+            recipeCount: _dashboardTotals.recipeCount,
+            dpcCount: _dashboardTotals.dpcCount,
+            debtAmount: _dashboardTotals.debtAmount,
+            advanceCount: _dashboardTotals.advanceCount,
+            bookingCount: _dashboardTotals.bookingCount,
+            expiringCount: visibleExpiringCount,
+            expiringRecipesSignature: _visibleExpiringRecipesSignature(visibleItems),
+          );
+        }
       });
       _runQueuedExpiringRecipesLoadIfNeeded();
     } catch (e) {
@@ -548,6 +590,31 @@ class _DashboardPageState extends State<DashboardPage> {
     return items.where((DashboardExpiringRecipe item) {
       return !pendingByImportId.containsKey(item.importId);
     }).toList();
+  }
+
+  int _visibleExpiringPatientCount(List<DashboardExpiringRecipe> items) {
+    final Set<String> keys = <String>{};
+    for (final DashboardExpiringRecipe item in items) {
+      final String cf = _normalizeFiscalCode(item.patientFiscalCode);
+      final String key = cf.isNotEmpty ? cf : item.importId.trim();
+      if (key.isNotEmpty) {
+        keys.add(key);
+      }
+    }
+    return keys.length;
+  }
+
+  String _visibleExpiringRecipesSignature(List<DashboardExpiringRecipe> items) {
+    final Set<String> keys = <String>{};
+    for (final DashboardExpiringRecipe item in items) {
+      final String cf = _normalizeFiscalCode(item.patientFiscalCode);
+      final String key = cf.isNotEmpty ? cf : item.importId.trim();
+      if (key.isNotEmpty) {
+        keys.add(key);
+      }
+    }
+    final List<String> sortedKeys = keys.toList()..sort();
+    return sortedKeys.join('|');
   }
 
   List<_ExpiringPatientDashboardRow> _expiringPatientRowsForZeroPosition() {
@@ -798,6 +865,10 @@ class _DashboardPageState extends State<DashboardPage> {
       ),
       includeArchiveFlags: true,
     );
+    _removeDeletedRecipesFromExpiringSection(
+      fiscalCode: summary.patient.fiscalCode,
+      deletedImportIds: <String>[removedImport.id],
+    );
   }
 
   void _clearDisplayedDashboardRows() {
@@ -809,7 +880,10 @@ class _DashboardPageState extends State<DashboardPage> {
   void _manualRefreshRequestedData() {
     if (!_hasUserRequestedDashboardData) {
       if (_isDashboardAtZeroPosition && _dashboardTotals.expiringCount > 0) {
-        unawaited(_loadExpiringRecipesSectionIfNeeded(_dashboardTotals, force: true));
+        unawaited(_loadExpiringRecipesSectionIfNeeded(
+          _backendExpiringLoaderTotalsFromVisibleTotals(_dashboardTotals),
+          force: true,
+        ));
         setState(() {
           _future = Future<_DashboardData>.value(_DashboardData.empty());
           _message = 'Aggiornamento ricette in scadenza richiesto.';
@@ -1499,6 +1573,7 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     bool needsArchive = false;
+    bool needsLegacyPrescriptions = false;
     bool needsDebts = false;
     bool needsAdvances = false;
     bool needsBookings = false;
@@ -1507,6 +1582,7 @@ class _DashboardPageState extends State<DashboardPage> {
       case 'ricette':
       case 'dpc':
         needsArchive = summary.recipeCount > 0 && summary.imports.isEmpty && summary.prescriptions.isEmpty;
+        needsLegacyPrescriptions = needsArchive;
         break;
       case 'debiti':
         needsDebts = summary.hasDebt && summary.debts.isEmpty;
@@ -1522,6 +1598,13 @@ class _DashboardPageState extends State<DashboardPage> {
         needsAdvances = summary.hasAdvance && summary.advances.isEmpty;
         needsBookings = summary.hasBooking && summary.bookings.isEmpty;
         break;
+      case 'bulk-delete':
+        needsArchive = true;
+        needsLegacyPrescriptions = false;
+        needsDebts = true;
+        needsAdvances = true;
+        needsBookings = true;
+        break;
     }
 
     if (!needsArchive && !needsDebts && !needsAdvances && !needsBookings) {
@@ -1530,7 +1613,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
     final List<Future<dynamic>> futures = <Future<dynamic>>[
       if (needsArchive) _drivePdfImportsRepository.getImportsByPatient(cf, includeHidden: true),
-      if (needsArchive) _prescriptionsRepository.getLegacyPatientPrescriptions(cf),
+      if (needsLegacyPrescriptions) _prescriptionsRepository.getLegacyPatientPrescriptions(cf),
       if (needsDebts) _debtsRepository.getPatientDebts(cf),
       if (needsAdvances) _advancesRepository.getPatientAdvances(cf),
       if (needsBookings) _bookingsRepository.getPatientBookings(cf),
@@ -1549,7 +1632,9 @@ class _DashboardPageState extends State<DashboardPage> {
       imports = loadedImports
           .where((DrivePdfImport item) => !item.isHiddenFromFrontend)
           .toList();
-      prescriptions = results[cursor++] as List<Prescription>;
+      prescriptions = needsLegacyPrescriptions
+          ? results[cursor++] as List<Prescription>
+          : summary.prescriptions;
     }
     if (needsDebts) {
       debts = results[cursor++] as List<Debt>;
@@ -1818,6 +1903,21 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  List<String> _splitMultiEntryInput(String value) {
+    return value
+        .split(RegExp(r'[,;，、\n\r]+'))
+        .map((String item) => item.trim())
+        .where((String item) => item.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  String? _multiEntryLimitError(List<String> entries, String label) {
+    if (entries.length <= _maxMultiEntryItems) {
+      return null;
+    }
+    return 'Troppe voci $label: massimo $_maxMultiEntryItems per salvataggio. Dividi l’elenco in più inserimenti.';
+  }
+
   Future<bool> _addAdvanceFromDashboard(_PatientDashboardSummary summary) async {
     final drugController = TextEditingController();
     final noteController = TextEditingController();
@@ -1835,52 +1935,120 @@ class _DashboardPageState extends State<DashboardPage> {
           bool busy = false;
 
           Future<void> submit(StateSetter setLocalState) async {
-            final String drugName = drugController.text.trim();
+            final List<String> drugNames = _splitMultiEntryInput(drugController.text);
             final String doctorName = selectedDoctor.trim();
-            if (drugName.isEmpty || doctorName.isEmpty) {
+            if (drugNames.isEmpty || doctorName.isEmpty) {
               setLocalState(() => localError = 'Farmaco e medico sono obbligatori.');
+              return;
+            }
+            final String? limitError = _multiEntryLimitError(drugNames, 'anticipo');
+            if (limitError != null) {
+              setLocalState(() => localError = limitError);
               return;
             }
             setLocalState(() {
               busy = true;
               localError = '';
             });
+            final DateTime now = DateTime.now();
+            final String? note = noteController.text.trim().isEmpty ? null : noteController.text.trim();
+            final List<Advance> advances = <Advance>[
+              for (int i = 0; i < drugNames.length; i++)
+                Advance(
+                  id: 'adv_${now.microsecondsSinceEpoch}_${i + 1}',
+                  patientFiscalCode: summary.patient.fiscalCode,
+                  patientName: summary.patient.fullName,
+                  drugName: drugNames[i],
+                  doctorName: doctorName,
+                  note: note,
+                  createdAt: now,
+                  updatedAt: now,
+                ),
+            ];
+            final List<Advance> savedAdvances = <Advance>[];
+            Object? saveLoopError;
+            for (final Advance advance in advances) {
+              try {
+                await _advancesRepository.saveAdvance(advance);
+                savedAdvances.add(advance);
+              } catch (e) {
+                saveLoopError = e;
+                break;
+              }
+            }
+            if (saveLoopError != null) {
+              if (savedAdvances.isNotEmpty) {
+                try {
+                  await _applyDashboardTotalsDelta(advanceCountDelta: savedAdvances.length);
+                  await _replaceCachedSummaryAwaitingIndex(summary.copyWith(
+                    advances: <Advance>[...savedAdvances, ...summary.advances],
+                    doctorName: doctorName,
+                  ));
+                  saved = true;
+                  if (dialogContext.mounted) {
+                    Navigator.of(dialogContext).pop();
+                  }
+                  if (mounted) {
+                    setState(() {
+                      _message = 'Anticipi parzialmente aggiunti: ${savedAdvances.length}/${advances.length}. Verifica prima di reinserire. Errore: $saveLoopError';
+                    });
+                    _refresh();
+                  }
+                } catch (reconcileError) {
+                  saved = true;
+                  if (dialogContext.mounted) {
+                    Navigator.of(dialogContext).pop();
+                  }
+                  if (mounted) {
+                    setState(() {
+                      _message = 'Anticipi parzialmente salvati (${savedAdvances.length}/${advances.length}), ma indice/totali non riallineati: $reconcileError. Verifica prima di reinserire.';
+                    });
+                    _refresh();
+                  }
+                }
+                return;
+              }
+              if (dialogContext.mounted) {
+                setLocalState(() {
+                  busy = false;
+                  localError = 'Errore salvataggio anticipo: $saveLoopError';
+                });
+              }
+              return;
+            }
+
+            String postSaveWarning = '';
             try {
-              final DateTime now = DateTime.now();
-              final Advance advance = Advance(
-                id: 'adv_${now.microsecondsSinceEpoch}',
-                patientFiscalCode: summary.patient.fiscalCode,
-                patientName: summary.patient.fullName,
-                drugName: drugName,
-                doctorName: doctorName,
-                note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
-                createdAt: now,
-                updatedAt: now,
-              );
-              await _advancesRepository.saveAdvance(advance);
-              await _applyDashboardTotalsDelta(advanceCountDelta: 1);
-              await _replaceCachedSummaryAwaitingIndex(summary.copyWith(
-                advances: <Advance>[advance, ...summary.advances],
-                doctorName: doctorName,
-              ));
               await _doctorPatientLinksRepository.saveManualOverride(
                 patientFiscalCode: summary.patient.fiscalCode,
                 patientFullName: summary.patient.fullName,
                 doctorFullName: doctorName,
                 city: summary.city == '-' ? null : summary.city,
               );
+            } catch (e) {
+              postSaveWarning = ' Override medico non riallineato: $e';
+            }
+            try {
+              await _applyDashboardTotalsDelta(advanceCountDelta: savedAdvances.length);
+              await _replaceCachedSummaryAwaitingIndex(summary.copyWith(
+                advances: <Advance>[...savedAdvances, ...summary.advances],
+                doctorName: doctorName,
+              ));
               saved = true;
               if (dialogContext.mounted) {
                 Navigator.of(dialogContext).pop();
               }
               if (mounted) {
+                setState(() {
+                  _message = (savedAdvances.length == 1 ? 'Anticipo aggiunto.' : 'Anticipi aggiunti: ${savedAdvances.length}.') + postSaveWarning;
+                });
                 _refresh();
               }
             } catch (e) {
               if (dialogContext.mounted) {
                 setLocalState(() {
                   busy = false;
-                  localError = 'Errore salvataggio anticipo: $e';
+                  localError = 'Anticipi salvati, ma indice/totali non riallineati: $e';
                 });
               }
             }
@@ -1895,7 +2063,13 @@ class _DashboardPageState extends State<DashboardPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _dialogField(drugController, 'Farmaco / articolo'),
+                    _dialogField(
+                      drugController,
+                      'Farmaco / articolo',
+                      keyboardType: TextInputType.multiline,
+                      maxLines: 4,
+                      helperText: 'Per più voci usa virgola o vai a capo.',
+                    ),
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
                       value: selectedDoctor.isEmpty ? null : selectedDoctor,
@@ -1981,7 +2155,13 @@ class _DashboardPageState extends State<DashboardPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _dialogField(drugController, 'Farmaco / articolo'),
+              _dialogField(
+                drugController,
+                'Farmaco / articolo',
+                keyboardType: TextInputType.multiline,
+                maxLines: 4,
+                helperText: 'Per più voci usa virgola o vai a capo.',
+              ),
               const SizedBox(height: 12),
               _dialogField(
                 quantityController,
@@ -2006,24 +2186,65 @@ class _DashboardPageState extends State<DashboardPage> {
       ),
     );
     if (confirmed != true) return false;
+    final List<Booking> savedBookings = <Booking>[];
+    List<Booking> bookings = const <Booking>[];
     try {
-      if (drugController.text.trim().isEmpty) {
-        throw Exception('Farmaco obbligatorio.');
+      final List<String> drugNames = _splitMultiEntryInput(drugController.text);
+      final int quantity = int.tryParse(quantityController.text.trim()) ?? 1;
+      if (drugNames.isEmpty || quantity <= 0) {
+        throw Exception('Farmaco e quantità obbligatori.');
+      }
+      final String? limitError = _multiEntryLimitError(drugNames, 'prenotazione');
+      if (limitError != null) {
+        throw Exception(limitError);
       }
       final now = DateTime.now();
-      final Booking booking = Booking(
-        id: 'book_${now.microsecondsSinceEpoch}',
-        patientFiscalCode: summary.patient.fiscalCode,
-        patientName: summary.patient.fullName,
-        drugName: drugController.text.trim(),
-        quantity: int.tryParse(quantityController.text.trim()) ?? 1,
-        createdAt: now,
-        expectedDate: now,
-        note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
-      );
-      await _bookingsRepository.saveBooking(booking);
-      await _applyDashboardTotalsDelta(bookingCountDelta: 1);
-      await _replaceCachedSummaryAwaitingIndex(summary.copyWith(bookings: <Booking>[booking, ...summary.bookings]));
+      final String? note = noteController.text.trim().isEmpty ? null : noteController.text.trim();
+      bookings = <Booking>[
+        for (int i = 0; i < drugNames.length; i++)
+          Booking(
+            id: 'book_${now.microsecondsSinceEpoch}_${i + 1}',
+            patientFiscalCode: summary.patient.fiscalCode,
+            patientName: summary.patient.fullName,
+            drugName: drugNames[i],
+            quantity: quantity,
+            createdAt: now,
+            expectedDate: now,
+            note: note,
+          ),
+      ];
+      Object? saveLoopError;
+      for (final Booking booking in bookings) {
+        try {
+          await _bookingsRepository.saveBooking(booking);
+          savedBookings.add(booking);
+        } catch (e) {
+          saveLoopError = e;
+          break;
+        }
+      }
+      if (saveLoopError != null) {
+        if (savedBookings.isNotEmpty) {
+          try {
+            await _applyDashboardTotalsDelta(bookingCountDelta: savedBookings.length);
+            await _replaceCachedSummaryAwaitingIndex(summary.copyWith(bookings: <Booking>[...savedBookings, ...summary.bookings]));
+            _refresh();
+            setState(() {
+              _message = 'Prenotazioni parzialmente aggiunte: ${savedBookings.length}/${bookings.length}. Verifica prima di reinserire. Errore: $saveLoopError';
+            });
+            return true;
+          } catch (reconcileError) {
+            setState(() {
+              _message = 'Prenotazioni parzialmente salvate (${savedBookings.length}/${bookings.length}), ma indice/totali non riallineati: $reconcileError. Verifica prima di reinserire.';
+            });
+            return true;
+          }
+        }
+        setState(() => _message = 'Errore salvataggio prenotazione: $saveLoopError');
+        return false;
+      }
+      await _applyDashboardTotalsDelta(bookingCountDelta: savedBookings.length);
+      await _replaceCachedSummaryAwaitingIndex(summary.copyWith(bookings: <Booking>[...savedBookings, ...summary.bookings]));
       _refresh();
       return true;
     } catch (e) {
@@ -2160,24 +2381,74 @@ class _DashboardPageState extends State<DashboardPage> {
                 currentSummary = currentSummary.copyWith(debts: <Debt>[debt, ...currentSummary.debts]);
                 await _replaceCachedSummaryAwaitingIndex(currentSummary);
               } else if (key == 'anticipi') {
-                final drugName = advanceDrugController.text.trim();
+                final List<String> drugNames = _splitMultiEntryInput(advanceDrugController.text);
                 final doctorName = selectedDoctor.trim();
-                if (drugName.isEmpty || doctorName.isEmpty) {
+                if (drugNames.isEmpty || doctorName.isEmpty) {
                   setLocalState(() => formError = 'Inserisci farmaco e medico.');
                   return;
                 }
-                final Advance advance = Advance(
-                  id: 'adv_${now.microsecondsSinceEpoch}',
-                  patientFiscalCode: fiscalCode,
-                  patientName: patientName,
-                  drugName: drugName,
-                  doctorName: doctorName,
-                  note: advanceNoteController.text.trim().isEmpty ? null : advanceNoteController.text.trim(),
-                  createdAt: now,
-                  updatedAt: now,
-                );
-                await _advancesRepository.saveAdvance(advance);
-                await _applyDashboardTotalsDelta(advanceCountDelta: 1);
+                final String? limitError = _multiEntryLimitError(drugNames, 'anticipo');
+                if (limitError != null) {
+                  setLocalState(() => formError = limitError);
+                  return;
+                }
+                final String? note = advanceNoteController.text.trim().isEmpty ? null : advanceNoteController.text.trim();
+                final List<Advance> advances = <Advance>[
+                  for (int i = 0; i < drugNames.length; i++)
+                    Advance(
+                      id: 'adv_${now.microsecondsSinceEpoch}_${i + 1}',
+                      patientFiscalCode: fiscalCode,
+                      patientName: patientName,
+                      drugName: drugNames[i],
+                      doctorName: doctorName,
+                      note: note,
+                      createdAt: now,
+                      updatedAt: now,
+                    ),
+                ];
+                final List<Advance> savedAdvances = <Advance>[];
+                Object? saveLoopError;
+                for (final Advance advance in advances) {
+                  try {
+                    await _advancesRepository.saveAdvance(advance);
+                    savedAdvances.add(advance);
+                  } catch (e) {
+                    saveLoopError = e;
+                    break;
+                  }
+                }
+                if (saveLoopError != null) {
+                  if (savedAdvances.isEmpty) {
+                    setLocalState(() => formError = 'Errore salvataggio anticipo: $saveLoopError');
+                    return;
+                  }
+                  try {
+                    await _applyDashboardTotalsDelta(advanceCountDelta: savedAdvances.length);
+                    currentSummary = currentSummary.copyWith(
+                      advances: <Advance>[...savedAdvances, ...currentSummary.advances],
+                      doctorName: doctorName,
+                    );
+                    await _replaceCachedSummaryAwaitingIndex(currentSummary);
+                    setLocalState(() {
+                      showAddForm = false;
+                      clearInlineForm();
+                    });
+                    setState(() {
+                      _message = 'Anticipi parzialmente aggiunti: ${savedAdvances.length}/${advances.length}. Verifica prima di reinserire. Errore: $saveLoopError';
+                    });
+                  } catch (reconcileError) {
+                    setLocalState(() {
+                      showAddForm = false;
+                      clearInlineForm();
+                      formError = '';
+                    });
+                    setState(() {
+                      _message = 'Anticipi parzialmente salvati (${savedAdvances.length}/${advances.length}), ma indice/totali non riallineati: $reconcileError. Verifica prima di reinserire.';
+                    });
+                  }
+                  return;
+                }
+                await _applyDashboardTotalsDelta(advanceCountDelta: savedAdvances.length);
                 await _doctorPatientLinksRepository.saveManualOverride(
                   patientFiscalCode: fiscalCode,
                   patientFullName: patientName,
@@ -2185,30 +2456,77 @@ class _DashboardPageState extends State<DashboardPage> {
                   city: currentSummary.city == '-' ? null : currentSummary.city,
                 );
                 currentSummary = currentSummary.copyWith(
-                  advances: <Advance>[advance, ...currentSummary.advances],
+                  advances: <Advance>[...savedAdvances, ...currentSummary.advances],
                   doctorName: doctorName,
                 );
                 await _replaceCachedSummaryAwaitingIndex(currentSummary);
               } else {
-                final drugName = bookingDrugController.text.trim();
+                final List<String> drugNames = _splitMultiEntryInput(bookingDrugController.text);
                 final quantity = int.tryParse(bookingQuantityController.text.trim()) ?? 1;
-                if (drugName.isEmpty || quantity <= 0) {
+                if (drugNames.isEmpty || quantity <= 0) {
                   setLocalState(() => formError = 'Inserisci farmaco e quantità valide.');
                   return;
                 }
-                final Booking booking = Booking(
-                  id: 'book_${now.microsecondsSinceEpoch}',
-                  patientFiscalCode: fiscalCode,
-                  patientName: patientName,
-                  drugName: drugName,
-                  quantity: quantity,
-                  createdAt: now,
-                  expectedDate: now,
-                  note: bookingNoteController.text.trim().isEmpty ? null : bookingNoteController.text.trim(),
-                );
-                await _bookingsRepository.saveBooking(booking);
-                await _applyDashboardTotalsDelta(bookingCountDelta: 1);
-                currentSummary = currentSummary.copyWith(bookings: <Booking>[booking, ...currentSummary.bookings]);
+                final String? limitError = _multiEntryLimitError(drugNames, 'prenotazione');
+                if (limitError != null) {
+                  setLocalState(() => formError = limitError);
+                  return;
+                }
+                final String? note = bookingNoteController.text.trim().isEmpty ? null : bookingNoteController.text.trim();
+                final List<Booking> bookings = <Booking>[
+                  for (int i = 0; i < drugNames.length; i++)
+                    Booking(
+                      id: 'book_${now.microsecondsSinceEpoch}_${i + 1}',
+                      patientFiscalCode: fiscalCode,
+                      patientName: patientName,
+                      drugName: drugNames[i],
+                      quantity: quantity,
+                      createdAt: now,
+                      expectedDate: now,
+                      note: note,
+                    ),
+                ];
+                final List<Booking> savedBookings = <Booking>[];
+                Object? saveLoopError;
+                for (final Booking booking in bookings) {
+                  try {
+                    await _bookingsRepository.saveBooking(booking);
+                    savedBookings.add(booking);
+                  } catch (e) {
+                    saveLoopError = e;
+                    break;
+                  }
+                }
+                if (saveLoopError != null) {
+                  if (savedBookings.isEmpty) {
+                    setLocalState(() => formError = 'Errore salvataggio prenotazione: $saveLoopError');
+                    return;
+                  }
+                  try {
+                    await _applyDashboardTotalsDelta(bookingCountDelta: savedBookings.length);
+                    currentSummary = currentSummary.copyWith(bookings: <Booking>[...savedBookings, ...currentSummary.bookings]);
+                    await _replaceCachedSummaryAwaitingIndex(currentSummary);
+                    setLocalState(() {
+                      showAddForm = false;
+                      clearInlineForm();
+                    });
+                    setState(() {
+                      _message = 'Prenotazioni parzialmente aggiunte: ${savedBookings.length}/${bookings.length}. Verifica prima di reinserire. Errore: $saveLoopError';
+                    });
+                  } catch (reconcileError) {
+                    setLocalState(() {
+                      showAddForm = false;
+                      clearInlineForm();
+                      formError = '';
+                    });
+                    setState(() {
+                      _message = 'Prenotazioni parzialmente salvate (${savedBookings.length}/${bookings.length}), ma indice/totali non riallineati: $reconcileError. Verifica prima di reinserire.';
+                    });
+                  }
+                  return;
+                }
+                await _applyDashboardTotalsDelta(bookingCountDelta: savedBookings.length);
+                currentSummary = currentSummary.copyWith(bookings: <Booking>[...savedBookings, ...currentSummary.bookings]);
                 await _replaceCachedSummaryAwaitingIndex(currentSummary);
               }
 
@@ -2326,9 +2644,21 @@ class _DashboardPageState extends State<DashboardPage> {
                     const SizedBox(height: 12),
                     _dialogField(debtNoteController, 'Nota', maxLines: 3),
                   ] else if (key == 'anticipi') ...[
-                    _dialogField(advanceDrugController, 'Farmaco / articolo'),
+                    _dialogField(
+                      advanceDrugController,
+                      'Farmaco / articolo',
+                      keyboardType: TextInputType.multiline,
+                      maxLines: 4,
+                      helperText: 'Per più voci usa virgola o vai a capo.',
+                    ),
                   ] else ...[
-                    _dialogField(bookingDrugController, 'Farmaco / articolo'),
+                    _dialogField(
+                      bookingDrugController,
+                      'Farmaco / articolo',
+                      keyboardType: TextInputType.multiline,
+                      maxLines: 4,
+                      helperText: 'Per più voci usa virgola o vai a capo.',
+                    ),
                     const SizedBox(height: 12),
                     _dialogField(
                       bookingQuantityController,
@@ -3350,6 +3680,61 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+
+  void _removeDeletedRecipesFromExpiringSection({
+    required String fiscalCode,
+    required Iterable<String> deletedImportIds,
+    bool removeWholePatient = false,
+  }) {
+    if (!mounted) {
+      return;
+    }
+    final String normalizedCf = _normalizeFiscalCode(fiscalCode);
+    final Set<String> ids = deletedImportIds
+        .map((String id) => id.trim())
+        .where((String id) => id.isNotEmpty)
+        .toSet();
+    if (normalizedCf.isEmpty && ids.isEmpty) {
+      return;
+    }
+    final List<DashboardExpiringRecipe> nextExpiringRecipes = _expiringRecipes.where((DashboardExpiringRecipe item) {
+      final String itemImportId = item.importId.trim();
+      if (itemImportId.isNotEmpty && ids.contains(itemImportId)) {
+        return false;
+      }
+      final String itemCf = _normalizeFiscalCode(item.patientFiscalCode);
+      if (removeWholePatient && normalizedCf.isNotEmpty && itemCf == normalizedCf) {
+        return false;
+      }
+      return true;
+    }).toList();
+    if (nextExpiringRecipes.length == _expiringRecipes.length) {
+      return;
+    }
+    final int previousExpiringCount = _visibleExpiringPatientCount(_expiringRecipes);
+    final int visibleExpiringCount = _visibleExpiringPatientCount(nextExpiringRecipes);
+    final int expiringCountDelta = visibleExpiringCount - previousExpiringCount;
+    if (expiringCountDelta != 0) {
+      _lastBackendExpiringPatientCount ??=
+          _clampDashboardTotalInt(_dashboardTotals.expiringCount - _pendingExpiringPatientCountDelta);
+      _pendingExpiringPatientCountDelta += expiringCountDelta;
+    }
+    final String visibleSignature = _visibleExpiringRecipesSignature(nextExpiringRecipes);
+    setState(() {
+      _expiringRecipes = nextExpiringRecipes;
+      _expiringRecipesSignature = visibleSignature;
+      _dashboardTotals = _DashboardTotals(
+        recipeCount: _dashboardTotals.recipeCount,
+        dpcCount: _dashboardTotals.dpcCount,
+        debtAmount: _dashboardTotals.debtAmount,
+        advanceCount: _dashboardTotals.advanceCount,
+        bookingCount: _dashboardTotals.bookingCount,
+        expiringCount: visibleExpiringCount,
+        expiringRecipesSignature: visibleSignature,
+      );
+    });
+  }
+
   Future<void> _deletePatientEverything(_PatientDashboardSummary summary) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -3378,28 +3763,36 @@ class _DashboardPageState extends State<DashboardPage> {
     if (confirmed != true) return;
 
     try {
-      for (final debt in summary.debts) {
-        await _debtsRepository.deleteDebt(summary.patient.fiscalCode, debt.id);
+      final _PatientDashboardSummary detailSummary =
+          await _ensureSummaryDetailsForKey(summary, 'bulk-delete');
+      if (!mounted) return;
+      for (final debt in detailSummary.debts) {
+        await _debtsRepository.deleteDebt(detailSummary.patient.fiscalCode, debt.id);
       }
-      for (final advance in summary.advances) {
-        await _advancesRepository.deleteAdvance(summary.patient.fiscalCode, advance.id);
+      for (final advance in detailSummary.advances) {
+        await _advancesRepository.deleteAdvance(detailSummary.patient.fiscalCode, advance.id);
       }
-      for (final booking in summary.bookings) {
-        await _bookingsRepository.deleteBooking(summary.patient.fiscalCode, booking.id);
+      for (final booking in detailSummary.bookings) {
+        await _bookingsRepository.deleteBooking(detailSummary.patient.fiscalCode, booking.id);
       }
-      final recipeImports = summary.imports;
+      final List<DrivePdfImport> recipeImports = detailSummary.imports;
       for (final importItem in recipeImports) {
         await _drivePdfImportsRepository.requestPdfDelete(importItem.id, fiscalCode: importItem.patientFiscalCode);
         await savePendingPdfDelete(importId: importItem.id, fiscalCode: importItem.patientFiscalCode);
       }
-      await _applyDashboardTotalsDelta(
-        recipeCountDelta: -summary.imports.fold<int>(0, (int sum, DrivePdfImport item) => sum + _recipeCountForImport(item)),
-        dpcCountDelta: -summary.imports.where((DrivePdfImport item) => item.isDpc).length,
-        debtAmountDelta: -summary.totalDebt,
-        advanceCountDelta: -summary.advances.length,
-        bookingCountDelta: -summary.bookings.length,
+      _removeDeletedRecipesFromExpiringSection(
+        fiscalCode: detailSummary.patient.fiscalCode,
+        deletedImportIds: recipeImports.map((DrivePdfImport item) => item.id),
+        removeWholePatient: true,
       );
-      final _PatientDashboardSummary clearedSummary = summary.copyWith(
+      await _applyDashboardTotalsDelta(
+        recipeCountDelta: -detailSummary.imports.fold<int>(0, (int sum, DrivePdfImport item) => sum + _recipeCountForImport(item)),
+        dpcCountDelta: -detailSummary.imports.where((DrivePdfImport item) => item.isDpc).length,
+        debtAmountDelta: -detailSummary.totalDebt,
+        advanceCountDelta: -detailSummary.advances.length,
+        bookingCountDelta: -detailSummary.bookings.length,
+      );
+      final _PatientDashboardSummary clearedSummary = detailSummary.copyWith(
         imports: const <DrivePdfImport>[],
         prescriptions: const <Prescription>[],
         debts: const <Debt>[],
@@ -3458,11 +3851,19 @@ class _DashboardPageState extends State<DashboardPage> {
             _isRouteCovered = false;
           });
           _startDashboardTotalsListener();
-          if (archiveDelta != null && archiveDelta.hasDelta) {
-            _applyDashboardTotalsDeltaLocal(
-              recipeCountDelta: archiveDelta.recipeCountDelta,
-              dpcCountDelta: archiveDelta.dpcCountDelta,
-            );
+          if (archiveDelta != null) {
+            if (archiveDelta.hasDelta) {
+              _applyDashboardTotalsDeltaLocal(
+                recipeCountDelta: archiveDelta.recipeCountDelta,
+                dpcCountDelta: archiveDelta.dpcCountDelta,
+              );
+            }
+            if (archiveDelta.deletedImportIds.isNotEmpty) {
+              _removeDeletedRecipesFromExpiringSection(
+                fiscalCode: archiveDelta.patientFiscalCode,
+                deletedImportIds: archiveDelta.deletedImportIds,
+              );
+            }
           }
           if (_hasUserRequestedDashboardData) {
             _issueLoad(force: true);
@@ -4071,6 +4472,7 @@ class _DashboardPageState extends State<DashboardPage> {
     TextInputType? keyboardType,
     List<TextInputFormatter>? inputFormatters,
     int maxLines = 1,
+    String? helperText,
     ValueChanged<String>? onChanged,
   }) {
     return TextField(
@@ -4083,6 +4485,8 @@ class _DashboardPageState extends State<DashboardPage> {
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         labelText: label,
+        helperText: helperText,
+        helperStyle: const TextStyle(color: Colors.white54),
         labelStyle: const TextStyle(color: Colors.white70),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
