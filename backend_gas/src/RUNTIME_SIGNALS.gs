@@ -441,6 +441,7 @@ function patchPatientDashboardArchiveIndexAfterDelete_(cfg, cf) {
   var nowIso = new Date().toISOString();
   var data = {
     recipeCount: archive ? Math.max(0, Number(archive.recipeCount || 0)) : 0,
+    dpcCount: archive ? Math.max(0, Number(archive.dpcCount || 0)) : 0,
     hasRecipes: archive ? Number(archive.recipeCount || 0) > 0 : false,
     hasDpc: archive ? Number(archive.dpcCount || 0) > 0 : false,
     hasExpiry: !!(archive && archive.nearestExpiryDate && isDashboardExpiryAlert_(parseDashboardTotalsDate_(archive.nearestExpiryDate))),
@@ -477,13 +478,25 @@ function refreshDashboardTotalsForAppDomain_(cfg, collectionId) {
   return { ok: true, patched: true, data: data, previousUpdatedAt: current.updatedAt || null };
 }
 
+function isRuntimeDeletePdfPreviouslyCountedArchiveDoc_(item) {
+  if (!item) return false;
+  if (item.pdfDeleted === true) return false;
+  var kind = String(item.kind || '');
+  if (kind === 'merged_component' || kind === 'canonical_source_retained' || kind === 'merge_pending_component') return false;
+  var status = String(item.status || '').trim().toLowerCase();
+  if (status === 'deleted_pdf' || status === 'deleted' || status === 'trash' || status === 'trashed' || status === 'discarded_non_prescription') return false;
+  return !!(normalizeCf_(item.patientFiscalCode || item.fiscalCode || item.patientCf || item.patientCF || item.cf || item.codiceFiscale || item.patient_fiscal_code) ||
+    String(item.patientFullName || item.patientName || item.fullName || item.name || '').trim());
+}
+
 function refreshDashboardTotalsAfterDeletePdf_(cfg, importDoc) {
   var current = getFirestoreDocumentByPath_(cfg, ['dashboard_totals', 'main']) || {};
   var nowIso = new Date().toISOString();
-  var recipeDelta = isActivePatientDashboardArchiveDoc_(importDoc) ? Math.max(1, Number(importDoc.prescriptionCount || importDoc.recipeCount || 1)) : 0;
-  var dpcDelta = isActivePatientDashboardArchiveDoc_(importDoc) && (importDoc.isDpc || importDoc.hasDpc) ? 1 : 0;
+  var wasCountedBeforeDeleteRequest = isRuntimeDeletePdfPreviouslyCountedArchiveDoc_(importDoc);
+  var recipeDelta = wasCountedBeforeDeleteRequest ? Math.max(1, Number(importDoc.prescriptionCount || importDoc.recipeCount || 1)) : 0;
+  var dpcDelta = wasCountedBeforeDeleteRequest && (importDoc.isDpc || importDoc.hasDpc) ? 1 : 0;
   var expiryDate = parseDashboardTotalsDate_(importDoc && (importDoc.prescriptionDate || importDoc.createdAt));
-  var expiryDelta = expiryDate && isDashboardExpiryAlert_(addDaysForDashboardTotals_(expiryDate, 30)) ? 1 : 0;
+  var expiryDelta = wasCountedBeforeDeleteRequest && expiryDate && isDashboardExpiryAlert_(addDaysForDashboardTotals_(expiryDate, 30)) ? 1 : 0;
   var data = {
     recipeCount: Math.max(0, Number(current.recipeCount || 0) - recipeDelta),
     dpcCount: Math.max(0, Number(current.dpcCount || 0) - dpcDelta),
