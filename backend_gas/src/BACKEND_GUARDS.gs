@@ -42,6 +42,198 @@ function diagnosePhboxAuthorizations() {
   });
 }
 
+
+
+function installPhboxTenant() {
+  var accountGuard = assertPhboxOperationalAccountForInstaller_();
+  var cfg = getPhboxConfig_();
+  var health = checkPhboxBackendHealth_({ persist: false, requireTrigger: false });
+  if (!health.ok) {
+    writePhboxBackendHealthSnapshot_(health);
+    throw new Error('Installazione PhBOX bloccata: health-check non OK. ' + summarizePhboxHealthErrors_(health));
+  }
+
+  var trigger = reinstallPhboxMainTrigger_();
+  health.trigger = getPhboxMainTriggerStatus_();
+  health.ok = !!(health.operationalAccount && health.operationalAccount.ok && health.authorizations && health.authorizations.ok && health.trigger && health.trigger.ok);
+  health.installed = true;
+  health.installedAt = new Date().toISOString();
+  health.installerAccount = accountGuard;
+  health.triggerInstall = trigger;
+  writePhboxBackendHealthSnapshot_(health);
+
+  logInfo_(cfg, 'installPhboxTenant completato', {
+    ok: true,
+    trigger: trigger,
+    healthOk: health.ok
+  });
+
+  return health;
+}
+
+function checkPhboxBackendHealth() {
+  return checkPhboxBackendHealth_({ persist: true });
+}
+
+function checkPhboxBackendHealth_(options) {
+  options = options || {};
+  var cfg = getPhboxConfig_();
+  var operationalAccount = getPhboxOperationalAccountStatus_();
+  var health = {
+    ok: true,
+    checkedAt: new Date().toISOString(),
+    operationalAccount: operationalAccount,
+    config: {
+      folderIdConfigured: !!cfg.folderId && !/^REPLACE_/i.test(String(cfg.folderId)),
+      firestoreProjectIdConfigured: !!cfg.firestoreProjectId && !/^REPLACE_/i.test(String(cfg.firestoreProjectId)),
+      gmailProcessedLabel: cfg.gmailProcessedLabel || '',
+      gmailRejectedLabel: cfg.gmailRejectedLabel || ''
+    },
+    authorizations: diagnosePhboxAuthorizations_({
+      includeDriveOcrProbe: true,
+      includeFirestoreProbe: true,
+      includeGmailProbe: true
+    }),
+    trigger: getPhboxMainTriggerStatus_()
+  };
+
+  var requireTrigger = options.requireTrigger !== false;
+  health.ok = !!(health.operationalAccount && health.operationalAccount.ok && health.authorizations && health.authorizations.ok && (!requireTrigger || (health.trigger && health.trigger.ok)));
+  if (options.persist !== false) {
+    writePhboxBackendHealthSnapshot_(health);
+  }
+  return health;
+}
+
+function reinstallPhboxMainTrigger_() {
+  assertPhboxOperationalAccountForInstaller_();
+  var intervalMinutes = readPhboxMainTriggerIntervalMinutes_();
+  var triggers = ScriptApp.getProjectTriggers();
+  var deleted = 0;
+
+  triggers.forEach(function (trigger) {
+    if (trigger && trigger.getHandlerFunction && trigger.getHandlerFunction() === 'runPhboxBackendSimple') {
+      ScriptApp.deleteTrigger(trigger);
+      deleted++;
+    }
+  });
+
+  var created = ScriptApp.newTrigger('runPhboxBackendSimple')
+    .timeBased()
+    .everyMinutes(intervalMinutes)
+    .create();
+
+  return {
+    ok: true,
+    functionName: 'runPhboxBackendSimple',
+    intervalMinutes: intervalMinutes,
+    deletedExistingTriggers: deleted,
+    createdTriggerUid: created && created.getUniqueId ? created.getUniqueId() : ''
+  };
+}
+
+function getPhboxMainTriggerStatus_() {
+  var intervalMinutes = readPhboxMainTriggerIntervalMinutes_();
+  var triggers = ScriptApp.getProjectTriggers();
+  var matches = [];
+
+  triggers.forEach(function (trigger) {
+    if (!trigger || !trigger.getHandlerFunction || trigger.getHandlerFunction() !== 'runPhboxBackendSimple') return;
+    matches.push({
+      functionName: trigger.getHandlerFunction(),
+      source: trigger.getTriggerSource ? String(trigger.getTriggerSource()) : '',
+      eventType: trigger.getEventType ? String(trigger.getEventType()) : '',
+      uniqueId: trigger.getUniqueId ? trigger.getUniqueId() : ''
+    });
+  });
+
+  return {
+    ok: matches.length === 1,
+    functionName: 'runPhboxBackendSimple',
+    expectedIntervalMinutes: intervalMinutes,
+    triggerCount: matches.length,
+    duplicateTriggers: Math.max(0, matches.length - 1),
+    triggers: matches
+  };
+}
+
+function readPhboxMainTriggerIntervalMinutes_() {
+  var raw = PropertiesService.getScriptProperties().getProperty('PHBOX_MAIN_TRIGGER_INTERVAL_MINUTES');
+  var value = parseInt(raw || '5', 10);
+  var allowed = [1, 5, 10, 15, 30];
+  if (allowed.indexOf(value) === -1) return 5;
+  return value;
+}
+
+function readPhboxOperationalAccountEmail_() {
+  var raw = PropertiesService.getScriptProperties().getProperty('PHBOX_OPERATIONAL_ACCOUNT_EMAIL');
+  return String(raw || '').trim().toLowerCase();
+}
+
+function getPhboxExecutingAccountEmail_() {
+  try {
+    return String(Session.getEffectiveUser().getEmail() || '').trim().toLowerCase();
+  } catch (e) {
+    return '';
+  }
+}
+
+function getPhboxOperationalAccountStatus_() {
+  var expectedEmail = readPhboxOperationalAccountEmail_();
+  var executingEmail = getPhboxExecutingAccountEmail_();
+  var configured = !!expectedEmail;
+  var visible = !!executingEmail;
+  var matches = configured && visible && executingEmail === expectedEmail;
+  return {
+    ok: matches,
+    configured: configured,
+    executingEmailVisible: visible,
+    expectedEmail: expectedEmail,
+    executingEmail: executingEmail,
+    message: matches
+      ? 'OK'
+      : (!configured
+        ? 'PHBOX_OPERATIONAL_ACCOUNT_EMAIL non configurata.'
+        : (!visible
+          ? 'Account esecutore non determinabile da Session.getEffectiveUser().'
+          : "Account esecutore diverso dall'account operativo configurato."))
+  };
+}
+
+function assertPhboxOperationalAccountForInstaller_() {
+  var status = getPhboxOperationalAccountStatus_();
+  if (!status.ok) {
+    throw new Error('Installazione PhBOX bloccata: ' + status.message);
+  }
+  return status;
+}
+
+function writePhboxBackendHealthSnapshot_(health) {
+  PropertiesService.getScriptProperties().setProperty(
+    'PHBOX_BACKEND_HEALTH_LAST_JSON',
+    JSON.stringify(health || {})
+  );
+}
+
+function summarizePhboxHealthErrors_(health) {
+  health = health || {};
+  var messages = [];
+  if (health.operationalAccount && health.operationalAccount.ok === false) {
+    messages.push('operationalAccount: ' + String(health.operationalAccount.message || 'KO'));
+  }
+  var auth = health.authorizations || {};
+  Object.keys(auth).forEach(function (key) {
+    if (key === 'ok' || key === 'checkedAt') return;
+    if (auth[key] && auth[key].ok === false) {
+      messages.push(key + ': ' + String(auth[key].message || 'KO'));
+    }
+  });
+  if (health.trigger && health.trigger.ok === false) {
+    messages.push('trigger: count=' + String(health.trigger.triggerCount || 0));
+  }
+  return messages.join(' | ') || 'errore non specificato';
+}
+
 function diagnosePhboxAuthorizations_(options) {
   options = options || {};
   var cfg = getPhboxConfig_();
