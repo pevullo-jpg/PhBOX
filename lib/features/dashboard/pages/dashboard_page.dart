@@ -75,6 +75,7 @@ class _DashboardPageState extends State<DashboardPage> {
   int? _lastBackendArchiveRecipeCount;
   int? _lastBackendArchiveDpcCount;
   int? _lastBackendExpiringPatientCount;
+  final Set<String> _locallyDeletedPatientFiscalCodes = <String>{};
   String _lastBackendExpiringRecipesSignature = '';
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
   String _message = '';
@@ -929,6 +930,8 @@ class _DashboardPageState extends State<DashboardPage> {
     final _DashboardIndexLoadResult indexLoadResult = await _loadDashboardIndexRows();
     final List<PatientDashboardIndex> indexRows = indexLoadResult.rows;
     final List<_PatientDashboardSummary> summaries = indexRows
+        .where((PatientDashboardIndex item) =>
+            !_locallyDeletedPatientFiscalCodes.contains(_normalizeFiscalCode(item.fiscalCode)))
         .map(_summaryFromIndex)
         .where(_matchesActiveIndexFilters)
         .toList();
@@ -1096,6 +1099,10 @@ class _DashboardPageState extends State<DashboardPage> {
 
     final List<_PatientDashboardSummary> summaries = <_PatientDashboardSummary>[];
     for (final String cf in matchedCfs.where((String item) => item.isNotEmpty)) {
+      final String normalizedMatchedCf = _normalizeFiscalCode(cf);
+      if (_locallyDeletedPatientFiscalCodes.contains(normalizedMatchedCf)) {
+        continue;
+      }
       final PatientDashboardIndex? index = indexByCf[cf];
       final _PatientDashboardSummary base = index == null
           ? _PatientDashboardSummary(
@@ -3324,7 +3331,7 @@ class _DashboardPageState extends State<DashboardPage> {
         for (final PatientDashboardIndex row in prefixRows) {
           final _PatientDashboardSummary summary = _summaryFromIndex(row);
           final String cf = PatientInputNormalizer.normalizeFiscalCode(summary.patient.fiscalCode);
-          if (cf.isEmpty || isTemporaryPatientKey(cf)) continue;
+          if (cf.isEmpty || isTemporaryPatientKey(cf) || _locallyDeletedPatientFiscalCodes.contains(cf)) continue;
           nextByCf.putIfAbsent(cf, () => summary);
         }
 
@@ -3333,7 +3340,7 @@ class _DashboardPageState extends State<DashboardPage> {
           if (requestSerial != autocompleteRequestSerial) {
             return;
           }
-          if (exactRow != null) {
+          if (exactRow != null && !_locallyDeletedPatientFiscalCodes.contains(normalizedCf)) {
             final _PatientDashboardSummary exactSummary = _summaryFromIndex(exactRow);
             nextByCf[PatientInputNormalizer.normalizeFiscalCode(exactSummary.patient.fiscalCode)] = exactSummary;
           }
@@ -3645,9 +3652,8 @@ class _DashboardPageState extends State<DashboardPage> {
                         _dialogField(
                           advanceController,
                           'Eventuale anticipo',
-                          keyboardType: TextInputType.multiline,
                           maxLines: 3,
-                          helperText: 'Per più voci usa virgola o vai a capo.',
+                          helperText: 'Per più anticipi usa virgole o una riga per voce.',
                           onChanged: (_) => setLocalState(() {}),
                         ),
                         if (advanceController.text.trim().isNotEmpty) ...[
@@ -3688,8 +3694,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         _dialogField(
                           bookingController,
                           'Eventuale prenotazione',
-                          keyboardType: TextInputType.multiline,
-                          maxLines: 3,
+                          maxLines: 4,
                           helperText: 'Per più prenotazioni usa una riga per voce. Le virgole restano nel testo.',
                           onChanged: (_) => setLocalState(() {}),
                         ),
@@ -3938,6 +3943,13 @@ class _DashboardPageState extends State<DashboardPage> {
           });
           _startDashboardTotalsListener();
           if (archiveDelta != null) {
+            if (archiveDelta.patientDeleted) {
+              final String deletedCf = _normalizeFiscalCode(archiveDelta.patientFiscalCode);
+              _removeCachedSummary(archiveDelta.patientFiscalCode);
+              setState(() {
+                _message = 'Eliminazione assistito richiesta. Il backend completerà la cancellazione definitiva.';
+              });
+            }
             if (archiveDelta.hasDelta) {
               _applyDashboardTotalsDeltaLocal(
                 recipeCountDelta: archiveDelta.recipeCountDelta,
