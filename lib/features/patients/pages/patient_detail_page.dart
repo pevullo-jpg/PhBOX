@@ -34,6 +34,7 @@ import '../../../data/repositories/identity_resolution_requests_repository.dart'
 import '../../../data/repositories/patients_repository.dart';
 import '../../../data/repositories/patient_dashboard_index_repository.dart';
 import '../../../data/repositories/prescriptions_repository.dart';
+import '../../../data/repositories/runtime_signal_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../data/repositories/therapeutic_advice_repository.dart';
 import '../../../shared/navigation/app_navigation.dart';
@@ -45,17 +46,19 @@ class PatientDetailDashboardArchiveDelta {
   final int dpcCountDelta;
   final String patientFiscalCode;
   final List<String> deletedImportIds;
+  final bool patientDeleted;
 
   const PatientDetailDashboardArchiveDelta({
     this.recipeCountDelta = 0,
     this.dpcCountDelta = 0,
     this.patientFiscalCode = '',
     this.deletedImportIds = const <String>[],
+    this.patientDeleted = false,
   });
 
   bool get hasDelta => recipeCountDelta != 0 || dpcCountDelta != 0;
   bool get hasDeletedImports => deletedImportIds.isNotEmpty;
-  bool get hasAnyResult => hasDelta || hasDeletedImports;
+  bool get hasAnyResult => hasDelta || hasDeletedImports || patientDeleted;
 }
 
 class PatientDetailPage extends StatefulWidget {
@@ -81,6 +84,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   late final DashboardTotalsRepository _dashboardTotalsRepository;
   late final PatientDashboardIndexRepository _patientDashboardIndexRepository;
   late final IdentityResolutionRequestsRepository _identityResolutionRequestsRepository;
+  late final RuntimeSignalRepository _runtimeSignalRepository;
 
   Future<_PatientDetailData>? _future;
   String _message = '';
@@ -106,6 +110,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     _dashboardTotalsRepository = DashboardTotalsRepository(datasource: datasource);
     _patientDashboardIndexRepository = PatientDashboardIndexRepository(datasource: datasource);
     _identityResolutionRequestsRepository = IdentityResolutionRequestsRepository(datasource: datasource);
+    _runtimeSignalRepository = RuntimeSignalRepository(datasource: datasource);
     _currentFiscalCode = PatientInputNormalizer.normalizeFiscalCode(widget.fiscalCode);
     _future = _load();
   }
@@ -1463,6 +1468,103 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     }
   }
 
+  Future<void> _requestPatientDelete(_PatientDetailData data) async {
+    final Patient? patient = data.patient;
+    if (patient == null) return;
+    final String fiscalCode = PatientInputNormalizer.normalizeFiscalCode(patient.fiscalCode);
+    if (fiscalCode.isEmpty) {
+      _showTransientError('Codice fiscale assistito non valido.');
+      return;
+    }
+
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AppColors.panel,
+        title: const Text(
+          'Elimina assistito definitivamente',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                visiblePatientTitle(
+                  fullName: patient.fullName,
+                  patientKey: patient.fiscalCode,
+                ),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'Confermando verrà avviata la cancellazione definitiva backend-owned di assistito, indice Home, debiti, anticipi, prenotazioni, consigli terapeutici, ricette/PDF e collegamenti associati.',
+                style: TextStyle(color: Colors.white70, height: 1.35),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Dati collegati rilevati: ${data.debts.length} debiti, ${data.advances.length} anticipi, ${data.bookings.length} prenotazioni, ${data.prescriptions.length} ricette/documenti.',
+                style: const TextStyle(color: Colors.white70),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Operazione irreversibile. I PDF verranno gestiti dal backend tramite Drive e non devono essere eliminati manualmente.',
+                style: TextStyle(
+                  color: AppColors.red,
+                  fontWeight: FontWeight.w800,
+                  height: 1.35,
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
+          ),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.red),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            icon: const Icon(Icons.delete_forever_rounded),
+            label: const Text('Elimina definitivamente'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await _runtimeSignalRepository.emit(
+        domain: 'patientDelete',
+        operation: 'delete',
+        targetPath: 'patients/$fiscalCode',
+        targetFiscalCode: fiscalCode,
+        targetDocumentId: fiscalCode,
+        requiresTotalsUpdate: true,
+        requiresIndexUpdate: true,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(
+        PatientDetailDashboardArchiveDelta(
+          patientFiscalCode: fiscalCode,
+          patientDeleted: true,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _message = 'Errore richiesta eliminazione assistito: $e';
+      });
+    }
+  }
+
   Future<void> _deleteDebt(_PatientDetailData data, Debt debt) async {
     final Patient? patient = data.patient;
     if (patient == null) return;
@@ -2004,6 +2106,18 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               _metaBadge('Città', data.displayCity),
               _metaBadge('Ultima ricetta', _formatDate(data.lastPrescriptionDate)),
             ],
+          ),
+          const SizedBox(height: 16),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => _requestPatientDelete(data),
+              icon: const Icon(Icons.delete_forever_rounded, color: AppColors.red),
+              label: const Text(
+                'Elimina assistito',
+                style: TextStyle(color: AppColors.red, fontWeight: FontWeight.w800),
+              ),
+            ),
           ),
         ],
       ),
