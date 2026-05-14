@@ -297,6 +297,7 @@ function processRuntimeSignal_(signal) {
   if (domain === 'advances') return processRuntimeAppManagedSignal_(signal, 'advances');
   if (domain === 'bookings') return processRuntimeAppManagedSignal_(signal, 'bookings');
   if (domain === 'deletePdf') return processRuntimeDeletePdfSignal_(signal);
+  if (domain === 'patientDelete') return processRuntimePatientDeleteSignal_(signal);
 
   if (signal.requiresDriveAction || signal.requiresGmailAction || domain === 'gmail' || domain === 'drive' || domain === 'backup' || domain === 'prescriptions') {
     return {
