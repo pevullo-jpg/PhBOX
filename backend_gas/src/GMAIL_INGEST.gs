@@ -16,9 +16,12 @@ function ingestPrescriptionEmails_(options) {
     saveErrors: 0,
     messagesWithAttachmentsNoRecognizedPdf: 0,
     skippedTerminalNoPdfMessages: 0,
+    noPdfBackfilled: 0,
     technicalErrorMessages: 0,
     stoppedEarly: false
   };
+
+  var noPdfBackfillLabel = null;
 
   for (var t = 0; t < threads.length; t++) {
     if (shouldStopForBudget_(options.budget, 120000)) {
@@ -45,6 +48,23 @@ function ingestPrescriptionEmails_(options) {
       var existingThreadState = ensureRuntimeThreadShape_(runtimeIndex.threadsById[thread.getId()]);
       if (existingThreadState.finalizationStatus === 'no_pdf' && existingThreadState.noPdfMessageIds.indexOf(message.getId()) !== -1) {
         stats.skippedTerminalNoPdfMessages++;
+        if (existingThreadState.labeledNoPdf !== true) {
+          try {
+            noPdfBackfillLabel = noPdfBackfillLabel || ensureGmailLabel_(cfg.gmailNoPdfLabel || 'PhBOX/no_pdf');
+            noPdfBackfillLabel.addToThread(thread);
+            existingThreadState.labeledNoPdf = true;
+            existingThreadState.updatedAt = new Date().toISOString();
+            runtimeIndex.threadsById[thread.getId()] = existingThreadState;
+            addDirtyThreadId_(runtimeIndex, thread.getId());
+            stats.noPdfBackfilled++;
+          } catch (e) {
+            logInfo_(cfg, 'Stage A - backfill label no_pdf non riuscito', {
+              threadId: thread.getId(),
+              messageId: message.getId(),
+              error: normalizeRuntimeErrorMessage_(e)
+            });
+          }
+        }
         continue;
       }
 
