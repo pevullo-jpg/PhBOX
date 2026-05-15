@@ -14,20 +14,27 @@ async function runPhboxBackendSimple() {
     }, cfg);
     runtimeIndex = persistRuntimeStageResult_(rootFolder, cfg, runtimeIndex, gmailStage);
 
-    var manifestStage = await runProtectedStage_('build_manifests', function () {
-      return buildImportManifestsFromDrive_({ budget: budget, runtimeIndex: runtimeIndex });
-    }, cfg);
-    runtimeIndex = persistRuntimeStageResult_(rootFolder, cfg, runtimeIndex, manifestStage);
+    var skipDrivePipeline = shouldSkipDrivePipelineAfterGmail_(gmailStage, runtimeIndex, cfg);
+    var manifestStage = buildSkippedRuntimeStage_('build_manifests', 'gmail_idle_no_drive_work');
+    var mergeStage = buildSkippedRuntimeStage_('merge', 'gmail_idle_no_drive_work');
+    var renameStage = buildSkippedRuntimeStage_('rename', 'gmail_idle_no_drive_work');
 
-    var mergeStage = await runProtectedStage_('merge', function () {
-      return canonicalizeParsedManifestsPerCf_({ budget: budget, runtimeIndex: runtimeIndex, maxGroupsPerRun: cfg.maxMergeGroupsPerRun });
-    }, cfg);
-    runtimeIndex = persistRuntimeStageResult_(rootFolder, cfg, runtimeIndex, mergeStage);
+    if (!skipDrivePipeline) {
+      manifestStage = await runProtectedStage_('build_manifests', function () {
+        return buildImportManifestsFromDrive_({ budget: budget, runtimeIndex: runtimeIndex });
+      }, cfg);
+      runtimeIndex = persistRuntimeStageResult_(rootFolder, cfg, runtimeIndex, manifestStage);
 
-    var renameStage = await runProtectedStage_('rename', function () {
-      return normalizeFinalActivePdfNames_({ budget: budget, runtimeIndex: runtimeIndex });
-    }, cfg);
-    runtimeIndex = persistRuntimeStageResult_(rootFolder, cfg, runtimeIndex, renameStage);
+      mergeStage = await runProtectedStage_('merge', function () {
+        return canonicalizeParsedManifestsPerCf_({ budget: budget, runtimeIndex: runtimeIndex, maxGroupsPerRun: cfg.maxMergeGroupsPerRun });
+      }, cfg);
+      runtimeIndex = persistRuntimeStageResult_(rootFolder, cfg, runtimeIndex, mergeStage);
+
+      renameStage = await runProtectedStage_('rename', function () {
+        return normalizeFinalActivePdfNames_({ budget: budget, runtimeIndex: runtimeIndex });
+      }, cfg);
+      runtimeIndex = persistRuntimeStageResult_(rootFolder, cfg, runtimeIndex, renameStage);
+    }
 
     var runtimeGateStage = await runProtectedStage_('runtime_signal_gate', function () {
       return runRuntimeSignalGate_({ entrypoint: 'runPhboxBackendSimple' });
@@ -248,6 +255,32 @@ function hasRuntimeIndexFirestoreDirtyWork_(runtimeIndex) {
   runtimeIndex = runtimeIndex || {};
   var dirty = runtimeIndex.dirty || {};
   return !!((dirty.imports && dirty.imports.length) || (dirty.cfs && dirty.cfs.length));
+}
+
+function shouldSkipDrivePipelineAfterGmail_(gmailStage, runtimeIndex, cfg) {
+  cfg = cfg || getPhboxConfig_();
+  if (cfg.skipDrivePipelineWhenGmailIdle === false) return false;
+  if (!gmailStage || !gmailStage.ok || !gmailStage.result || !gmailStage.result.stats) return false;
+  if (hasRuntimeIndexFirestoreDirtyWork_(runtimeIndex)) return false;
+  if (hasRuntimeIndexDrivePendingWork_(runtimeIndex)) return false;
+  var stats = gmailStage.result.stats || {};
+  if (stats.stoppedEarly) return false;
+  if (Number(stats.savedPdfs || 0) > 0) return false;
+  if (Number(stats.duplicateCandidates || 0) > 0) return false;
+  if (Number(stats.pdfCandidateMessages || 0) > 0) return false;
+  if (Number(stats.saveErrors || 0) > 0) return false;
+  return true;
+}
+
+function hasRuntimeIndexDrivePendingWork_(runtimeIndex) {
+  var manifests = collectRuntimeManifests_(runtimeIndex || buildEmptyRuntimeIndex_(getPhboxConfig_()));
+  return manifests.some(function (manifest) {
+    if (!manifest) return false;
+    if (manifest.syncNeeded === true) return true;
+    if (!isRuntimeManifestTerminal_(manifest)) return true;
+    var status = String(manifest.status || '').trim();
+    return status === 'pending_analysis' || status === 'ocr_pending' || status === 'rename_pending';
+  });
 }
 
 
