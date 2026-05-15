@@ -5,24 +5,23 @@ function processRuntimePatientDeleteSignal_(signal) {
   if (!cf) throw new Error('PATIENT_DELETE_CF_MISSING');
 
   var operation = String(signal.operation || '').trim().toLowerCase();
-  if (operation !== 'delete' && operation !== 'deleted' && operation !== 'remove' && operation !== 'removed') {
+  if (operation !== 'delete' && operation !== 'deletearchive' && operation !== 'deleted' && operation !== 'remove' && operation !== 'removed') {
     throw new Error('PATIENT_DELETE_UNSUPPORTED_OPERATION: ' + operation);
   }
 
   var nowIso = new Date().toISOString();
-  var linked = collectRuntimePatientDeleteLinkedData_(cfg, cf);
-
+  var linked = collectRuntimePatientArchiveDeleteLinkedData_(cfg, cf);
   var runtimeIndexResult = markRuntimePatientDeleteManifests_(cfg, cf, linked.driveImports, nowIso);
   var driveResult = trashRuntimePatientDeleteDriveFiles_(cfg, linked.driveImports);
   var totalsPatch = signal.requiresTotalsUpdate === false
     ? null
-    : buildRuntimePatientDeleteTotalsPatch_(cfg, linked, nowIso);
-  var expiringPatch = buildRuntimePatientDeleteExpiringRecipesPatch_(cfg, cf, linked, nowIso);
+    : buildRuntimePatientArchiveDeleteTotalsPatch_(cfg, linked, nowIso);
+  var expiringPatch = buildRuntimePatientArchiveDeleteExpiringRecipesPatch_(cfg, cf, linked, nowIso);
 
   var writes = [];
   appendRuntimePatientDeleteImportWrites_(cfg, writes, linked.driveImports, nowIso);
-  appendRuntimePatientDeleteDocumentDeletes_(cfg, writes, linked);
-  appendRuntimePatientDeleteFamilyWrites_(cfg, writes, linked.families, cf, nowIso);
+  appendRuntimePatientArchiveDeleteLegacyPrescriptionWrites_(cfg, writes, linked.legacyPrescriptions);
+  appendRuntimePatientArchiveDeleteDoctorLinkWrites_(cfg, writes, linked.doctorLinks);
   if (totalsPatch) {
     writes.push(buildFirestorePatchWrite_(cfg, 'dashboard_totals', 'main', totalsPatch, Object.keys(totalsPatch)));
   }
@@ -36,11 +35,11 @@ function processRuntimePatientDeleteSignal_(signal) {
     ok: true,
     domain: 'patientDelete',
     cf: cf,
-    deletedPatient: true,
+    archiveOnly: true,
     writes: writes.length,
     drive: driveResult,
     runtimeIndex: runtimeIndexResult,
-    linked: summarizeRuntimePatientDeleteLinkedData_(linked),
+    linked: summarizeRuntimePatientArchiveDeleteLinkedData_(linked),
     readsEstimated: linked.readsEstimated
   };
 }
@@ -55,61 +54,31 @@ function extractRuntimePatientDeleteCfFromPath_(targetPath) {
   return '';
 }
 
-function collectRuntimePatientDeleteLinkedData_(cfg, cf) {
-  var collector = createRuntimePatientDeleteCollector_(cfg, cf);
-
-  addRuntimePatientDeleteDoc_(collector, 'patient', getFirestoreDocumentByPathSafe_(cfg, ['patients', cf]));
-  addRuntimePatientDeleteDoc_(collector, 'index', getFirestoreDocumentByPathSafe_(cfg, ['patient_dashboard_index', cf]));
-  addRuntimePatientDeleteDoc_(collector, 'therapeuticAdvice', getFirestoreDocumentByPathSafe_(cfg, ['patient_therapeutic_advice', cf]));
+function collectRuntimePatientArchiveDeleteLinkedData_(cfg, cf) {
+  var collector = createRuntimePatientArchiveDeleteCollector_(cfg, cf);
 
   addRuntimePatientDeleteDocs_(collector, 'driveImports', fetchRuntimePatientDeleteDriveImportsForCf_(cfg, cf, collector));
 
-  addRuntimePatientDeleteDocs_(collector, 'legacyPrescriptions', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'prescriptions', 'patientFiscalCode', cf, true, collector));
-  addRuntimePatientDeleteDocs_(collector, 'legacyPrescriptions', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'prescriptions', 'fiscalCode', cf, true, collector));
+  addRuntimePatientDeleteDocs_(collector, 'legacyPrescriptions', listRuntimePatientDeleteDocumentsByPathLimited_(cfg, ['patients', cf, 'prescriptions'], collector));
+  addRuntimePatientDeleteDocs_(collector, 'legacyPrescriptions', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'prescriptions', 'patientFiscalCode', cf, false, collector));
+  addRuntimePatientDeleteDocs_(collector, 'legacyPrescriptions', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'prescriptions', 'fiscalCode', cf, false, collector));
 
-  addRuntimePatientDeleteDocs_(collector, 'debts', listRuntimePatientDeleteDocumentsByPathLimited_(cfg, ['patients', cf, 'debts'], collector));
-  addRuntimePatientDeleteDocs_(collector, 'debts', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'debts', 'patientFiscalCode', cf, true, collector));
-  addRuntimePatientDeleteDocs_(collector, 'advances', listRuntimePatientDeleteDocumentsByPathLimited_(cfg, ['patients', cf, 'advances'], collector));
-  addRuntimePatientDeleteDocs_(collector, 'advances', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'advances', 'patientFiscalCode', cf, true, collector));
-  addRuntimePatientDeleteDocs_(collector, 'bookings', listRuntimePatientDeleteDocumentsByPathLimited_(cfg, ['patients', cf, 'bookings'], collector));
-  addRuntimePatientDeleteDocs_(collector, 'bookings', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'bookings', 'patientFiscalCode', cf, true, collector));
-
-  addRuntimePatientDeleteDocs_(collector, 'prescriptionIntakes', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'prescription_intakes', 'fiscalCode', cf, false, collector));
-
-  addRuntimePatientDeleteDocs_(collector, 'doctorLinks', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'doctor_patient_links', 'patientFiscalCode', cf, false, collector));
-  addRuntimePatientDeleteDoc_(collector, 'doctorLinks', getFirestoreDocumentByPathSafe_(cfg, ['doctor_patient_links', cf + '__manual']));
   addRuntimePatientDeleteDoc_(collector, 'doctorLinks', getFirestoreDocumentByPathSafe_(cfg, ['doctor_patient_links', cf + '__primary']));
 
-  addRuntimePatientDeleteDocs_(collector, 'families', runRuntimePatientDeleteArrayContainsQueryLimited_(cfg, 'families', 'memberFiscalCodes', cf, false, collector));
-
-  addRuntimePatientDeleteDocs_(collector, 'identityRequests', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'identity_resolution_requests', 'sourceFiscalCode', cf, false, collector));
-  addRuntimePatientDeleteDocs_(collector, 'identityRequests', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'identity_resolution_requests', 'targetFiscalCode', cf, false, collector));
-  addRuntimePatientDeleteDocs_(collector, 'identityRequests', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'identity_resolution_requests', 'selectedFiscalCode', cf, false, collector));
-  addRuntimePatientDeleteDocs_(collector, 'identityRequests', runRuntimePatientDeleteArrayContainsQueryLimited_(cfg, 'identity_resolution_requests', 'candidateFiscalCodes', cf, false, collector));
-
-  return buildRuntimePatientDeleteLinkedDataFromCollector_(collector);
+  return buildRuntimePatientArchiveDeleteLinkedDataFromCollector_(collector);
 }
 
-function createRuntimePatientDeleteCollector_(cfg, cf) {
+function createRuntimePatientArchiveDeleteCollector_(cfg, cf) {
   return {
     cfg: cfg,
     cf: cf,
     maxDocs: readRuntimePatientDeleteMaxLinkedDocs_(cfg),
     seen: {},
     count: 0,
-    patient: null,
-    index: null,
-    therapeuticAdvice: null,
     driveImports: [],
     legacyPrescriptions: [],
-    debts: [],
-    advances: [],
-    bookings: [],
-    prescriptionIntakes: [],
     doctorLinks: [],
-    families: [],
-    identityRequests: [],
-    readsEstimated: 3
+    readsEstimated: 0
   };
 }
 
@@ -134,10 +103,6 @@ function addRuntimePatientDeleteDoc_(collector, key, doc) {
   if (collector.count > collector.maxDocs) {
     throw new Error('PATIENT_DELETE_TOO_MANY_LINKED_DOCS: ' + collector.count + ' > ' + collector.maxDocs);
   }
-  if (key === 'patient' || key === 'index' || key === 'therapeuticAdvice') {
-    collector[key] = doc;
-    return;
-  }
   if (!collector[key]) collector[key] = [];
   collector[key].push(doc);
 }
@@ -153,21 +118,12 @@ function runtimePatientDeleteDedupeKey_(doc) {
   return String(doc.documentPath || (doc.collectionId && doc.documentId ? doc.collectionId + '/' + doc.documentId : '') || doc.id || JSON.stringify(doc));
 }
 
-function buildRuntimePatientDeleteLinkedDataFromCollector_(collector) {
+function buildRuntimePatientArchiveDeleteLinkedDataFromCollector_(collector) {
   return {
     cf: collector.cf,
-    patient: collector.patient,
-    index: collector.index,
-    therapeuticAdvice: collector.therapeuticAdvice,
     driveImports: collector.driveImports,
     legacyPrescriptions: collector.legacyPrescriptions,
-    debts: collector.debts,
-    advances: collector.advances,
-    bookings: collector.bookings,
-    prescriptionIntakes: collector.prescriptionIntakes,
     doctorLinks: collector.doctorLinks,
-    families: collector.families,
-    identityRequests: collector.identityRequests,
     readsEstimated: collector.readsEstimated
   };
 }
@@ -217,20 +173,6 @@ function runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, collectionId, fiel
   }, collector);
 }
 
-function runRuntimePatientDeleteArrayContainsQueryLimited_(cfg, collectionId, fieldPath, value, allDescendants, collector) {
-  return runRuntimePatientDeleteStructuredQueryLimited_(cfg, {
-    from: [{ collectionId: String(collectionId || '').trim(), allDescendants: !!allDescendants }],
-    where: {
-      fieldFilter: {
-        field: { fieldPath: String(fieldPath || '').trim() },
-        op: 'ARRAY_CONTAINS',
-        value: toFirestoreValue_(value)
-      }
-    },
-    limit: runtimePatientDeleteQueryLimit_(collector)
-  }, collector);
-}
-
 function runRuntimePatientDeleteStructuredQueryLimited_(cfg, structuredQuery, collector) {
   var limit = Math.max(1, Number(structuredQuery && structuredQuery.limit || runtimePatientDeleteQueryLimit_(collector)));
   if (limit <= 0) throw new Error('PATIENT_DELETE_TOO_MANY_LINKED_DOCS: ' + (collector.count + 1) + ' > ' + collector.maxDocs);
@@ -258,50 +200,13 @@ function runRuntimePatientDeleteStructuredQueryLimited_(cfg, structuredQuery, co
   }
 }
 
-function dedupeRuntimePatientDeleteDocs_(items) {
-  var seen = {};
-  var out = [];
-  (items || []).forEach(function (item) {
-    if (!item) return;
-    var key = String(item.documentPath || item.documentId || item.id || JSON.stringify(item));
-    if (!key || seen[key]) return;
-    seen[key] = true;
-    out.push(item);
-  });
-  return out;
-}
-
-function assertRuntimePatientDeleteBounded_(cfg, linked) {
-  var maxDocs = Math.max(50, Number((cfg && cfg.maxPatientDeleteLinkedDocs) || 300));
-  var count = summarizeRuntimePatientDeleteLinkedData_(linked).totalLinkedDocs;
-  if (count > maxDocs) {
-    throw new Error('PATIENT_DELETE_TOO_MANY_LINKED_DOCS: ' + count + ' > ' + maxDocs);
-  }
-}
-
-function summarizeRuntimePatientDeleteLinkedData_(linked) {
+function summarizeRuntimePatientArchiveDeleteLinkedData_(linked) {
   linked = linked || {};
-  var count = 0;
-  ['driveImports', 'legacyPrescriptions', 'debts', 'advances', 'bookings', 'prescriptionIntakes', 'doctorLinks', 'families', 'identityRequests'].forEach(function (key) {
-    count += ((linked[key] || []).length);
-  });
-  if (linked.patient) count++;
-  if (linked.index) count++;
-  if (linked.therapeuticAdvice) count++;
   return {
-    totalLinkedDocs: count,
+    totalLinkedDocs: ((linked.driveImports || []).length) + ((linked.legacyPrescriptions || []).length) + ((linked.doctorLinks || []).length),
     driveImports: (linked.driveImports || []).length,
     prescriptions: (linked.legacyPrescriptions || []).length,
-    debts: (linked.debts || []).length,
-    advances: (linked.advances || []).length,
-    bookings: (linked.bookings || []).length,
-    prescriptionIntakes: (linked.prescriptionIntakes || []).length,
-    doctorLinks: (linked.doctorLinks || []).length,
-    families: (linked.families || []).length,
-    identityRequests: (linked.identityRequests || []).length,
-    patientExists: !!linked.patient,
-    indexExists: !!linked.index,
-    therapeuticAdviceExists: !!linked.therapeuticAdvice
+    doctorLinks: (linked.doctorLinks || []).length
   };
 }
 
@@ -330,7 +235,6 @@ function markRuntimePatientDeleteManifests_(cfg, cf, driveImports, nowIso) {
     if (runtimeIndex.publishState.patients) delete runtimeIndex.publishState.patients[cf];
     if (runtimeIndex.publishState.doctorLinks) {
       delete runtimeIndex.publishState.doctorLinks[cf + '__primary'];
-      delete runtimeIndex.publishState.doctorLinks[cf + '__manual'];
     }
   }
   removeDirtyImportIds_(runtimeIndex, dirtyImportsToClear);
@@ -380,20 +284,12 @@ function appendRuntimePatientDeleteImportWrites_(cfg, writes, driveImports, nowI
   });
 }
 
-function appendRuntimePatientDeleteDocumentDeletes_(cfg, writes, linked) {
-  var cf = linked.cf;
-  appendRuntimePatientDeleteDocs_(cfg, writes, linked.debts);
-  appendRuntimePatientDeleteDocs_(cfg, writes, linked.advances);
-  appendRuntimePatientDeleteDocs_(cfg, writes, linked.bookings);
-  appendRuntimePatientDeleteDocs_(cfg, writes, linked.legacyPrescriptions);
-  appendRuntimePatientDeleteDocs_(cfg, writes, linked.prescriptionIntakes);
-  appendRuntimePatientDeleteDocs_(cfg, writes, linked.doctorLinks);
-  appendRuntimePatientDeleteDocs_(cfg, writes, linked.identityRequests);
-  writes.push(buildRuntimePatientDeleteDeleteWriteFromPath_(cfg, ['patient_therapeutic_advice', cf]));
-  writes.push(buildRuntimePatientDeleteDeleteWriteFromPath_(cfg, ['patient_dashboard_index', cf]));
-  writes.push(buildRuntimePatientDeleteDeleteWriteFromPath_(cfg, ['patients', cf]));
-  writes.push(buildRuntimePatientDeleteDeleteWriteFromPath_(cfg, ['doctor_patient_links', cf + '__manual']));
-  writes.push(buildRuntimePatientDeleteDeleteWriteFromPath_(cfg, ['doctor_patient_links', cf + '__primary']));
+function appendRuntimePatientArchiveDeleteLegacyPrescriptionWrites_(cfg, writes, legacyPrescriptions) {
+  appendRuntimePatientDeleteDocs_(cfg, writes, legacyPrescriptions);
+}
+
+function appendRuntimePatientArchiveDeleteDoctorLinkWrites_(cfg, writes, doctorLinks) {
+  appendRuntimePatientDeleteDocs_(cfg, writes, doctorLinks);
 }
 
 function appendRuntimePatientDeleteDocs_(cfg, writes, docs) {
@@ -403,49 +299,20 @@ function appendRuntimePatientDeleteDocs_(cfg, writes, docs) {
   });
 }
 
-function appendRuntimePatientDeleteFamilyWrites_(cfg, writes, families, cf, nowIso) {
-  (families || []).forEach(function (family) {
-    var currentMembers = uniqueNonEmptyStrings_(family.memberFiscalCodes || []);
-    var nextMembers = currentMembers.filter(function (item) { return normalizeCf_(item) !== cf; });
-    if (!nextMembers.length) {
-      var deleteWrite = buildRuntimePatientDeleteDeleteWriteFromDoc_(cfg, family);
-      if (deleteWrite) writes.push(deleteWrite);
-      return;
-    }
-    var docId = String(family.documentId || family.familyId || family.id || '').trim();
-    if (!docId) return;
-    var data = cloneRuntimePlainObject_(family);
-    delete data.documentId;
-    delete data.documentPath;
-    delete data.collectionId;
-    delete data.parentDocumentId;
-    data.memberFiscalCodes = nextMembers;
-    data.updatedAt = nowIso;
-    writes.push(buildFirestoreUpdateWrite_(cfg, 'families', docId, data));
-  });
-}
-
-function buildRuntimePatientDeleteTotalsPatch_(cfg, linked, nowIso) {
+function buildRuntimePatientArchiveDeleteTotalsPatch_(cfg, linked, nowIso) {
   var current = getFirestoreDocumentByPath_(cfg, ['dashboard_totals', 'main']) || {};
-  var archiveDelta = calculateRuntimePatientDeleteArchiveDeltas_(linked);
-  var debtDelta = (linked.debts || []).reduce(function (sum, item) {
-    return sum + Number(item.residualAmount || item.amount || item.debtAmount || 0);
-  }, 0);
+  var archiveDelta = calculateRuntimePatientArchiveDeleteDeltas_(linked);
   return {
     recipeCount: Math.max(0, Number(current.recipeCount || 0) - archiveDelta.recipeCount),
     dpcCount: Math.max(0, Number(current.dpcCount || 0) - archiveDelta.dpcCount),
     expiringCount: Math.max(0, Number(current.expiringCount || 0) - archiveDelta.expiringPatientCount),
-    debtAmount: roundDashboardTotalsAmount_(Number(current.debtAmount || 0) - debtDelta),
-    advanceCount: Math.max(0, Number(current.advanceCount || 0) - (linked.advances || []).length),
-    bookingCount: Math.max(0, Number(current.bookingCount || 0) - (linked.bookings || []).length),
     updatedAt: nowIso,
     generatedAt: nowIso,
-    archiveTotalsSource: 'runtime_signal_patient_delete',
-    appManagedTotalsSource: 'runtime_signal_patient_delete'
+    archiveTotalsSource: 'runtime_signal_patient_delete_archive'
   };
 }
 
-function calculateRuntimePatientDeleteArchiveDeltas_(linked) {
+function calculateRuntimePatientArchiveDeleteDeltas_(linked) {
   var activeImports = (linked.driveImports || []).filter(isRuntimePatientDeleteCountableArchiveDoc_);
   var useImports = activeImports.length > 0;
   var recipeCount = 0;
@@ -483,21 +350,21 @@ function isRuntimePatientDeleteCountableArchiveDoc_(item) {
   return true;
 }
 
-function buildRuntimePatientDeleteExpiringRecipesPatch_(cfg, cf, linked, nowIso) {
+function buildRuntimePatientArchiveDeleteExpiringRecipesPatch_(cfg, cf, linked, nowIso) {
   var current = getFirestoreDocumentByPathSafe_(cfg, ['dashboard_expiring_recipes', 'main']);
   if (!current || !Array.isArray(current.items)) return null;
   var nextItems = current.items.filter(function (item) {
     return normalizeCf_(item && (item.patientFiscalCode || item.fiscalCode)) !== cf;
   });
   if (nextItems.length === current.items.length) return null;
-  var archiveDelta = calculateRuntimePatientDeleteArchiveDeltas_(linked);
+  var archiveDelta = calculateRuntimePatientArchiveDeleteDeltas_(linked);
   return {
     items: nextItems,
     itemCount: nextItems.length,
     totalExpiringCount: Math.max(0, Number(current.totalExpiringCount || current.itemCount || current.items.length || 0) - archiveDelta.expiringPatientCount),
     updatedAt: nowIso,
     generatedAt: nowIso,
-    source: 'runtime_signal_patient_delete'
+    source: 'runtime_signal_patient_delete_archive'
   };
 }
 
