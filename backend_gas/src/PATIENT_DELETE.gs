@@ -64,15 +64,11 @@ function collectRuntimePatientDeleteLinkedData_(cfg, cf) {
 
   addRuntimePatientDeleteDocs_(collector, 'driveImports', fetchRuntimePatientDeleteDriveImportsForCf_(cfg, cf, collector));
 
-  addRuntimePatientDeleteDocs_(collector, 'legacyPrescriptions', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'prescriptions', 'patientFiscalCode', cf, true, collector));
-  addRuntimePatientDeleteDocs_(collector, 'legacyPrescriptions', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'prescriptions', 'fiscalCode', cf, true, collector));
+  addRuntimePatientDeleteDocs_(collector, 'legacyPrescriptions', listRuntimePatientDeleteDocumentsByPathLimited_(cfg, ['patients', cf, 'prescriptions'], collector));
 
   addRuntimePatientDeleteDocs_(collector, 'debts', listRuntimePatientDeleteDocumentsByPathLimited_(cfg, ['patients', cf, 'debts'], collector));
-  addRuntimePatientDeleteDocs_(collector, 'debts', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'debts', 'patientFiscalCode', cf, true, collector));
   addRuntimePatientDeleteDocs_(collector, 'advances', listRuntimePatientDeleteDocumentsByPathLimited_(cfg, ['patients', cf, 'advances'], collector));
-  addRuntimePatientDeleteDocs_(collector, 'advances', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'advances', 'patientFiscalCode', cf, true, collector));
   addRuntimePatientDeleteDocs_(collector, 'bookings', listRuntimePatientDeleteDocumentsByPathLimited_(cfg, ['patients', cf, 'bookings'], collector));
-  addRuntimePatientDeleteDocs_(collector, 'bookings', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'bookings', 'patientFiscalCode', cf, true, collector));
 
   addRuntimePatientDeleteDocs_(collector, 'prescriptionIntakes', runRuntimePatientDeleteFieldEqualsQueryLimited_(cfg, 'prescription_intakes', 'fiscalCode', cf, false, collector));
 
