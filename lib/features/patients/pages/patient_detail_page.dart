@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/constants/app_constants.dart';
 import '../../../core/utils/prescription_expiry_utils.dart';
 import '../../../core/utils/family_group_color_utils.dart';
 import '../../../core/utils/patient_identity_utils.dart';
@@ -40,6 +41,16 @@ import '../../../data/repositories/therapeutic_advice_repository.dart';
 import '../../../shared/navigation/app_navigation.dart';
 import '../../../shared/widgets/floating_page_menu.dart';
 import '../../../theme/app_theme.dart';
+
+class _PendingFamilyMembershipUpdate {
+  final DocumentReference<Map<String, dynamic>> reference;
+  final List<String> memberFiscalCodes;
+
+  const _PendingFamilyMembershipUpdate({
+    required this.reference,
+    required this.memberFiscalCodes,
+  });
+}
 
 class PatientDetailDashboardArchiveDelta {
   final int recipeCountDelta;
@@ -1477,6 +1488,11 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       return;
     }
 
+    final int debtCount = data.debts.length;
+    final int advanceCount = data.advances.length;
+    final int bookingCount = data.bookings.length;
+    final bool hasArchiveData = data.allImports.isNotEmpty || data.prescriptions.isNotEmpty;
+
     final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -1486,7 +1502,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
           style: TextStyle(color: Colors.white),
         ),
         content: SizedBox(
-          width: 520,
+          width: 540,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1503,17 +1519,24 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               ),
               const SizedBox(height: 10),
               const Text(
-                'Confermando verrà avviata la cancellazione definitiva backend-owned di assistito, indice Home, debiti, anticipi, prenotazioni, consigli terapeutici, ricette/PDF e collegamenti associati.',
+                'Il frontend eliminerà subito profilo assistito, indice Home e dati gestionali frontend-owned: debiti, anticipi, prenotazioni e consigli terapeutici.',
                 style: TextStyle(color: Colors.white70, height: 1.35),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                hasArchiveData
+                    ? 'Le ricette/PDF collegati resteranno backend-owned: verrà creato un segnale e il backend eliminerà/cestinerà Drive PDF, import archivio e totali Ricette/DPC/In scadenza.'
+                    : 'Non risultano ricette/PDF collegati dalla scheda: verrà comunque creato un segnale backend di verifica archivio per evitare dati orfani.',
+                style: const TextStyle(color: Colors.white70, height: 1.35),
               ),
               const SizedBox(height: 12),
               Text(
-                'Dati collegati rilevati: ${data.debts.length} debiti, ${data.advances.length} anticipi, ${data.bookings.length} prenotazioni, ${data.prescriptions.length} ricette/documenti.',
+                'Dati gestionali rilevati: $debtCount debiti, $advanceCount anticipi, $bookingCount prenotazioni.',
                 style: const TextStyle(color: Colors.white70),
               ),
               const SizedBox(height: 12),
               const Text(
-                'Operazione irreversibile. I PDF verranno gestiti dal backend tramite Drive e non devono essere eliminati manualmente.',
+                'Operazione irreversibile. Non eliminare manualmente file da Drive.',
                 style: TextStyle(
                   color: AppColors.red,
                   fontWeight: FontWeight.w800,
@@ -1543,12 +1566,16 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     try {
       await _runtimeSignalRepository.emit(
         domain: 'patientDelete',
-        operation: 'delete',
+        operation: 'deleteArchive',
         targetPath: 'patients/$fiscalCode',
         targetFiscalCode: fiscalCode,
         targetDocumentId: fiscalCode,
         requiresTotalsUpdate: true,
         requiresIndexUpdate: true,
+      );
+      await _deleteFrontendOwnedPatientData(
+        data: data,
+        fiscalCode: fiscalCode,
       );
       if (!mounted) return;
       Navigator.of(context).pop(
@@ -1560,8 +1587,171 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _message = 'Errore richiesta eliminazione assistito: $e';
+        _message = 'Errore eliminazione assistito: $e';
       });
+    }
+  }
+
+  Future<void> _deleteFrontendOwnedPatientData({
+    required _PatientDetailData data,
+    required String fiscalCode,
+  }) async {
+    final FirebaseFirestore firestore = FirebaseFirestore.instance;
+    final List<DocumentReference<Map<String, dynamic>>> deletes = <DocumentReference<Map<String, dynamic>>>[];
+    final List<_PendingFamilyMembershipUpdate> familyUpdates = <_PendingFamilyMembershipUpdate>[];
+    final DocumentReference<Map<String, dynamic>> patientRef =
+        firestore.collection(AppCollections.patients).doc(fiscalCode);
+
+    for (final Debt item in data.debts) {
+      final String id = item.id.trim();
+      if (id.isEmpty) continue;
+      deletes.add(patientRef.collection(AppCollections.debts).doc(id));
+    }
+    for (final Advance item in data.advances) {
+      final String id = item.id.trim();
+      if (id.isEmpty) continue;
+      deletes.add(patientRef.collection(AppCollections.advances).doc(id));
+    }
+    for (final Booking item in data.bookings) {
+      final String id = item.id.trim();
+      if (id.isEmpty) continue;
+      deletes.add(patientRef.collection(AppCollections.bookings).doc(id));
+    }
+
+    final List<QueryDocumentSnapshot<Map<String, dynamic>>> rootDebtDocs =
+        await _getBoundedRootDocsByPatientFiscalCode(firestore, AppCollections.debts, fiscalCode);
+    final List<QueryDocumentSnapshot<Map<String, dynamic>>> rootAdvanceDocs =
+        await _getBoundedRootDocsByPatientFiscalCode(firestore, AppCollections.advances, fiscalCode);
+    final List<QueryDocumentSnapshot<Map<String, dynamic>>> rootBookingDocs =
+        await _getBoundedRootDocsByPatientFiscalCode(firestore, AppCollections.bookings, fiscalCode);
+
+    for (final QueryDocumentSnapshot<Map<String, dynamic>> doc in rootDebtDocs) {
+      deletes.add(doc.reference);
+    }
+    for (final QueryDocumentSnapshot<Map<String, dynamic>> doc in rootAdvanceDocs) {
+      deletes.add(doc.reference);
+    }
+    for (final QueryDocumentSnapshot<Map<String, dynamic>> doc in rootBookingDocs) {
+      deletes.add(doc.reference);
+    }
+
+    deletes.add(firestore.collection(AppCollections.patientTherapeuticAdvice).doc(fiscalCode));
+    deletes.add(firestore.collection(AppCollections.patientDashboardIndex).doc(fiscalCode));
+    deletes.add(firestore.collection(AppCollections.doctorPatientLinks).doc('${fiscalCode}__manual'));
+    deletes.add(patientRef);
+
+    final _PatientFamilyContext? familyContext = data.familyContext;
+    if (familyContext != null) {
+      final FamilyGroup family = familyContext.family;
+      final String familyId = family.id.trim();
+      if (familyId.isNotEmpty) {
+        final DocumentReference<Map<String, dynamic>> familyRef =
+            firestore.collection(AppCollections.families).doc(familyId);
+        final List<String> nextMembers = family.memberFiscalCodes
+            .map(PatientInputNormalizer.normalizeFiscalCode)
+            .where((String value) => value.isNotEmpty && value != fiscalCode)
+            .toSet()
+            .toList()
+          ..sort();
+        if (nextMembers.isEmpty) {
+          deletes.add(familyRef);
+        } else {
+          familyUpdates.add(_PendingFamilyMembershipUpdate(
+            reference: familyRef,
+            memberFiscalCodes: nextMembers,
+          ));
+        }
+      }
+    }
+
+    await _commitDeleteRefsInChunks(firestore, deletes);
+    await _commitFamilyMembershipUpdates(familyUpdates);
+
+    final double subcollectionDebtAmount = data.debts.fold<double>(
+      0,
+      (double sum, Debt item) => sum + item.residualAmount,
+    );
+    final double rootDebtAmount = rootDebtDocs.fold<double>(
+      0,
+      (double sum, QueryDocumentSnapshot<Map<String, dynamic>> doc) =>
+          sum + _readFrontendManagedDebtAmount(doc.data()),
+    );
+    await _applyFrontendManagedTotalsDelta(
+      debtAmountDelta: -(subcollectionDebtAmount + rootDebtAmount),
+      advanceCountDelta: -(data.advances.length + rootAdvanceDocs.length),
+      bookingCountDelta: -(data.bookings.length + rootBookingDocs.length),
+    );
+  }
+
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _getBoundedRootDocsByPatientFiscalCode(
+    FirebaseFirestore firestore,
+    String collectionPath,
+    String fiscalCode,
+  ) async {
+    const int maxDocs = 300;
+    final QuerySnapshot<Map<String, dynamic>> snapshot = await firestore
+        .collection(collectionPath)
+        .where('patientFiscalCode', isEqualTo: fiscalCode)
+        .limit(maxDocs + 1)
+        .get();
+    if (snapshot.docs.length > maxDocs) {
+      throw Exception('Troppi documenti gestionali collegati a $fiscalCode in $collectionPath. Eliminazione bloccata.');
+    }
+    return snapshot.docs;
+  }
+
+  double _readFrontendManagedDebtAmount(Map<String, dynamic> data) {
+    for (final String key in <String>['residualAmount', 'amount', 'debtAmount']) {
+      final Object? value = data[key];
+      if (value is num) return value.toDouble();
+      final double? parsed = double.tryParse(value?.toString() ?? '');
+      if (parsed != null) return parsed;
+    }
+    return 0;
+  }
+
+  Future<void> _commitFamilyMembershipUpdates(
+    List<_PendingFamilyMembershipUpdate> updates,
+  ) async {
+    if (updates.isEmpty) return;
+    const int chunkSize = 450;
+    for (int offset = 0; offset < updates.length; offset += chunkSize) {
+      final WriteBatch batch = FirebaseFirestore.instance.batch();
+      final Iterable<_PendingFamilyMembershipUpdate> chunk =
+          updates.skip(offset).take(chunkSize);
+      for (final _PendingFamilyMembershipUpdate update in chunk) {
+        batch.set(
+          update.reference,
+          <String, dynamic>{
+            'memberFiscalCodes': update.memberFiscalCodes,
+            'updatedAt': DateTime.now().toIso8601String(),
+          },
+          SetOptions(merge: true),
+        );
+      }
+      await batch.commit();
+    }
+  }
+
+  Future<void> _commitDeleteRefsInChunks(
+    FirebaseFirestore firestore,
+    List<DocumentReference<Map<String, dynamic>>> refs,
+  ) async {
+    final Set<String> seen = <String>{};
+    final List<DocumentReference<Map<String, dynamic>>> uniqueRefs = <DocumentReference<Map<String, dynamic>>>[];
+    for (final DocumentReference<Map<String, dynamic>> ref in refs) {
+      if (seen.add(ref.path)) {
+        uniqueRefs.add(ref);
+      }
+    }
+    const int chunkSize = 450;
+    for (int offset = 0; offset < uniqueRefs.length; offset += chunkSize) {
+      final WriteBatch batch = firestore.batch();
+      final Iterable<DocumentReference<Map<String, dynamic>>> chunk = uniqueRefs.skip(offset).take(chunkSize);
+      for (final DocumentReference<Map<String, dynamic>> ref in chunk) {
+        batch.delete(ref);
+      }
+      await batch.commit();
     }
   }
 
