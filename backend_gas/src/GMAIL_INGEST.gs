@@ -13,7 +13,10 @@ function ingestPrescriptionEmails_(options) {
     pdfCandidateMessages: 0,
     savedPdfs: 0,
     duplicateCandidates: 0,
+    saveErrors: 0,
     messagesWithAttachmentsNoRecognizedPdf: 0,
+    skippedTerminalNoPdfMessages: 0,
+    technicalErrorMessages: 0,
     stoppedEarly: false
   };
 
@@ -41,6 +44,7 @@ function ingestPrescriptionEmails_(options) {
 
       var existingThreadState = ensureRuntimeThreadShape_(runtimeIndex.threadsById[thread.getId()]);
       if (existingThreadState.finalizationStatus === 'no_pdf' && existingThreadState.noPdfMessageIds.indexOf(message.getId()) !== -1) {
+        stats.skippedTerminalNoPdfMessages++;
         continue;
       }
 
@@ -99,6 +103,7 @@ function ingestPrescriptionEmails_(options) {
       addDirtyThreadId_(runtimeIndex, threadId);
 
       var savedAny = false;
+      var saveErrors = 0;
       for (var a = 0; a < pdfAttachments.length; a++) {
         if (shouldStopForBudget_(options.budget, 120000)) {
           stats.stoppedEarly = true;
@@ -108,15 +113,38 @@ function ingestPrescriptionEmails_(options) {
         if (saveResult.duplicate) {
           stats.duplicateCandidates++;
         }
+        if (saveResult.error) {
+          saveErrors++;
+          stats.saveErrors++;
+          logInfo_(cfg, 'Stage A - errore tecnico salvataggio allegato PDF', {
+            threadId: threadId,
+            messageId: message.getId(),
+            attachmentName: pdfAttachments[a] && pdfAttachments[a].getName ? (pdfAttachments[a].getName() || '') : '',
+            error: saveResult.error
+          });
+        }
         if (saveResult.saved) {
           stats.savedPdfs++;
           savedAny = true;
         }
       }
 
+      if (saveErrors > 0 && !savedAny) {
+        var technicalThreadState = ensureRuntimeThreadShape_(runtimeIndex.threadsById[threadId]);
+        technicalThreadState.status = 'technical_error';
+        technicalThreadState.terminal = false;
+        technicalThreadState.finalizationStatus = '';
+        technicalThreadState.updatedAt = new Date().toISOString();
+        runtimeIndex.threadsById[threadId] = technicalThreadState;
+        addDirtyThreadId_(runtimeIndex, threadId);
+        stats.technicalErrorMessages++;
+      }
+
       messageDiagnostic.savedToDrive = savedAny;
       messageDiagnostic.ocrAttempted = false;
-      messageDiagnostic.finalDisposition = savedAny ? 'saved_pending_analysis' : 'already_indexed';
+      messageDiagnostic.finalDisposition = saveErrors > 0 && !savedAny
+        ? 'technical_error_retry'
+        : (savedAny ? 'saved_pending_analysis' : 'already_indexed');
       finalizeStageAMessageDiagnostic_(cfg, messageDiagnostic, false);
     }
 
@@ -241,6 +269,7 @@ function finalizeRuntimeEmails_(options) {
 
   var processedLabel = ensureGmailLabel_(cfg.gmailProcessedLabel);
   var rejectedLabel = ensureGmailLabel_(cfg.gmailRejectedLabel || 'PhBOX/rejected');
+  var noPdfLabel = ensureGmailLabel_(cfg.gmailNoPdfLabel || 'PhBOX/no_pdf');
   var threadIds = uniqueNonEmptyStrings_([].concat(runtimeIndex.dirty.threads || [], Object.keys(runtimeIndex.threadsById || {}).filter(function (threadId) {
     var thread = runtimeIndex.threadsById[threadId];
     return thread && !thread.finalizationStatus;
@@ -256,7 +285,10 @@ function finalizeRuntimeEmails_(options) {
     processedMessages: 0,
     rejectedMessages: 0,
     noPdfMessages: 0,
+    noPdfLabeled: 0,
+    noPdfUnreadMessages: 0,
     pendingMessages: 0,
+    technicalErrorThreads: 0,
     markedRead: 0,
     trashed: 0,
     stoppedEarly: false
@@ -270,9 +302,12 @@ function finalizeRuntimeEmails_(options) {
     }
     var threadId = threadIds[i];
     var threadState = ensureRuntimeThreadShape_(runtimeIndex.threadsById[threadId]);
+    var previousThreadStatus = threadState.status;
     var manifests = threadState.manifestIds.map(function (id) { return runtimeIndex.filesById[id]; }).filter(function (item) { return !!item; });
     var evaluation = evaluateRuntimeThreadFinalization_(threadState, manifests);
-    threadState.status = evaluation.status;
+    threadState.status = evaluation.status === 'pending' && previousThreadStatus === 'technical_error'
+      ? 'technical_error'
+      : evaluation.status;
     threadState.terminal = evaluation.terminal;
     threadState.lastEvaluatedAt = new Date().toISOString();
     runtimeIndex.threadsById[threadId] = threadState;
@@ -280,6 +315,7 @@ function finalizeRuntimeEmails_(options) {
     if (evaluation.status === 'pending') {
       stats.pendingThreads++;
       stats.pendingMessages += threadState.messageIds.length;
+      if (previousThreadStatus === 'technical_error' || threadState.status === 'technical_error') stats.technicalErrorThreads++;
       continue;
     }
 
@@ -313,8 +349,12 @@ function finalizeRuntimeEmails_(options) {
       stats.rejectedThreads++;
       stats.rejectedMessages += messages.length;
     } else if (evaluation.status === 'no_pdf') {
+      noPdfLabel.addToThread(gmailThread);
+      threadState.labeledNoPdf = true;
       stats.noPdfThreads++;
+      stats.noPdfLabeled++;
       stats.noPdfMessages += messages.length || threadState.noPdfMessageIds.length || threadState.messageIds.length;
+      stats.noPdfUnreadMessages += messages.length || threadState.noPdfMessageIds.length || threadState.messageIds.length;
     } else if (evaluation.status === 'orphaned') {
       stats.orphanedThreads++;
     }
@@ -353,6 +393,9 @@ function evaluateRuntimeThreadFinalization_(threadState, manifests) {
   manifests = manifests || [];
   threadState = ensureRuntimeThreadShape_(threadState);
   if (!manifests.length) {
+    if (threadState.status === 'technical_error') {
+      return { status: 'pending', terminal: false, requiresThreadAccess: false };
+    }
     var noPdfOnly = !!threadState.noPdfMessageIds.length && threadState.noPdfMessageIds.length === threadState.messageIds.length;
     if (noPdfOnly) {
       return { status: 'no_pdf', terminal: true, requiresThreadAccess: true };
