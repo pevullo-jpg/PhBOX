@@ -3,6 +3,7 @@ var PHBOX_CONFIG = {
   firestoreProjectId: 'REPLACE_FIRESTORE_PROJECT_ID',
   gmailProcessedLabel: 'PhBOX/processed',
   gmailRejectedLabel: 'PhBOX/rejected',
+  gmailNoPdfLabel: 'PhBOX/no_pdf',
   manifestsFolderName: '_phbox_manifests',
   runtimeIndexFileName: 'runtime_index.json',
   acceptedCities: ['FAVARA', 'AGRIGENTO', 'GROTTE', 'RACALMUTO', 'COMITINI'],
@@ -17,6 +18,7 @@ var PHBOX_CONFIG = {
   maxFilesPerRun: 8,
   maxDriveScanFiles: 1000,
   maxMessagesPerRun: 15,
+  skipDrivePipelineWhenGmailIdle: false,
   maxBatchWrites: 60,
   maxMergeGroupsPerRun: 999,
   maxRuntimeSeconds: 240,
@@ -49,6 +51,7 @@ function readPhboxConfigFromProperties_() {
   cfg.firestoreProjectId = props.getProperty('PHBOX_FIRESTORE_PROJECT_ID') || cfg.firestoreProjectId;
   cfg.gmailProcessedLabel = props.getProperty('PHBOX_GMAIL_LABEL') || cfg.gmailProcessedLabel;
   cfg.gmailRejectedLabel = props.getProperty('PHBOX_GMAIL_REJECTED_LABEL') || cfg.gmailRejectedLabel;
+  cfg.gmailNoPdfLabel = props.getProperty('PHBOX_GMAIL_NO_PDF_LABEL') || cfg.gmailNoPdfLabel;
   cfg.manifestsFolderName = props.getProperty('PHBOX_MANIFESTS_FOLDER') || cfg.manifestsFolderName;
   cfg.runtimeIndexFileName = props.getProperty('PHBOX_RUNTIME_INDEX_FILE') || cfg.runtimeIndexFileName;
   cfg.sourceType = props.getProperty('PHBOX_SOURCE_TYPE') || cfg.sourceType;
@@ -107,6 +110,11 @@ function readPhboxConfigFromProperties_() {
 
   var maxMessagesPerRun = parseInt(props.getProperty('PHBOX_MAX_MESSAGES_PER_RUN') || '', 10);
   if (!isNaN(maxMessagesPerRun) && maxMessagesPerRun > 0) cfg.maxMessagesPerRun = maxMessagesPerRun;
+
+  var skipDrivePipelineWhenGmailIdle = props.getProperty('PHBOX_SKIP_DRIVE_PIPELINE_WHEN_GMAIL_IDLE');
+  if (skipDrivePipelineWhenGmailIdle != null) {
+    cfg.skipDrivePipelineWhenGmailIdle = /^true$/i.test(String(skipDrivePipelineWhenGmailIdle));
+  }
 
   var maxBatchWrites = parseInt(props.getProperty('PHBOX_MAX_BATCH_WRITES') || '', 10);
   if (!isNaN(maxBatchWrites) && maxBatchWrites > 0) cfg.maxBatchWrites = maxBatchWrites;
