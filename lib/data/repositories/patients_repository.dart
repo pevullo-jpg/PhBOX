@@ -6,7 +6,7 @@ import '../../core/utils/patient_input_normalizer.dart';
 import '../datasources/firestore_datasource.dart';
 import '../datasources/firestore_firebase_datasource.dart';
 import '../models/patient.dart';
-import 'identity_resolution_requests_repository.dart';
+import 'patient_dashboard_index_repository.dart';
 
 class PatientsRepository {
   final FirestoreDatasource datasource;
@@ -98,56 +98,11 @@ class PatientsRepository {
           'Il codice fiscale corretto deve essere reale, non TMP.',
         );
       }
-      final Map<String, dynamic>? targetPatientMap = await datasource.getDocument(
-        collectionPath: AppCollections.patients,
-        documentId: normalizedFiscalCode,
-      );
-      final Map<String, String> sourceFieldValues = <String, String>{
-        'fullName': fullName,
-        if (normalizedAlias != null) 'alias': normalizedAlias,
-      };
-      final Map<String, String> targetFieldValues = _extractTargetFieldValues(targetPatientMap);
-      final List<String> conflictFields = _detectSubmittedFieldConflicts(
-        sourceValues: sourceFieldValues,
-        targetValues: targetFieldValues,
-      );
-      final Map<String, String> selectedFieldValues = <String, String>{
-        for (final String field in conflictFields)
-          if ((sourceFieldValues[field] ?? '').trim().isNotEmpty)
-            field: sourceFieldValues[field]!.trim(),
-      };
-
-      final String requestId = await IdentityResolutionRequestsRepository(
-        datasource: datasource,
-      ).createUserConfirmedRequest(
-        action: IdentityResolutionRequestAction.chooseCorrectFiscalCode,
-        sourceFiscalCode: normalizedCurrentDocumentId,
-        targetFiscalCode: normalizedFiscalCode,
-        sourcePatientId: normalizedCurrentDocumentId,
-        targetPatientId: targetPatientMap == null ? null : normalizedFiscalCode,
-        selectedFiscalCode: normalizedFiscalCode,
-        normalizedName: fullName,
-        candidateFiscalCodes: <String>[normalizedFiscalCode],
-        conflictFields: conflictFields,
-        sourceFieldValues: sourceFieldValues,
-        targetFieldValues: targetFieldValues,
-        selectedFieldValues: selectedFieldValues,
-        reason: conflictFields.isEmpty
-            ? 'frontend_contextual_tmp_cf_user_confirmed'
-            : 'frontend_contextual_tmp_cf_user_confirmed_with_field_choices',
-      );
-      await _applyInPlacePatientProfileUpdate(
-        documentId: normalizedCurrentDocumentId,
-        storedFiscalCode: normalizedCurrentDocumentId,
+      return _migrateTemporaryPatientToFiscalCodeDirect(
+        temporaryDocumentId: normalizedCurrentDocumentId,
+        fiscalCode: normalizedFiscalCode,
         fullName: fullName,
         alias: normalizedAlias,
-      );
-      return PatientProfileUpdateResult(
-        effectiveDocumentId: normalizedCurrentDocumentId,
-        fiscalCode: normalizedCurrentDocumentId,
-        fullName: fullName,
-        migratedFromTemporaryKey: false,
-        identityResolutionRequestId: requestId,
       );
     }
 
@@ -186,10 +141,238 @@ class PatientsRepository {
     required String fiscalCode,
     String? alias,
   }) async {
-    throw const PatientProfileUpdateException(
-      'Migrazione frontend TMP→CF disabilitata: le correzioni identità devono essere '
-      'utente-confermate e backend-owned.',
+    final String normalizedName = PatientInputNormalizer.normalizeNamePart(name);
+    final String normalizedSurname = PatientInputNormalizer.normalizeNamePart(surname);
+    final String fullName = PatientInputNormalizer.buildFullName(
+      name: normalizedName,
+      surname: normalizedSurname,
     );
+    if (fullName.isEmpty) {
+      throw const PatientProfileUpdateException(
+        'Nome e cognome non possono essere entrambi vuoti.',
+      );
+    }
+    return _migrateTemporaryPatientToFiscalCodeDirect(
+      temporaryDocumentId: temporaryDocumentId,
+      fiscalCode: fiscalCode,
+      fullName: fullName,
+      alias: _normalizeAlias(alias),
+    );
+  }
+
+
+  Future<PatientProfileUpdateResult> _migrateTemporaryPatientToFiscalCodeDirect({
+    required String temporaryDocumentId,
+    required String fiscalCode,
+    required String fullName,
+    required String? alias,
+  }) async {
+    final String oldId = PatientInputNormalizer.normalizeFiscalCode(temporaryDocumentId);
+    final String newId = PatientInputNormalizer.normalizeFiscalCode(fiscalCode);
+    if (oldId.isEmpty || newId.isEmpty || oldId == newId) {
+      throw const PatientProfileUpdateException('Migrazione assistito non valida.');
+    }
+    if (!isTemporaryPatientKey(oldId) || isTemporaryPatientKey(newId)) {
+      throw const PatientProfileUpdateException('Migrazione TMP→CF non valida.');
+    }
+
+    final FirebaseFirestore firestore = _firebaseFirestoreOrThrow();
+    final DocumentReference<Map<String, dynamic>> oldPatientRef =
+        firestore.collection(AppCollections.patients).doc(oldId);
+    final DocumentReference<Map<String, dynamic>> newPatientRef =
+        firestore.collection(AppCollections.patients).doc(newId);
+    const int maxSubcollectionDocs = 120;
+    final List<QueryDocumentSnapshot<Map<String, dynamic>>> debts =
+        await _readBoundedSubcollectionForMigration(oldPatientRef, AppCollections.debts, maxSubcollectionDocs);
+    final List<QueryDocumentSnapshot<Map<String, dynamic>>> advances =
+        await _readBoundedSubcollectionForMigration(oldPatientRef, AppCollections.advances, maxSubcollectionDocs);
+    final List<QueryDocumentSnapshot<Map<String, dynamic>>> bookings =
+        await _readBoundedSubcollectionForMigration(oldPatientRef, AppCollections.bookings, maxSubcollectionDocs);
+
+    final DocumentReference<Map<String, dynamic>> oldIndexRef =
+        firestore.collection(AppCollections.patientDashboardIndex).doc(oldId);
+    final DocumentReference<Map<String, dynamic>> newIndexRef =
+        firestore.collection(AppCollections.patientDashboardIndex).doc(newId);
+    final DocumentSnapshot<Map<String, dynamic>> oldIndexSnap = await oldIndexRef.get();
+
+    final DocumentReference<Map<String, dynamic>> oldAdviceRef =
+        firestore.collection(AppCollections.patientTherapeuticAdvice).doc(oldId);
+    final DocumentReference<Map<String, dynamic>> newAdviceRef =
+        firestore.collection(AppCollections.patientTherapeuticAdvice).doc(newId);
+    final DocumentSnapshot<Map<String, dynamic>> oldAdviceSnap = await oldAdviceRef.get();
+
+    const int maxRootLinkedDocs = 25;
+    final QuerySnapshot<Map<String, dynamic>> doctorLinksSnap = await firestore
+        .collection(AppCollections.doctorPatientLinks)
+        .where('patientFiscalCode', isEqualTo: oldId)
+        .limit(maxRootLinkedDocs + 1)
+        .get();
+    if (doctorLinksSnap.docs.length > maxRootLinkedDocs) {
+      throw const PatientProfileUpdateException(
+        'Troppi collegamenti medico collegati per migrazione frontend sicura. Serve intervento backend.',
+      );
+    }
+    final QuerySnapshot<Map<String, dynamic>> familiesSnap = await firestore
+        .collection(AppCollections.families)
+        .where('memberFiscalCodes', arrayContains: oldId)
+        .limit(maxRootLinkedDocs + 1)
+        .get();
+    if (familiesSnap.docs.length > maxRootLinkedDocs) {
+      throw const PatientProfileUpdateException(
+        'Troppi nuclei familiari collegati per migrazione frontend sicura. Serve intervento backend.',
+      );
+    }
+
+    final int plannedWrites = 2 +
+        (debts.length + advances.length + bookings.length) * 2 +
+        (oldIndexSnap.exists ? 2 : 0) +
+        (oldAdviceSnap.exists ? 2 : 0) +
+        doctorLinksSnap.docs.length * 2 +
+        familiesSnap.docs.length;
+    if (plannedWrites > 450) {
+      throw const PatientProfileUpdateException(
+        'Troppi dati collegati per migrazione frontend sicura. Serve intervento backend.',
+      );
+    }
+
+    return firestore.runTransaction<PatientProfileUpdateResult>((Transaction transaction) async {
+      final DocumentSnapshot<Map<String, dynamic>> oldPatientSnap =
+          await transaction.get(oldPatientRef);
+      if (!oldPatientSnap.exists || oldPatientSnap.data() == null) {
+        throw const PatientProfileUpdateException('Assistito temporaneo non trovato.');
+      }
+      final DocumentSnapshot<Map<String, dynamic>> newPatientSnap =
+          await transaction.get(newPatientRef);
+      if (newPatientSnap.exists) {
+        throw const PatientProfileUpdateException(
+          'Esiste già un assistito con questo codice fiscale. Usa la risoluzione identità/merge.',
+        );
+      }
+
+      final String isoNow = DateTime.now().toIso8601String();
+      final Map<String, dynamic> newPatientData = _cleanMapForWrite(oldPatientSnap.data()!);
+      newPatientData['fiscalCode'] = newId;
+      newPatientData['fullName'] = fullName;
+      newPatientData['alias'] = alias;
+      newPatientData['updatedAt'] = isoNow;
+      transaction.set(newPatientRef, newPatientData);
+
+      void migrateSubcollectionDocs(
+        List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+        String subcollection,
+      ) {
+        for (final QueryDocumentSnapshot<Map<String, dynamic>> doc in docs) {
+          final Map<String, dynamic> data = _cleanMapForWrite(doc.data());
+          data['patientFiscalCode'] = newId;
+          if (data.containsKey('patientName')) {
+            data['patientName'] = fullName;
+          }
+          if (data.containsKey('patientFullName')) {
+            data['patientFullName'] = fullName;
+          }
+          if (data.containsKey('updatedAt')) {
+            data['updatedAt'] = isoNow;
+          }
+          transaction.set(newPatientRef.collection(subcollection).doc(doc.id), data);
+          transaction.delete(doc.reference);
+        }
+      }
+
+      migrateSubcollectionDocs(debts, AppCollections.debts);
+      migrateSubcollectionDocs(advances, AppCollections.advances);
+      migrateSubcollectionDocs(bookings, AppCollections.bookings);
+
+      if (oldIndexSnap.exists && oldIndexSnap.data() != null) {
+        final Map<String, dynamic> indexData = _cleanMapForWrite(oldIndexSnap.data()!);
+        indexData['fiscalCode'] = newId;
+        indexData['fullName'] = fullName;
+        indexData['alias'] = alias;
+        indexData['searchPrefixes'] = PatientDashboardIndexRepository.buildSearchPrefixes(<String>[
+          newId,
+          fullName,
+          alias ?? '',
+          indexData['doctorFullName']?.toString() ?? '',
+          indexData['city']?.toString() ?? '',
+          indexData['exemptionCode']?.toString() ?? '',
+        ]);
+        indexData['updatedAt'] = isoNow;
+        transaction.set(newIndexRef, indexData);
+        transaction.delete(oldIndexRef);
+      }
+
+      if (oldAdviceSnap.exists && oldAdviceSnap.data() != null) {
+        final Map<String, dynamic> adviceData = _cleanMapForWrite(oldAdviceSnap.data()!);
+        adviceData['patientFiscalCode'] = newId;
+        adviceData['updatedAt'] = isoNow;
+        transaction.set(newAdviceRef, adviceData);
+        transaction.delete(oldAdviceRef);
+      }
+
+      for (final QueryDocumentSnapshot<Map<String, dynamic>> doc in doctorLinksSnap.docs) {
+        final Map<String, dynamic> linkData = _cleanMapForWrite(doc.data());
+        linkData['patientFiscalCode'] = newId;
+        linkData['patientFullName'] = fullName;
+        linkData['updatedAt'] = isoNow;
+        final String targetLinkId = _resolveDoctorLinkTargetId(
+          currentLinkId: doc.id,
+          oldPatientDocumentId: oldId,
+          newPatientDocumentId: newId,
+        );
+        final DocumentReference<Map<String, dynamic>> targetRef =
+            firestore.collection(AppCollections.doctorPatientLinks).doc(targetLinkId);
+        transaction.set(targetRef, linkData);
+        if (targetRef.path != doc.reference.path) {
+          transaction.delete(doc.reference);
+        }
+      }
+
+      for (final QueryDocumentSnapshot<Map<String, dynamic>> doc in familiesSnap.docs) {
+        final Map<String, dynamic> familyData = Map<String, dynamic>.from(doc.data());
+        final List<String> nextMembers = (familyData['memberFiscalCodes'] is List
+                ? familyData['memberFiscalCodes'] as List<dynamic>
+                : const <dynamic>[])
+            .map((dynamic value) => PatientInputNormalizer.normalizeFiscalCode(value?.toString() ?? ''))
+            .where((String value) => value.isNotEmpty)
+            .map((String value) => value == oldId ? newId : value)
+            .toSet()
+            .toList()
+          ..sort();
+        transaction.set(
+          doc.reference,
+          <String, dynamic>{
+            'memberFiscalCodes': nextMembers,
+            'updatedAt': isoNow,
+          },
+          SetOptions(merge: true),
+        );
+      }
+
+      transaction.delete(oldPatientRef);
+      return PatientProfileUpdateResult(
+        effectiveDocumentId: newId,
+        fiscalCode: newId,
+        fullName: fullName,
+        migratedFromTemporaryKey: true,
+      );
+    });
+
+  }
+
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _readBoundedSubcollectionForMigration(
+    DocumentReference<Map<String, dynamic>> patientRef,
+    String subcollection,
+    int maxDocs,
+  ) async {
+    final QuerySnapshot<Map<String, dynamic>> snapshot = await patientRef
+        .collection(subcollection)
+        .limit(maxDocs + 1)
+        .get();
+    if (snapshot.docs.length > maxDocs) {
+      throw PatientProfileUpdateException(
+        'Troppi documenti $subcollection collegati per migrazione frontend sicura.',
+      );
+    }
+    return snapshot.docs;
   }
 
   Future<void> _applyInPlacePatientProfileUpdate({
@@ -409,6 +592,10 @@ class PatientsRepository {
   Map<String, dynamic> _cleanMapForWrite(Map<String, dynamic> source) {
     final Map<String, dynamic> clean = Map<String, dynamic>.from(source);
     clean.remove('id');
+    clean.remove('documentId');
+    clean.remove('documentPath');
+    clean.remove('collectionId');
+    clean.remove('parentDocumentId');
     return clean;
   }
 
