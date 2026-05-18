@@ -82,6 +82,8 @@ class PatientDetailPage extends StatefulWidget {
 }
 
 class _PatientDetailPageState extends State<PatientDetailPage> {
+  static const int _maxFamilyIndexFanoutMembers = 25;
+
   late final PatientsRepository _patientsRepository;
   late final AdvancesRepository _advancesRepository;
   late final DebtsRepository _debtsRepository;
@@ -1870,6 +1872,79 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   }
 
 
+
+  Future<bool> _resolveTemporaryMergePreference({
+    required Patient patient,
+    required bool temporaryKey,
+    required String name,
+    required String surname,
+    required String fiscalCodeInput,
+    String? alias,
+  }) async {
+    final String targetFiscalCode =
+        PatientInputNormalizer.normalizeFiscalCode(fiscalCodeInput);
+    if (!temporaryKey || targetFiscalCode.isEmpty || isTemporaryPatientKey(targetFiscalCode)) {
+      return true;
+    }
+    final Patient? targetPatient = await _patientsRepository.getPatientByFiscalCode(targetFiscalCode);
+    if (targetPatient == null) {
+      return true;
+    }
+    final String submittedFullName = PatientInputNormalizer.buildFullName(
+      name: PatientInputNormalizer.normalizeNamePart(name),
+      surname: PatientInputNormalizer.normalizeNamePart(surname),
+    );
+    final List<String> conflicts = _patientsRepository.detectTemporaryMergeProfileConflicts(
+      sourcePatient: patient,
+      targetPatient: targetPatient,
+      submittedFullName: submittedFullName,
+      submittedAlias: alias,
+    );
+    if (conflicts.isEmpty) {
+      return false;
+    }
+    final bool? useTmpFields = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        backgroundColor: AppColors.panel,
+        title: const Text('Conflitto dati assistito', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Esiste già un assistito con CF $targetFiscalCode. Scegli quali dati profilo conservare.',
+              style: const TextStyle(color: Colors.white70, height: 1.35),
+            ),
+            const SizedBox(height: 12),
+            Text('Campi in conflitto: ${conflicts.join(', ')}', style: const TextStyle(color: Colors.white)),
+            const SizedBox(height: 12),
+            Text('TMP: $submittedFullName${(alias ?? '').trim().isEmpty ? '' : ' / alias ${(alias ?? '').trim()}'}', style: const TextStyle(color: Colors.white70)),
+            Text('Canonico: ${targetPatient.fullName}${(targetPatient.alias ?? '').trim().isEmpty ? '' : ' / alias ${targetPatient.alias!.trim()}'}', style: const TextStyle(color: Colors.white70)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(null),
+            child: const Text('Annulla', style: TextStyle(color: Colors.white70)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Mantieni canonico'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Usa dati TMP'),
+          ),
+        ],
+      ),
+    );
+    if (useTmpFields == null) {
+      throw const PatientProfileUpdateException('Fusione annullata.');
+    }
+    return useTmpFields;
+  }
+
   Future<void> _editPatient(_PatientDetailData data) async {
     final Patient? patient = data.patient;
     if (patient == null) {
@@ -1897,6 +1972,15 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               localError = '';
             });
             try {
+              final bool preferSubmittedPatientFields =
+                  await _resolveTemporaryMergePreference(
+                patient: patient,
+                temporaryKey: temporaryKey,
+                name: nameController.text,
+                surname: surnameController.text,
+                fiscalCodeInput: fiscalCodeController.text,
+                alias: aliasController.text,
+              );
               final PatientProfileUpdateResult result =
                   await _patientsRepository.updatePatientProfile(
                 currentDocumentId: patient.fiscalCode,
@@ -1904,6 +1988,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                 surname: surnameController.text,
                 fiscalCodeInput: fiscalCodeController.text,
                 alias: aliasController.text,
+                preferSubmittedPatientFields: preferSubmittedPatientFields,
               );
               if (dialogContext.mounted) {
                 Navigator.of(dialogContext).pop();
@@ -1967,7 +2052,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                       fiscalCodeController,
                       'Codice fiscale',
                       helperText: temporaryKey
-                          ? 'Se inserisci un CF reale, verrà creata una richiesta backend-owned: nessun merge diretto dal frontend.'
+                          ? 'Se inserisci un CF reale, il TMP viene fuso nel profilo canonico con dati gestionali frontend-owned.'
                           : 'Il codice fiscale resta visibile ma non può essere rinominato da questa schermata.',
                       readOnly: !temporaryKey,
                     ),
@@ -2340,6 +2425,65 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     return null;
   }
 
+
+  List<String> _normalizedUniqueFamilyMemberCodes(Iterable<String> fiscalCodes) {
+    return fiscalCodes
+        .map(PatientInputNormalizer.normalizeFiscalCode)
+        .where((String item) => item.isNotEmpty)
+        .toSet()
+        .toList();
+  }
+
+  void _assertFamilyIndexFanoutWithinLimit(List<String> members) {
+    if (members.length <= _maxFamilyIndexFanoutMembers) {
+      return;
+    }
+    throw StateError(
+      'FAMILY_INDEX_FANOUT_LIMIT_EXCEEDED: ${members.length} > $_maxFamilyIndexFanoutMembers',
+    );
+  }
+
+  bool _isFamilyIndexFanoutWithinLimit(Iterable<String> fiscalCodes) {
+    return _normalizedUniqueFamilyMemberCodes(fiscalCodes).length <=
+        _maxFamilyIndexFanoutMembers;
+  }
+
+  Future<void> _patchFamilyIndexForMembers(FamilyGroup family) async {
+    final List<String> members =
+        _normalizedUniqueFamilyMemberCodes(family.memberFiscalCodes);
+    _assertFamilyIndexFanoutWithinLimit(members);
+    for (final String fiscalCode in members) {
+      try {
+        await _patientDashboardIndexRepository.patchFamilyMetadata(
+          fiscalCode: fiscalCode,
+          familyId: family.id,
+          familyName: family.name,
+          familyColorIndex: family.colorIndex,
+        );
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _message = 'Famiglia aggiornata. Badge Home non riallineato: $e';
+        });
+      }
+    }
+  }
+
+  Future<void> _clearFamilyIndexForMembers(Iterable<String> fiscalCodes) async {
+    final List<String> members = _normalizedUniqueFamilyMemberCodes(fiscalCodes);
+    _assertFamilyIndexFanoutWithinLimit(members);
+    for (final String fiscalCode in members) {
+      try {
+        await _patientDashboardIndexRepository.clearFamilyMetadata(fiscalCode);
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _message = 'Famiglia aggiornata. Badge Home non riallineato: $e';
+        });
+      }
+    }
+  }
+
   Future<void> _openCreateFamilyFromPatientDialog(_PatientDetailData data) async {
     final Patient? currentPatient = data.patient;
     if (currentPatient == null) {
@@ -2372,10 +2516,14 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               localError = '';
             });
             try {
+              _assertFamilyIndexFanoutWithinLimit(
+                _normalizedUniqueFamilyMemberCodes(<String>[currentCode, ...selectedCodes]),
+              );
               final FamilyGroup family = await _familyGroupsRepository.createFamily(
                 name: nameController.text,
                 memberFiscalCodes: <String>[currentCode, ...selectedCodes],
               );
+              await _patchFamilyIndexForMembers(family);
               if (dialogContext.mounted) {
                 Navigator.of(dialogContext).pop();
               }
@@ -2647,10 +2795,20 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               localError = '';
             });
             try {
+              final FamilyGroup selectedFamily = families.firstWhere(
+                (FamilyGroup item) => item.id == selectedFamilyId,
+              );
+              _assertFamilyIndexFanoutWithinLimit(
+                _normalizedUniqueFamilyMemberCodes(<String>[
+                  ...selectedFamily.memberFiscalCodes,
+                  currentCode,
+                ]),
+              );
               final FamilyGroup family = await _familyGroupsRepository.addMembersToFamily(
                 familyId: selectedFamilyId!,
                 memberFiscalCodes: <String>[currentCode],
               );
+              await _patchFamilyIndexForMembers(family);
               if (dialogContext.mounted) {
                 Navigator.of(dialogContext).pop();
               }
@@ -2905,10 +3063,17 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               localError = '';
             });
             try {
+              _assertFamilyIndexFanoutWithinLimit(
+                _normalizedUniqueFamilyMemberCodes(<String>[
+                  ...familyContext.family.memberFiscalCodes,
+                  ...selectedCodes,
+                ]),
+              );
               final FamilyGroup family = await _familyGroupsRepository.addMembersToFamily(
                 familyId: familyContext.family.id,
                 memberFiscalCodes: selectedCodes,
               );
+              await _patchFamilyIndexForMembers(family);
               if (dialogContext.mounted) {
                 Navigator.of(dialogContext).pop();
               }
@@ -3156,14 +3321,30 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         familyId: familyContext.family.id,
         memberFiscalCode: member.fiscalCode,
       );
+      await _clearFamilyIndexForMembers(<String>[member.fiscalCode]);
+      bool skippedRemainingFamilyBadgeSync = false;
+      if (!result.deletedFamily && result.family != null) {
+        if (_isFamilyIndexFanoutWithinLimit(result.family!.memberFiscalCodes)) {
+          await _patchFamilyIndexForMembers(result.family!);
+        } else {
+          skippedRemainingFamilyBadgeSync = true;
+        }
+      } else if (result.deletedFamily) {
+        await _clearFamilyIndexForMembers(
+          familyContext.members.map((_PatientFamilyMember item) => item.fiscalCode),
+        );
+      }
       if (!mounted) {
         return;
       }
-      final String message = result.deletedFamily
+      final String baseMessage = result.deletedFamily
           ? 'Famiglia eliminata: nessun membro residuo.'
           : member.isCurrentPatient
               ? 'Assistito rimosso dal nucleo familiare.'
               : 'Membro rimosso dal nucleo familiare.';
+      final String message = skippedRemainingFamilyBadgeSync
+          ? '$baseMessage Badge Home degli altri membri non riallineati: nucleo oltre limite fan-out.'
+          : baseMessage;
       _PatientFamilyContext? nextFamilyContext;
       if (!result.deletedFamily && !member.isCurrentPatient && result.family != null && data.patient != null) {
         nextFamilyContext = await _buildFamilyContextFromFamily(
