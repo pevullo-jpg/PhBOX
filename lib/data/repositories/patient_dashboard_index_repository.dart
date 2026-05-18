@@ -101,6 +101,36 @@ class PatientDashboardIndexRepository {
     return PatientDashboardIndex.fromMap(map);
   }
 
+  Future<List<PatientDashboardIndex>> getByFiscalCodes(
+    Iterable<String> fiscalCodes, {
+    int maxFiscalCodes = 50,
+  }) async {
+    final int boundedMax = maxFiscalCodes <= 0 ? 0 : maxFiscalCodes;
+    if (boundedMax == 0) {
+      return const <PatientDashboardIndex>[];
+    }
+    final List<String> selectedFiscalCodes = fiscalCodes
+        .map((String value) => value.trim().toUpperCase())
+        .where((String value) => value.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    if (selectedFiscalCodes.isEmpty) {
+      return const <PatientDashboardIndex>[];
+    }
+
+    final List<PatientDashboardIndex> out = <PatientDashboardIndex>[];
+    for (final String fiscalCode in selectedFiscalCodes.take(boundedMax)) {
+      final PatientDashboardIndex? item = await getByFiscalCode(fiscalCode);
+      if (item == null) {
+        continue;
+      }
+      out.add(item);
+    }
+    _sort(out);
+    return out;
+  }
+
   Future<void> patchFrontendManagedState({
     required String fiscalCode,
     required String fullName,
