@@ -155,6 +155,54 @@ class PatientDashboardIndexRepository {
     );
   }
 
+
+  Future<void> patchFamilyMetadata({
+    required String fiscalCode,
+    required String familyId,
+    required String familyName,
+    required int familyColorIndex,
+  }) async {
+    final String cf = fiscalCode.trim().toUpperCase();
+    if (cf.isEmpty) return;
+    final Map<String, dynamic>? existing = await datasource.getDocument(
+      collectionPath: AppCollections.patientDashboardIndex,
+      documentId: cf,
+    );
+    if (existing == null) return;
+    await datasource.patchDocument(
+      collectionPath: AppCollections.patientDashboardIndex,
+      documentId: cf,
+      data: <String, dynamic>{
+        'fiscalCode': cf,
+        'familyId': familyId.trim(),
+        'familyName': familyName.trim(),
+        'familyColorIndex': familyColorIndex < 0 ? 0 : familyColorIndex,
+        'updatedAt': DateTime.now().toIso8601String(),
+      },
+    );
+  }
+
+  Future<void> clearFamilyMetadata(String fiscalCode) async {
+    final String cf = fiscalCode.trim().toUpperCase();
+    if (cf.isEmpty) return;
+    final Map<String, dynamic>? existing = await datasource.getDocument(
+      collectionPath: AppCollections.patientDashboardIndex,
+      documentId: cf,
+    );
+    if (existing == null) return;
+    await datasource.patchDocument(
+      collectionPath: AppCollections.patientDashboardIndex,
+      documentId: cf,
+      data: <String, dynamic>{
+        'fiscalCode': cf,
+        'familyId': '',
+        'familyName': '',
+        'familyColorIndex': 0,
+        'updatedAt': DateTime.now().toIso8601String(),
+      },
+    );
+  }
+
   Future<void> deleteIndex(String fiscalCode) {
     final String cf = fiscalCode.trim().toUpperCase();
     if (cf.isEmpty) return Future<void>.value();
