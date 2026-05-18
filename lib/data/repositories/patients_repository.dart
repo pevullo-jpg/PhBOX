@@ -6,7 +6,7 @@ import '../../core/utils/patient_input_normalizer.dart';
 import '../datasources/firestore_datasource.dart';
 import '../datasources/firestore_firebase_datasource.dart';
 import '../models/patient.dart';
-import 'identity_resolution_requests_repository.dart';
+import 'patient_dashboard_index_repository.dart';
 
 class PatientsRepository {
   final FirestoreDatasource datasource;
@@ -98,56 +98,11 @@ class PatientsRepository {
           'Il codice fiscale corretto deve essere reale, non TMP.',
         );
       }
-      final Map<String, dynamic>? targetPatientMap = await datasource.getDocument(
-        collectionPath: AppCollections.patients,
-        documentId: normalizedFiscalCode,
-      );
-      final Map<String, String> sourceFieldValues = <String, String>{
-        'fullName': fullName,
-        if (normalizedAlias != null) 'alias': normalizedAlias,
-      };
-      final Map<String, String> targetFieldValues = _extractTargetFieldValues(targetPatientMap);
-      final List<String> conflictFields = _detectSubmittedFieldConflicts(
-        sourceValues: sourceFieldValues,
-        targetValues: targetFieldValues,
-      );
-      final Map<String, String> selectedFieldValues = <String, String>{
-        for (final String field in conflictFields)
-          if ((sourceFieldValues[field] ?? '').trim().isNotEmpty)
-            field: sourceFieldValues[field]!.trim(),
-      };
-
-      final String requestId = await IdentityResolutionRequestsRepository(
-        datasource: datasource,
-      ).createUserConfirmedRequest(
-        action: IdentityResolutionRequestAction.chooseCorrectFiscalCode,
-        sourceFiscalCode: normalizedCurrentDocumentId,
-        targetFiscalCode: normalizedFiscalCode,
-        sourcePatientId: normalizedCurrentDocumentId,
-        targetPatientId: targetPatientMap == null ? null : normalizedFiscalCode,
-        selectedFiscalCode: normalizedFiscalCode,
-        normalizedName: fullName,
-        candidateFiscalCodes: <String>[normalizedFiscalCode],
-        conflictFields: conflictFields,
-        sourceFieldValues: sourceFieldValues,
-        targetFieldValues: targetFieldValues,
-        selectedFieldValues: selectedFieldValues,
-        reason: conflictFields.isEmpty
-            ? 'frontend_contextual_tmp_cf_user_confirmed'
-            : 'frontend_contextual_tmp_cf_user_confirmed_with_field_choices',
-      );
-      await _applyInPlacePatientProfileUpdate(
-        documentId: normalizedCurrentDocumentId,
-        storedFiscalCode: normalizedCurrentDocumentId,
+      return _migrateTemporaryPatientToFiscalCodeDirect(
+        temporaryDocumentId: normalizedCurrentDocumentId,
+        fiscalCode: normalizedFiscalCode,
         fullName: fullName,
         alias: normalizedAlias,
-      );
-      return PatientProfileUpdateResult(
-        effectiveDocumentId: normalizedCurrentDocumentId,
-        fiscalCode: normalizedCurrentDocumentId,
-        fullName: fullName,
-        migratedFromTemporaryKey: false,
-        identityResolutionRequestId: requestId,
       );
     }
 
@@ -186,10 +141,192 @@ class PatientsRepository {
     required String fiscalCode,
     String? alias,
   }) async {
-    throw const PatientProfileUpdateException(
-      'Migrazione frontend TMP→CF disabilitata: le correzioni identità devono essere '
-      'utente-confermate e backend-owned.',
+    final String normalizedName = PatientInputNormalizer.normalizeNamePart(name);
+    final String normalizedSurname = PatientInputNormalizer.normalizeNamePart(surname);
+    final String fullName = PatientInputNormalizer.buildFullName(
+      name: normalizedName,
+      surname: normalizedSurname,
     );
+    if (fullName.isEmpty) {
+      throw const PatientProfileUpdateException(
+        'Nome e cognome non possono essere entrambi vuoti.',
+      );
+    }
+    return _migrateTemporaryPatientToFiscalCodeDirect(
+      temporaryDocumentId: temporaryDocumentId,
+      fiscalCode: fiscalCode,
+      fullName: fullName,
+      alias: _normalizeAlias(alias),
+    );
+  }
+
+
+  Future<PatientProfileUpdateResult> _migrateTemporaryPatientToFiscalCodeDirect({
+    required String temporaryDocumentId,
+    required String fiscalCode,
+    required String fullName,
+    required String? alias,
+  }) async {
+    final String oldId = PatientInputNormalizer.normalizeFiscalCode(temporaryDocumentId);
+    final String newId = PatientInputNormalizer.normalizeFiscalCode(fiscalCode);
+    if (oldId.isEmpty || newId.isEmpty || oldId == newId) {
+      throw const PatientProfileUpdateException('Migrazione assistito non valida.');
+    }
+    if (!isTemporaryPatientKey(oldId) || isTemporaryPatientKey(newId)) {
+      throw const PatientProfileUpdateException('Migrazione TMP→CF non valida.');
+    }
+
+    final FirebaseFirestore firestore = _firebaseFirestoreOrThrow();
+    final DocumentReference<Map<String, dynamic>> oldPatientRef =
+        firestore.collection(AppCollections.patients).doc(oldId);
+    final DocumentReference<Map<String, dynamic>> newPatientRef =
+        firestore.collection(AppCollections.patients).doc(newId);
+    final DocumentReference<Map<String, dynamic>> oldIndexRef =
+        firestore.collection(AppCollections.patientDashboardIndex).doc(oldId);
+    final DocumentReference<Map<String, dynamic>> newIndexRef =
+        firestore.collection(AppCollections.patientDashboardIndex).doc(newId);
+
+    return firestore.runTransaction<PatientProfileUpdateResult>((Transaction transaction) async {
+      final DocumentSnapshot<Map<String, dynamic>> oldPatientSnap =
+          await transaction.get(oldPatientRef);
+      if (!oldPatientSnap.exists || oldPatientSnap.data() == null) {
+        throw const PatientProfileUpdateException('Assistito temporaneo non trovato.');
+      }
+      final DocumentSnapshot<Map<String, dynamic>> newPatientSnap =
+          await transaction.get(newPatientRef);
+      if (newPatientSnap.exists) {
+        throw const PatientProfileUpdateException(
+          'Esiste già un assistito con questo codice fiscale. Usa la risoluzione identità/merge.',
+        );
+      }
+      final DocumentSnapshot<Map<String, dynamic>> oldIndexSnap =
+          await transaction.get(oldIndexRef);
+      final DocumentSnapshot<Map<String, dynamic>> newIndexSnap =
+          await transaction.get(newIndexRef);
+      if (newIndexSnap.exists) {
+        throw const PatientProfileUpdateException(
+          'Esiste già una riga dashboard con questo codice fiscale. Usa la risoluzione identità/merge.',
+        );
+      }
+      _assertTemporaryPatientSnapshotsAllowCleanDirectMigration(
+        patientMap: oldPatientSnap.data()!,
+        indexMap: oldIndexSnap.data(),
+      );
+
+      final String isoNow = DateTime.now().toIso8601String();
+      final Map<String, dynamic> newPatientData = _cleanMapForWrite(oldPatientSnap.data()!);
+      newPatientData['fiscalCode'] = newId;
+      newPatientData['fullName'] = fullName;
+      newPatientData['alias'] = alias;
+      newPatientData['updatedAt'] = isoNow;
+      transaction.set(newPatientRef, newPatientData);
+
+      if (oldIndexSnap.exists && oldIndexSnap.data() != null) {
+        final Map<String, dynamic> indexData = _cleanMapForWrite(oldIndexSnap.data()!);
+        indexData['fiscalCode'] = newId;
+        indexData['fullName'] = fullName;
+        indexData['alias'] = alias;
+        indexData['searchPrefixes'] = PatientDashboardIndexRepository.buildSearchPrefixes(<String>[
+          newId,
+          fullName,
+          alias ?? '',
+          indexData['doctorFullName']?.toString() ?? '',
+          indexData['city']?.toString() ?? '',
+          indexData['exemptionCode']?.toString() ?? '',
+        ]);
+        indexData['updatedAt'] = isoNow;
+        transaction.set(newIndexRef, indexData);
+        transaction.delete(oldIndexRef);
+      }
+
+      transaction.set(
+        oldPatientRef,
+        <String, dynamic>{
+          'patientProfileMigrated': true,
+          'migratedToFiscalCode': newId,
+          'hiddenFromFrontend': true,
+          'updatedAt': isoNow,
+        },
+        SetOptions(merge: true),
+      );
+
+      return PatientProfileUpdateResult(
+        effectiveDocumentId: newId,
+        fiscalCode: newId,
+        fullName: fullName,
+        migratedFromTemporaryKey: true,
+      );
+    });
+  }
+
+  void _assertTemporaryPatientSnapshotsAllowCleanDirectMigration({
+    required Map<String, dynamic> patientMap,
+    required Map<String, dynamic>? indexMap,
+  }) {
+    final List<String> blockers = <String>[];
+
+    void addIf(bool condition, String label) {
+      if (condition) blockers.add(label);
+    }
+
+    addIf(_readBoolField(patientMap, 'hasDebt'), 'debiti');
+    addIf(_readNumberField(patientMap, 'debtTotal').abs() > 0.005, 'debiti');
+    addIf(_readBoolField(patientMap, 'hasAdvance'), 'anticipi');
+    addIf(_readBoolField(patientMap, 'hasBooking'), 'prenotazioni');
+    addIf(_readBoolField(patientMap, 'hasDpc'), 'DPC');
+    addIf(_readBoolField(patientMap, 'hasRecipes'), 'ricette');
+    addIf(_readIntField(patientMap, 'recipeCount') > 0, 'ricette');
+    addIf(_readIntField(patientMap, 'prescriptionCount') > 0, 'ricette');
+    addIf(_readIntField(patientMap, 'archivedRecipeCount') > 0, 'ricette archiviate');
+    addIf(_readIntField(patientMap, 'archivedPdfCount') > 0, 'PDF archiviati');
+    addIf(_readIntField(patientMap, 'activeArchiveDocuments') > 0, 'documenti archivio attivi');
+    addIf(patientMap['lastPrescriptionDate'] != null, 'storico ricette');
+    addIf(patientMap['nearestExpiryDate'] != null, 'scadenze archivio');
+    addIf(_readStringListField(patientMap, 'therapiesSummary').isNotEmpty, 'terapie/ricette');
+
+    if (indexMap == null) {
+      blockers.add('indice dashboard assente');
+    } else {
+      addIf(_readBoolField(indexMap, 'hasDebt'), 'debiti index');
+      addIf(_readNumberField(indexMap, 'debtAmount').abs() > 0.005, 'debiti index');
+      addIf(_readIntField(indexMap, 'debtCount') > 0, 'debiti index');
+      addIf(_readBoolField(indexMap, 'hasAdvance'), 'anticipi index');
+      addIf(_readIntField(indexMap, 'advanceCount') > 0, 'anticipi index');
+      addIf(_readBoolField(indexMap, 'hasBooking'), 'prenotazioni index');
+      addIf(_readIntField(indexMap, 'bookingCount') > 0, 'prenotazioni index');
+      addIf(_readBoolField(indexMap, 'hasRecipes'), 'ricette index');
+      addIf(_readIntField(indexMap, 'recipeCount') > 0, 'ricette index');
+      addIf(_readBoolField(indexMap, 'hasDpc'), 'DPC index');
+      addIf(_readIntField(indexMap, 'dpcCount') > 0, 'DPC index');
+      addIf(_readBoolField(indexMap, 'hasExpiry'), 'scadenze index');
+      addIf(_readStringField(indexMap, 'familyId').isNotEmpty, 'nucleo familiare');
+      addIf(_readStringField(indexMap, 'nearestExpiryDate').isNotEmpty, 'scadenze archivio');
+      addIf(_readStringField(indexMap, 'lastPrescriptionDate').isNotEmpty, 'storico ricette index');
+    }
+
+    if (blockers.isNotEmpty) {
+      throw PatientProfileUpdateException(
+        'Il TMP non è pulito (${blockers.toSet().join(', ')}). Serve risoluzione identità backend per migrazione sicura.',
+      );
+    }
+  }
+
+
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _readBoundedSubcollectionForMigration(
+    DocumentReference<Map<String, dynamic>> patientRef,
+    String subcollection,
+    int maxDocs,
+  ) async {
+    final QuerySnapshot<Map<String, dynamic>> snapshot = await patientRef
+        .collection(subcollection)
+        .limit(maxDocs + 1)
+        .get();
+    if (snapshot.docs.length > maxDocs) {
+      throw PatientProfileUpdateException(
+        'Troppi documenti $subcollection collegati per migrazione frontend sicura.',
+      );
+    }
+    return snapshot.docs;
   }
 
   Future<void> _applyInPlacePatientProfileUpdate({
@@ -339,7 +476,7 @@ class PatientsRepository {
       collectionPath: AppCollections.patients,
       documentId: fiscalCode,
     );
-    if (map == null) return null;
+    if (map == null || _isHiddenFromFrontendPatientMap(map)) return null;
     return Patient.fromMap(map);
   }
 
@@ -348,7 +485,58 @@ class PatientsRepository {
       collectionPath: AppCollections.patients,
       orderBy: 'fullName',
     );
-    return maps.map(Patient.fromMap).toList();
+    return maps
+        .where((Map<String, dynamic> map) => !_isHiddenFromFrontendPatientMap(map))
+        .map(Patient.fromMap)
+        .toList();
+  }
+
+  bool _readBoolField(Map<String, dynamic> map, String field) {
+    final dynamic value = map[field];
+    if (value is bool) return value;
+    final String normalized = value?.toString().trim().toLowerCase() ?? '';
+    return normalized == 'true' ||
+        normalized == '1' ||
+        normalized == 'yes' ||
+        normalized == 'si' ||
+        normalized == 'sì';
+  }
+
+  int _readIntField(Map<String, dynamic> map, String field) {
+    final dynamic value = map[field];
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  double _readNumberField(Map<String, dynamic> map, String field) {
+    final dynamic value = map[field];
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  List<String> _readStringListField(Map<String, dynamic> map, String field) {
+    final dynamic value = map[field];
+    if (value is List) {
+      return value
+          .map((dynamic item) => item.toString().trim())
+          .where((String item) => item.isNotEmpty)
+          .toList();
+    }
+    final String normalized = value?.toString().trim() ?? '';
+    if (normalized.isEmpty) return const <String>[];
+    return normalized
+        .split(RegExp(r'[,;|\n]'))
+        .map((String item) => item.trim())
+        .where((String item) => item.isNotEmpty)
+        .toList();
+  }
+
+  bool _isHiddenFromFrontendPatientMap(Map<String, dynamic> map) {
+    if (map['hiddenFromFrontend'] == true) return true;
+    if (map['patientProfileMigrated'] == true) return true;
+    final String migratedTo = (map['migratedToFiscalCode'] ?? '').toString().trim();
+    return migratedTo.isNotEmpty;
   }
 
   Future<void> deletePatient(String fiscalCode) {
@@ -409,6 +597,10 @@ class PatientsRepository {
   Map<String, dynamic> _cleanMapForWrite(Map<String, dynamic> source) {
     final Map<String, dynamic> clean = Map<String, dynamic>.from(source);
     clean.remove('id');
+    clean.remove('documentId');
+    clean.remove('documentPath');
+    clean.remove('collectionId');
+    clean.remove('parentDocumentId');
     return clean;
   }
 
