@@ -82,6 +82,8 @@ class PatientDetailPage extends StatefulWidget {
 }
 
 class _PatientDetailPageState extends State<PatientDetailPage> {
+  static const int _maxFamilyIndexFanoutMembers = 25;
+
   late final PatientsRepository _patientsRepository;
   late final AdvancesRepository _advancesRepository;
   late final DebtsRepository _debtsRepository;
@@ -2340,6 +2342,60 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     return null;
   }
 
+
+  List<String> _normalizedUniqueFamilyMemberCodes(Iterable<String> fiscalCodes) {
+    return fiscalCodes
+        .map(PatientInputNormalizer.normalizeFiscalCode)
+        .where((String item) => item.isNotEmpty)
+        .toSet()
+        .toList();
+  }
+
+  void _assertFamilyIndexFanoutWithinLimit(List<String> members) {
+    if (members.length <= _maxFamilyIndexFanoutMembers) {
+      return;
+    }
+    throw StateError(
+      'FAMILY_INDEX_FANOUT_LIMIT_EXCEEDED: ${members.length} > $_maxFamilyIndexFanoutMembers',
+    );
+  }
+
+  Future<void> _patchFamilyIndexForMembers(FamilyGroup family) async {
+    final List<String> members =
+        _normalizedUniqueFamilyMemberCodes(family.memberFiscalCodes);
+    _assertFamilyIndexFanoutWithinLimit(members);
+    for (final String fiscalCode in members) {
+      try {
+        await _patientDashboardIndexRepository.patchFamilyMetadata(
+          fiscalCode: fiscalCode,
+          familyId: family.id,
+          familyName: family.name,
+          familyColorIndex: family.colorIndex,
+        );
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _message = 'Famiglia aggiornata. Badge Home non riallineato: $e';
+        });
+      }
+    }
+  }
+
+  Future<void> _clearFamilyIndexForMembers(Iterable<String> fiscalCodes) async {
+    final List<String> members = _normalizedUniqueFamilyMemberCodes(fiscalCodes);
+    _assertFamilyIndexFanoutWithinLimit(members);
+    for (final String fiscalCode in members) {
+      try {
+        await _patientDashboardIndexRepository.clearFamilyMetadata(fiscalCode);
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _message = 'Famiglia aggiornata. Badge Home non riallineato: $e';
+        });
+      }
+    }
+  }
+
   Future<void> _openCreateFamilyFromPatientDialog(_PatientDetailData data) async {
     final Patient? currentPatient = data.patient;
     if (currentPatient == null) {
@@ -2372,10 +2428,14 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               localError = '';
             });
             try {
+              _assertFamilyIndexFanoutWithinLimit(
+                _normalizedUniqueFamilyMemberCodes(<String>[currentCode, ...selectedCodes]),
+              );
               final FamilyGroup family = await _familyGroupsRepository.createFamily(
                 name: nameController.text,
                 memberFiscalCodes: <String>[currentCode, ...selectedCodes],
               );
+              await _patchFamilyIndexForMembers(family);
               if (dialogContext.mounted) {
                 Navigator.of(dialogContext).pop();
               }
@@ -2647,10 +2707,20 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               localError = '';
             });
             try {
+              final FamilyGroup selectedFamily = families.firstWhere(
+                (FamilyGroup item) => item.id == selectedFamilyId,
+              );
+              _assertFamilyIndexFanoutWithinLimit(
+                _normalizedUniqueFamilyMemberCodes(<String>[
+                  ...selectedFamily.memberFiscalCodes,
+                  currentCode,
+                ]),
+              );
               final FamilyGroup family = await _familyGroupsRepository.addMembersToFamily(
                 familyId: selectedFamilyId!,
                 memberFiscalCodes: <String>[currentCode],
               );
+              await _patchFamilyIndexForMembers(family);
               if (dialogContext.mounted) {
                 Navigator.of(dialogContext).pop();
               }
@@ -2905,10 +2975,17 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               localError = '';
             });
             try {
+              _assertFamilyIndexFanoutWithinLimit(
+                _normalizedUniqueFamilyMemberCodes(<String>[
+                  ...familyContext.family.memberFiscalCodes,
+                  ...selectedCodes,
+                ]),
+              );
               final FamilyGroup family = await _familyGroupsRepository.addMembersToFamily(
                 familyId: familyContext.family.id,
                 memberFiscalCodes: selectedCodes,
               );
+              await _patchFamilyIndexForMembers(family);
               if (dialogContext.mounted) {
                 Navigator.of(dialogContext).pop();
               }
@@ -3151,11 +3228,24 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       return;
     }
     try {
+      _assertFamilyIndexFanoutWithinLimit(
+        _normalizedUniqueFamilyMemberCodes(
+          familyContext.members.map((_PatientFamilyMember item) => item.fiscalCode),
+        ),
+      );
       final FamilyRemovalResult result =
           await _familyGroupsRepository.removeMemberFromFamily(
         familyId: familyContext.family.id,
         memberFiscalCode: member.fiscalCode,
       );
+      await _clearFamilyIndexForMembers(<String>[member.fiscalCode]);
+      if (!result.deletedFamily && result.family != null) {
+        await _patchFamilyIndexForMembers(result.family!);
+      } else if (result.deletedFamily) {
+        await _clearFamilyIndexForMembers(
+          familyContext.members.map((_PatientFamilyMember item) => item.fiscalCode),
+        );
+      }
       if (!mounted) {
         return;
       }
