@@ -78,6 +78,8 @@ class _DashboardPageState extends State<DashboardPage> {
   final Set<String> _locallyDeletedPatientFiscalCodes = <String>{};
   String _lastBackendExpiringRecipesSignature = '';
   final Set<_DashboardCardFilter> _activeCardFilters = <_DashboardCardFilter>{};
+  String _activeFamilyFilterId = '';
+  String _activeFamilyFilterName = '';
   String _message = '';
   bool _searchInFlags = false;
   bool _isRouteCovered = false;
@@ -138,7 +140,13 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   void _handleSearchChanged() {
-    setState(() {});
+    setState(() {
+      if (_activeFamilyFilterId.trim().isNotEmpty && _searchController.text.trim().isNotEmpty) {
+        _activeFamilyFilterId = '';
+        _activeFamilyFilterName = '';
+        _dashboardCacheSignature = '';
+      }
+    });
     _scheduleInactiveFilterResetIfNeeded();
     if (_searchController.text.trim().length >= 3) {
       _ensureDashboardCacheForActiveRequest();
@@ -147,12 +155,15 @@ class _DashboardPageState extends State<DashboardPage> {
 
   bool get _hasTemporaryDashboardState {
     return _activeCardFilters.isNotEmpty ||
+        _activeFamilyFilterId.trim().isNotEmpty ||
         _searchController.text.trim().isNotEmpty ||
         _searchInFlags;
   }
 
   bool get _hasUserRequestedDashboardData {
-    return _activeCardFilters.isNotEmpty || _searchController.text.trim().length >= 3;
+    return _activeCardFilters.isNotEmpty ||
+        _activeFamilyFilterId.trim().isNotEmpty ||
+        _searchController.text.trim().length >= 3;
   }
 
   void _scheduleInactiveFilterResetIfNeeded() {
@@ -178,6 +189,8 @@ class _DashboardPageState extends State<DashboardPage> {
     _lastUserRequestRefreshSignature = '';
     _dashboardCacheSignature = '';
     _activeCardFilters.clear();
+    _activeFamilyFilterId = '';
+    _activeFamilyFilterName = '';
     _searchInFlags = false;
     if (_searchController.text.isNotEmpty) {
       _searchController.removeListener(_handleSearchChanged);
@@ -390,6 +403,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   bool get _isDashboardAtZeroPosition {
     return _activeCardFilters.isEmpty &&
+        _activeFamilyFilterId.trim().isEmpty &&
         _searchController.text.trim().isEmpty &&
         !_searchInFlags;
   }
@@ -649,6 +663,7 @@ class _DashboardPageState extends State<DashboardPage> {
     return <String>[
       _searchController.text.trim().toUpperCase(),
       activeFilters.join(','),
+      _activeFamilyFilterId.trim(),
       _searchInFlags ? 'FLAGS' : 'BASE',
     ].join('|');
   }
@@ -953,6 +968,10 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<_DashboardIndexLoadResult> _loadDashboardIndexRows() async {
+    if (_activeFamilyFilterId.trim().isNotEmpty) {
+      return _loadActiveFamilyFilterIndexRows();
+    }
+
     final String query = _searchController.text.trim();
     if (query.length >= 3) {
       final List<PatientDashboardIndex> directRows = await _patientDashboardIndexRepository.searchByPrefix(query);
@@ -1002,10 +1021,23 @@ class _DashboardPageState extends State<DashboardPage> {
 
     final _DashboardCardFilter? primaryFilter = _selectPrimaryIndexFilter();
     if (primaryFilter != null) {
-      return _DashboardIndexLoadResult(
-        rows: await _patientDashboardIndexRepository.getByFlag(
+      final List<PatientDashboardIndex> rows = await _patientDashboardIndexRepository.getByFlag(
         flag: _indexFlagForDashboardFilter(primaryFilter),
-        ),
+      );
+      final _DashboardSearchFamilyExpansion familyExpansion =
+          await _resolveDashboardSearchFamilyExpansion(
+        rows,
+        rows
+            .map((PatientDashboardIndex item) => item.familyId.trim())
+            .where((String familyId) => familyId.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort(),
+      );
+      return _DashboardIndexLoadResult(
+        rows: rows,
+        families: familyExpansion.families,
+        familyByMemberFiscalCode: familyExpansion.familyByMemberFiscalCode,
       );
     }
 
@@ -1305,6 +1337,42 @@ class _DashboardPageState extends State<DashboardPage> {
     return true;
   }
 
+  Future<_DashboardIndexLoadResult> _loadActiveFamilyFilterIndexRows() async {
+    final String familyId = _activeFamilyFilterId.trim();
+    if (familyId.isEmpty) {
+      return const _DashboardIndexLoadResult(rows: <PatientDashboardIndex>[]);
+    }
+
+    final FamilyGroup? family = await _familyGroupsRepository.getFamilyById(familyId);
+    if (family == null || family.id.trim().isEmpty) {
+      return _DashboardIndexLoadResult(
+        rows: await _patientDashboardIndexRepository.getByFamilyIds(
+          <String>[familyId],
+          maxFamilyIds: 1,
+          limitPerFamily: _maxDashboardSearchFamilyMembersPerFamily,
+        ),
+      );
+    }
+
+    final _DashboardSearchFamilyExpansion familyExpansion =
+        _buildDashboardFamilyExpansion(<FamilyGroup>[family]);
+    final List<PatientDashboardIndex> rows = await _patientDashboardIndexRepository.getByFiscalCodes(
+      familyExpansion.memberFiscalCodes,
+      maxFiscalCodes: _maxDashboardSearchFamilyMemberIndexReads,
+    );
+    final Set<String> expandedFamilyCfs = rows
+        .map((PatientDashboardIndex item) => _normalizeFiscalCode(item.fiscalCode))
+        .where((String cf) => cf.isNotEmpty)
+        .toSet()
+      ..addAll(familyExpansion.memberFiscalCodes.map(_normalizeFiscalCode).where((String cf) => cf.isNotEmpty));
+    return _DashboardIndexLoadResult(
+      rows: rows,
+      expandedFamilyCfs: expandedFamilyCfs,
+      families: familyExpansion.families,
+      familyByMemberFiscalCode: familyExpansion.familyByMemberFiscalCode,
+    );
+  }
+
   Future<_DashboardSearchFamilyExpansion> _resolveDashboardSearchFamilyExpansion(
     List<PatientDashboardIndex> directRows,
     List<String> directFamilyIds,
@@ -1354,7 +1422,20 @@ class _DashboardPageState extends State<DashboardPage> {
       coveredFiscalCodes.addAll(family.memberFiscalCodes.map(_normalizeFiscalCode));
     }
 
-    final List<FamilyGroup> families = (familiesById.values.toList()
+    final _DashboardSearchFamilyExpansion expansion =
+        _buildDashboardFamilyExpansion(familiesById.values);
+    return _DashboardSearchFamilyExpansion(
+      families: expansion.families,
+      unresolvedFamilyIds: unresolvedFamilyIds.toList()..sort(),
+      memberFiscalCodes: expansion.memberFiscalCodes,
+      familyByMemberFiscalCode: expansion.familyByMemberFiscalCode,
+    );
+  }
+
+  _DashboardSearchFamilyExpansion _buildDashboardFamilyExpansion(
+    Iterable<FamilyGroup> sourceFamilies,
+  ) {
+    final List<FamilyGroup> families = (sourceFamilies.toList()
           ..sort((FamilyGroup a, FamilyGroup b) => a.name.toLowerCase().compareTo(b.name.toLowerCase())))
         .take(_maxDashboardSearchFamilyIds)
         .toList();
@@ -1381,7 +1462,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
     return _DashboardSearchFamilyExpansion(
       families: families,
-      unresolvedFamilyIds: unresolvedFamilyIds.toList()..sort(),
+      unresolvedFamilyIds: const <String>[],
       memberFiscalCodes: memberFiscalCodes,
       familyByMemberFiscalCode: familyByMemberFiscalCode,
     );
@@ -1519,12 +1600,17 @@ class _DashboardPageState extends State<DashboardPage> {
 
   bool get _isCompactDashboardMode {
     final String query = _searchController.text.trim();
-    return _activeCardFilters.isEmpty && query.length < 3;
+    return _activeCardFilters.isEmpty &&
+        _activeFamilyFilterId.trim().isEmpty &&
+        query.length < 3;
   }
 
   bool get _showSearchThresholdHint {
     final String query = _searchController.text.trim();
-    return _activeCardFilters.isEmpty && query.isNotEmpty && query.length < 3;
+    return _activeCardFilters.isEmpty &&
+        _activeFamilyFilterId.trim().isEmpty &&
+        query.isNotEmpty &&
+        query.length < 3;
   }
 
   void _refresh() {
@@ -1545,7 +1631,8 @@ class _DashboardPageState extends State<DashboardPage> {
     final String rawQuery = _searchController.text.trim();
     final String query = rawQuery.toLowerCase();
     final bool hasSearchThreshold = rawQuery.length >= 3;
-    final bool compactMode = _activeCardFilters.isEmpty && !hasSearchThreshold;
+    final bool hasActiveFamilyFilter = _activeFamilyFilterId.trim().isNotEmpty;
+    final bool compactMode = _activeCardFilters.isEmpty && !hasSearchThreshold && !hasActiveFamilyFilter;
 
     bool matchesCardFilters(_PatientDashboardSummary item) {
       final activeFilters = _activeCardFilters.toList();
@@ -1592,7 +1679,10 @@ class _DashboardPageState extends State<DashboardPage> {
       return false;
     }
 
-    final filtered = input.where(matchesCardFilters).toList();
+    final List<_PatientDashboardSummary> filtered = input.where(matchesCardFilters).where((item) {
+      if (!hasActiveFamilyFilter) return true;
+      return item.familyId.trim() == _activeFamilyFilterId.trim();
+    }).toList();
     if (!hasSearchThreshold) {
       return filtered;
     }
@@ -1644,6 +1734,33 @@ class _DashboardPageState extends State<DashboardPage> {
       }
       _issueLoad();
     });
+  }
+
+  void _selectFamilyFilterFromSummary(_PatientDashboardSummary item) {
+    final String familyId = item.familyId.trim();
+    if (familyId.isEmpty) {
+      return;
+    }
+    final bool wasSelected = _activeFamilyFilterId == familyId;
+    setState(() {
+      _activeCardFilters.clear();
+      _searchInFlags = false;
+      if (_searchController.text.isNotEmpty) {
+        _searchController.removeListener(_handleSearchChanged);
+        _searchController.clear();
+        _searchController.addListener(_handleSearchChanged);
+      }
+      if (wasSelected) {
+        _activeFamilyFilterId = '';
+        _activeFamilyFilterName = '';
+      } else {
+        _activeFamilyFilterId = familyId;
+        _activeFamilyFilterName = item.familyName.trim();
+      }
+      _dashboardCacheSignature = '';
+    });
+    _scheduleInactiveFilterResetIfNeeded();
+    _ensureDashboardCacheForActiveRequest();
   }
 
   void _toggleCardFilter(_DashboardCardFilter filter) {
@@ -4221,6 +4338,9 @@ class _DashboardPageState extends State<DashboardPage> {
                                       onTap: () {
                                         setState(() {
                                           _searchInFlags = !_searchInFlags;
+                                          _activeFamilyFilterId = '';
+                                          _activeFamilyFilterName = '';
+                                          _dashboardCacheSignature = '';
                                         });
                                         _scheduleInactiveFilterResetIfNeeded();
                                         if (_searchController.text.trim().length >= 3) {
@@ -4297,6 +4417,45 @@ class _DashboardPageState extends State<DashboardPage> {
                             label: const Text('Nuovo assistito'),
                           ),
                         ),
+                        if (_activeFamilyFilterId.trim().isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          Center(
+                            child: Container(
+                              width: cardsBlockWidth,
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: AppColors.panel,
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(color: Colors.white12),
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 14,
+                                    height: 14,
+                                    decoration: BoxDecoration(
+                                      color: familyState.colorFor(_activeFamilyFilterId),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      'Nucleo selezionato: ${_activeFamilyFilterName.trim().isEmpty ? _activeFamilyFilterId : _activeFamilyFilterName.trim()}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+                                    ),
+                                  ),
+                                  TextButton(
+                                    onPressed: _resetTemporaryDashboardState,
+                                    child: const Text('Rimuovi filtro'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 18),
                       ],
                     );
@@ -4383,12 +4542,22 @@ class _DashboardPageState extends State<DashboardPage> {
                                               child: Row(
                                                 children: [
                                                   if (item.familyId.isNotEmpty || item.familyName.trim().isNotEmpty) ...[
-                                                    Container(
-                                                      width: 14,
-                                                      height: 14,
-                                                      decoration: BoxDecoration(
-                                                        color: FamilyGroupColorUtils.colorForIndex(item.familyColorIndex),
-                                                        borderRadius: BorderRadius.circular(4),
+                                                    Tooltip(
+                                                      message: 'Mostra solo questo nucleo familiare',
+                                                      child: InkWell(
+                                                        borderRadius: BorderRadius.circular(5),
+                                                        onTap: () => _selectFamilyFilterFromSummary(item),
+                                                        child: Container(
+                                                          width: 18,
+                                                          height: 18,
+                                                          padding: const EdgeInsets.all(2),
+                                                          child: Container(
+                                                            decoration: BoxDecoration(
+                                                              color: FamilyGroupColorUtils.colorForIndex(item.familyColorIndex),
+                                                              borderRadius: BorderRadius.circular(4),
+                                                            ),
+                                                          ),
+                                                        ),
                                                       ),
                                                     ),
                                                     const SizedBox(width: 8),
