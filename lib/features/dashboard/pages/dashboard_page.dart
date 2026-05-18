@@ -98,6 +98,10 @@ class _DashboardPageState extends State<DashboardPage> {
   static const Duration _inactiveFilterResetDelay = Duration(minutes: 2);
   static const Duration _userRequestRefreshDebounceDelay = Duration(milliseconds: 450);
   static const int _maxMultiEntryItems = 20;
+  static const int _maxDashboardSearchFamilyIds = 5;
+  static const int _maxDashboardSearchFamilyMemberLookups = 10;
+  static const int _maxDashboardSearchFamilyMembersPerFamily = 25;
+  static const int _maxDashboardSearchFamilyMemberIndexReads = 50;
 
   @override
   void initState() {
@@ -932,7 +936,8 @@ class _DashboardPageState extends State<DashboardPage> {
     final List<_PatientDashboardSummary> summaries = indexRows
         .where((PatientDashboardIndex item) =>
             !_locallyDeletedPatientFiscalCodes.contains(_normalizeFiscalCode(item.fiscalCode)))
-        .map(_summaryFromIndex)
+        .map((PatientDashboardIndex item) =>
+            _summaryFromIndex(item, indexLoadResult.familyByMemberFiscalCode))
         .where(_matchesActiveIndexFilters)
         .toList();
 
@@ -941,7 +946,7 @@ class _DashboardPageState extends State<DashboardPage> {
     return _DashboardData(
       summaries: summaries,
       doctorsCatalog: const <String>[],
-      families: const <FamilyGroup>[],
+      families: indexLoadResult.families,
       totals: _dashboardTotals,
       expandedFamilyCfs: indexLoadResult.expandedFamilyCfs,
     );
@@ -957,15 +962,28 @@ class _DashboardPageState extends State<DashboardPage> {
           .toSet()
           .toList()
         ..sort();
-      final List<PatientDashboardIndex> expandedRows = await _patientDashboardIndexRepository.getByFamilyIds(
-        familyIds,
-        maxFamilyIds: 5,
-        limitPerFamily: 10,
+      final _DashboardSearchFamilyExpansion familyExpansion =
+          await _resolveDashboardSearchFamilyExpansion(directRows, familyIds);
+      final List<PatientDashboardIndex> expandedRowsByFamilyId =
+          await _patientDashboardIndexRepository.getByFamilyIds(
+        familyExpansion.unresolvedFamilyIds,
+        maxFamilyIds: _maxDashboardSearchFamilyIds,
+        limitPerFamily: _maxDashboardSearchFamilyMembersPerFamily,
       );
+      final List<PatientDashboardIndex> expandedRowsByMemberCode =
+          await _patientDashboardIndexRepository.getByFiscalCodes(
+        familyExpansion.memberFiscalCodes,
+        maxFiscalCodes: _maxDashboardSearchFamilyMemberIndexReads,
+      );
+      final List<PatientDashboardIndex> expandedRows = <PatientDashboardIndex>[
+        ...expandedRowsByFamilyId,
+        ...expandedRowsByMemberCode,
+      ];
       final Set<String> expandedFamilyCfs = expandedRows
           .map((PatientDashboardIndex item) => _normalizeFiscalCode(item.fiscalCode))
           .where((String cf) => cf.isNotEmpty)
-          .toSet();
+          .toSet()
+        ..addAll(familyExpansion.memberFiscalCodes.map(_normalizeFiscalCode).where((String cf) => cf.isNotEmpty));
       final Map<String, PatientDashboardIndex> mergedByCf = <String, PatientDashboardIndex>{};
       for (final PatientDashboardIndex item in <PatientDashboardIndex>[...directRows, ...expandedRows]) {
         final String cf = _normalizeFiscalCode(item.fiscalCode);
@@ -977,6 +995,8 @@ class _DashboardPageState extends State<DashboardPage> {
       return _DashboardIndexLoadResult(
         rows: mergedByCf.values.toList(),
         expandedFamilyCfs: expandedFamilyCfs,
+        families: familyExpansion.families,
+        familyByMemberFiscalCode: familyExpansion.familyByMemberFiscalCode,
       );
     }
 
@@ -1129,7 +1149,7 @@ class _DashboardPageState extends State<DashboardPage> {
               familyId: '',
               familyName: '',
             )
-          : _summaryFromIndex(index);
+          : _summaryFromIndex(index, const <String, FamilyGroup>{});
       summaries.add(
         base.copyWith(
           imports: matchedImportsByCf[cf] ?? base.imports,
@@ -1285,8 +1305,98 @@ class _DashboardPageState extends State<DashboardPage> {
     return true;
   }
 
-  _PatientDashboardSummary _summaryFromIndex(PatientDashboardIndex item) {
-    return _PatientDashboardSummary.fromIndex(item);
+  Future<_DashboardSearchFamilyExpansion> _resolveDashboardSearchFamilyExpansion(
+    List<PatientDashboardIndex> directRows,
+    List<String> directFamilyIds,
+  ) async {
+    final Map<String, FamilyGroup> familiesById = <String, FamilyGroup>{};
+    final Set<String> unresolvedFamilyIds = <String>{};
+
+    for (final String familyId in directFamilyIds.take(_maxDashboardSearchFamilyIds)) {
+      final FamilyGroup? family = await _familyGroupsRepository.getFamilyById(familyId);
+      if (family == null || family.id.trim().isEmpty) {
+        unresolvedFamilyIds.add(familyId);
+        continue;
+      }
+      familiesById[family.id] = family;
+    }
+
+    final Set<String> coveredFiscalCodes = <String>{};
+    for (final FamilyGroup family in familiesById.values) {
+      coveredFiscalCodes.addAll(family.memberFiscalCodes.map(_normalizeFiscalCode));
+    }
+
+    final List<String> directFiscalCodes = directRows
+        .map((PatientDashboardIndex item) => _normalizeFiscalCode(item.fiscalCode))
+        .where((String cf) => cf.isNotEmpty && !coveredFiscalCodes.contains(cf))
+        .toSet()
+        .toList()
+      ..sort();
+
+    for (final String fiscalCode in directFiscalCodes.take(_maxDashboardSearchFamilyMemberLookups)) {
+      if (coveredFiscalCodes.contains(fiscalCode)) {
+        continue;
+      }
+      final FamilyGroup? family = await _familyGroupsRepository.findFamilyByMemberFiscalCode(fiscalCode);
+      if (family == null || family.id.trim().isEmpty) {
+        continue;
+      }
+      familiesById[family.id] = family;
+      coveredFiscalCodes.addAll(family.memberFiscalCodes.map(_normalizeFiscalCode));
+    }
+
+    final List<FamilyGroup> families = familiesById.values.toList()
+      ..sort((FamilyGroup a, FamilyGroup b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final Map<String, FamilyGroup> familyByMemberFiscalCode = <String, FamilyGroup>{};
+    final List<String> memberFiscalCodes = <String>[];
+
+    for (final FamilyGroup family in families.take(_maxDashboardSearchFamilyIds)) {
+      final List<String> familyMembers = family.memberFiscalCodes
+          .map(_normalizeFiscalCode)
+          .where((String cf) => cf.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
+      for (final String fiscalCode in familyMembers.take(_maxDashboardSearchFamilyMembersPerFamily)) {
+        familyByMemberFiscalCode[fiscalCode] = family;
+        if (memberFiscalCodes.length >= _maxDashboardSearchFamilyMemberIndexReads) {
+          continue;
+        }
+        if (!memberFiscalCodes.contains(fiscalCode)) {
+          memberFiscalCodes.add(fiscalCode);
+        }
+      }
+    }
+
+    return _DashboardSearchFamilyExpansion(
+      families: families,
+      unresolvedFamilyIds: unresolvedFamilyIds.toList()..sort(),
+      memberFiscalCodes: memberFiscalCodes,
+      familyByMemberFiscalCode: familyByMemberFiscalCode,
+    );
+  }
+
+  _PatientDashboardSummary _summaryFromIndex(
+    PatientDashboardIndex item,
+    Map<String, FamilyGroup> familyByMemberFiscalCode,
+  ) {
+    final _PatientDashboardSummary base = _PatientDashboardSummary.fromIndex(item);
+    if (base.familyId.trim().isNotEmpty && base.familyName.trim().isNotEmpty) {
+      return base;
+    }
+    final String fiscalCode = _normalizeFiscalCode(item.fiscalCode);
+    if (fiscalCode.isEmpty) {
+      return base;
+    }
+    final FamilyGroup? family = familyByMemberFiscalCode[fiscalCode];
+    if (family == null || family.id.trim().isEmpty) {
+      return base;
+    }
+    return base.copyWith(
+      familyId: base.familyId.trim().isNotEmpty ? base.familyId : family.id,
+      familyName: base.familyName.trim().isNotEmpty ? base.familyName : family.name.trim(),
+      familyColorIndex: family.colorIndex,
+    );
   }
 
   bool _matchesPatientSearch(Patient patient, String query) {
@@ -3329,7 +3439,7 @@ class _DashboardPageState extends State<DashboardPage> {
         }
         final Map<String, _PatientDashboardSummary> nextByCf = <String, _PatientDashboardSummary>{};
         for (final PatientDashboardIndex row in prefixRows) {
-          final _PatientDashboardSummary summary = _summaryFromIndex(row);
+          final _PatientDashboardSummary summary = _summaryFromIndex(row, const <String, FamilyGroup>{});
           final String cf = PatientInputNormalizer.normalizeFiscalCode(summary.patient.fiscalCode);
           if (cf.isEmpty || isTemporaryPatientKey(cf) || _locallyDeletedPatientFiscalCodes.contains(cf)) continue;
           nextByCf.putIfAbsent(cf, () => summary);
@@ -3341,7 +3451,7 @@ class _DashboardPageState extends State<DashboardPage> {
             return;
           }
           if (exactRow != null && !_locallyDeletedPatientFiscalCodes.contains(normalizedCf)) {
-            final _PatientDashboardSummary exactSummary = _summaryFromIndex(exactRow);
+            final _PatientDashboardSummary exactSummary = _summaryFromIndex(exactRow, const <String, FamilyGroup>{});
             nextByCf[PatientInputNormalizer.normalizeFiscalCode(exactSummary.patient.fiscalCode)] = exactSummary;
           }
         }
@@ -4856,10 +4966,28 @@ class _DashboardData {
 class _DashboardIndexLoadResult {
   final List<PatientDashboardIndex> rows;
   final Set<String> expandedFamilyCfs;
+  final List<FamilyGroup> families;
+  final Map<String, FamilyGroup> familyByMemberFiscalCode;
 
   const _DashboardIndexLoadResult({
     required this.rows,
     this.expandedFamilyCfs = const <String>{},
+    this.families = const <FamilyGroup>[],
+    this.familyByMemberFiscalCode = const <String, FamilyGroup>{},
+  });
+}
+
+class _DashboardSearchFamilyExpansion {
+  final List<FamilyGroup> families;
+  final List<String> unresolvedFamilyIds;
+  final List<String> memberFiscalCodes;
+  final Map<String, FamilyGroup> familyByMemberFiscalCode;
+
+  const _DashboardSearchFamilyExpansion({
+    required this.families,
+    required this.unresolvedFamilyIds,
+    required this.memberFiscalCodes,
+    required this.familyByMemberFiscalCode,
   });
 }
 
