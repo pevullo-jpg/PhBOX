@@ -1,5 +1,8 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 import '../../core/constants/app_constants.dart';
 import '../datasources/firestore_datasource.dart';
+import '../datasources/firestore_firebase_datasource.dart';
 import '../models/patient_dashboard_index.dart';
 
 class PatientDashboardIndexRepository {
@@ -151,6 +154,72 @@ class PatientDashboardIndexRepository {
     return datasource.patchDocument(
       collectionPath: AppCollections.patientDashboardIndex,
       documentId: cf,
+      data: data,
+    );
+  }
+
+
+  Future<void> patchFamilyMetadata({
+    required String fiscalCode,
+    required String familyId,
+    required String familyName,
+    required int familyColorIndex,
+  }) async {
+    final String cf = fiscalCode.trim().toUpperCase();
+    if (cf.isEmpty) return;
+    await _updateExistingIndexDocument(
+      documentId: cf,
+      data: <String, dynamic>{
+        'fiscalCode': cf,
+        'familyId': familyId.trim(),
+        'familyName': familyName.trim(),
+        'familyColorIndex': familyColorIndex < 0 ? 0 : familyColorIndex,
+        'updatedAt': DateTime.now().toIso8601String(),
+      },
+    );
+  }
+
+  Future<void> clearFamilyMetadata(String fiscalCode) async {
+    final String cf = fiscalCode.trim().toUpperCase();
+    if (cf.isEmpty) return;
+    await _updateExistingIndexDocument(
+      documentId: cf,
+      data: <String, dynamic>{
+        'fiscalCode': cf,
+        'familyId': '',
+        'familyName': '',
+        'familyColorIndex': 0,
+        'updatedAt': DateTime.now().toIso8601String(),
+      },
+    );
+  }
+
+  Future<void> _updateExistingIndexDocument({
+    required String documentId,
+    required Map<String, dynamic> data,
+  }) async {
+    final FirestoreDatasource currentDatasource = datasource;
+    if (currentDatasource is FirestoreFirebaseDatasource) {
+      try {
+        await currentDatasource.firestore
+            .collection(AppCollections.patientDashboardIndex)
+            .doc(documentId)
+            .update(data);
+      } on FirebaseException catch (e) {
+        if (e.code == 'not-found') return;
+        rethrow;
+      }
+      return;
+    }
+
+    final Map<String, dynamic>? existing = await datasource.getDocument(
+      collectionPath: AppCollections.patientDashboardIndex,
+      documentId: documentId,
+    );
+    if (existing == null) return;
+    await datasource.patchDocument(
+      collectionPath: AppCollections.patientDashboardIndex,
+      documentId: documentId,
       data: data,
     );
   }
