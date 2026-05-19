@@ -7,6 +7,7 @@ import '../../../data/models/family_group.dart';
 import '../../../data/models/patient.dart';
 import '../../../data/repositories/family_groups_repository.dart';
 import '../../../data/repositories/patients_repository.dart';
+import '../../../data/repositories/patient_dashboard_index_repository.dart';
 import '../../../shared/navigation/app_navigation.dart';
 import '../../../shared/widgets/floating_page_menu.dart';
 import '../../../theme/app_theme.dart';
@@ -29,6 +30,9 @@ class _FamiliesPageState extends State<FamiliesPage> {
 
   late final FamilyGroupsRepository _familiesRepository;
   late final PatientsRepository _patientsRepository;
+  late final PatientDashboardIndexRepository _patientDashboardIndexRepository;
+
+  static const int _maxFamilyIndexFanoutMembers = 25;
   Future<_FamiliesData>? _future;
   String _message = '';
 
@@ -39,6 +43,7 @@ class _FamiliesPageState extends State<FamiliesPage> {
     final datasource = FirestoreFirebaseDatasource(FirebaseFirestore.instance);
     _familiesRepository = FamilyGroupsRepository(datasource: datasource);
     _patientsRepository = PatientsRepository(datasource: datasource);
+    _patientDashboardIndexRepository = PatientDashboardIndexRepository(datasource: datasource);
     _future = _load();
   }
 
@@ -54,6 +59,44 @@ class _FamiliesPageState extends State<FamiliesPage> {
       if (message != null) _message = message;
       _future = _load();
     });
+  }
+
+  List<String> _normalizedUniqueFamilyMemberCodes(Iterable<String> fiscalCodes) {
+    return fiscalCodes
+        .map((String item) => item.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), ''))
+        .where((String item) => item.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+  }
+
+  bool _isFamilyIndexFanoutWithinLimit(Iterable<String> fiscalCodes) {
+    return _normalizedUniqueFamilyMemberCodes(fiscalCodes).length <= _maxFamilyIndexFanoutMembers;
+  }
+
+  Future<void> _patchFamilyIndexForMembers(FamilyGroup family) async {
+    final List<String> members = _normalizedUniqueFamilyMemberCodes(family.memberFiscalCodes);
+    if (!_isFamilyIndexFanoutWithinLimit(members)) {
+      throw StateError('FAMILY_INDEX_FANOUT_LIMIT_EXCEEDED: ${members.length} > $_maxFamilyIndexFanoutMembers');
+    }
+    for (final String fiscalCode in members) {
+      await _patientDashboardIndexRepository.patchFamilyMetadata(
+        fiscalCode: fiscalCode,
+        familyId: family.id,
+        familyName: family.name,
+        familyColorIndex: family.colorIndex,
+      );
+    }
+  }
+
+  Future<void> _clearFamilyIndexForMembers(Iterable<String> fiscalCodes) async {
+    final List<String> members = _normalizedUniqueFamilyMemberCodes(fiscalCodes);
+    if (!_isFamilyIndexFanoutWithinLimit(members)) {
+      throw StateError('FAMILY_INDEX_FANOUT_LIMIT_EXCEEDED: ${members.length} > $_maxFamilyIndexFanoutMembers');
+    }
+    for (final String fiscalCode in members) {
+      await _patientDashboardIndexRepository.clearFamilyMetadata(fiscalCode);
+    }
   }
 
   Future<void> _openFamilyDialog({FamilyGroup? initial, required List<Patient> patients}) async {
@@ -236,9 +279,36 @@ class _FamiliesPageState extends State<FamiliesPage> {
                       createdAt: initial?.createdAt ?? DateTime.now(),
                       updatedAt: DateTime.now(),
                     );
-                    await _familiesRepository.saveFamily(family);
+                    try {
+                      await _familiesRepository.saveFamily(family);
+                    } catch (e) {
+                      setLocalState(() => errorText = 'Errore salvataggio famiglia: $e');
+                      return;
+                    }
+                    String syncMessage = 'Famiglia salvata.';
+                    final List<String> syncErrors = <String>[];
+                    final Set<String> previousMembers = _normalizedUniqueFamilyMemberCodes(
+                      initial?.memberFiscalCodes ?? const <String>[],
+                    ).toSet();
+                    final Set<String> nextMembers = _normalizedUniqueFamilyMemberCodes(family.memberFiscalCodes).toSet();
+                    final List<String> removedMembers = previousMembers.difference(nextMembers).toList()..sort();
+                    if (removedMembers.isNotEmpty) {
+                      try {
+                        await _clearFamilyIndexForMembers(removedMembers);
+                      } catch (e) {
+                        syncErrors.add('rimozione badge: $e');
+                      }
+                    }
+                    try {
+                      await _patchFamilyIndexForMembers(family);
+                    } catch (e) {
+                      syncErrors.add('aggiornamento badge: $e');
+                    }
+                    if (syncErrors.isNotEmpty) {
+                      syncMessage = 'Famiglia salvata. Badge Home parzialmente non riallineati: ${syncErrors.join('; ')}';
+                    }
                     if (mounted) Navigator.of(context).pop();
-                    _refresh('Famiglia salvata.');
+                    _refresh(syncMessage);
                   },
                   child: const Text('Salva'),
                 ),
@@ -251,8 +321,14 @@ class _FamiliesPageState extends State<FamiliesPage> {
   }
 
   Future<void> _deleteFamily(FamilyGroup family) async {
+    String syncMessage = 'Famiglia eliminata.';
     await _familiesRepository.deleteFamily(family.id);
-    _refresh('Famiglia eliminata.');
+    try {
+      await _clearFamilyIndexForMembers(family.memberFiscalCodes);
+    } catch (e) {
+      syncMessage = 'Famiglia eliminata. Badge Home non riallineati: $e';
+    }
+    _refresh(syncMessage);
   }
 
   Color _familyColor(int index) => FamilyGroupColorUtils.colorForIndex(index);
