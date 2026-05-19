@@ -4220,6 +4220,14 @@ class _DashboardPageState extends State<DashboardPage> {
         });
   }
 
+  double _dashboardContentSideInset(double maxWidth) {
+    return math.min(220, math.max(24, maxWidth * 0.12));
+  }
+
+  double _dashboardContentWidth(double maxWidth) {
+    return math.max(0, maxWidth - (_dashboardContentSideInset(maxWidth) * 2));
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<_DashboardData>(
@@ -4246,11 +4254,14 @@ class _DashboardPageState extends State<DashboardPage> {
                 ],
                 LayoutBuilder(
                   builder: (context, constraints) {
-                    const double cardWidth = 220;
                     const double cardSpacing = 12;
-                    final double cardsBlockWidth = constraints.maxWidth >= ((cardWidth * 6) + (cardSpacing * 5))
-                        ? ((cardWidth * 6) + (cardSpacing * 5))
-                        : constraints.maxWidth;
+                    const double minSummaryCardWidth = 160;
+                    final double cardsBlockWidth = _dashboardContentWidth(constraints.maxWidth);
+                    final bool summaryCardsFitSingleRow =
+                        cardsBlockWidth >= ((minSummaryCardWidth * 6) + (cardSpacing * 5));
+                    final double summaryCardWidth = summaryCardsFitSingleRow
+                        ? ((cardsBlockWidth - (cardSpacing * 5)) / 6)
+                        : math.min(220, cardsBlockWidth);
                     return Column(
                       children: [
                         const SizedBox(height: 10),
@@ -4258,11 +4269,12 @@ class _DashboardPageState extends State<DashboardPage> {
                           child: SizedBox(
                             width: cardsBlockWidth,
                             child: Wrap(
-                              alignment: WrapAlignment.center,
+                              alignment: WrapAlignment.start,
                               spacing: cardSpacing,
                               runSpacing: cardSpacing,
                               children: [
                                 _SummaryCard(
+                                  width: summaryCardWidth,
                                   title: 'Ricette',
                                   value: totals.recipeCount.toString(),
                                   icon: Icons.receipt_long_outlined,
@@ -4271,6 +4283,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   onTap: () => _toggleCardFilter(_DashboardCardFilter.ricette),
                                 ),
                                 _SummaryCard(
+                                  width: summaryCardWidth,
                                   title: 'Totale DPC',
                                   value: totals.dpcCount.toString(),
                                   icon: Icons.local_shipping_outlined,
@@ -4279,6 +4292,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   onTap: () => _toggleCardFilter(_DashboardCardFilter.dpc),
                                 ),
                                 _SummaryCard(
+                                  width: summaryCardWidth,
                                   title: 'Debiti',
                                   value: '€ ${totals.debtAmount.toStringAsFixed(2)}',
                                   icon: Icons.euro_outlined,
@@ -4287,6 +4301,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   onTap: () => _toggleCardFilter(_DashboardCardFilter.debiti),
                                 ),
                                 _SummaryCard(
+                                  width: summaryCardWidth,
                                   title: 'Anticipi',
                                   value: totals.advanceCount.toString(),
                                   icon: Icons.payments_outlined,
@@ -4295,6 +4310,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   onTap: () => _toggleCardFilter(_DashboardCardFilter.anticipi),
                                 ),
                                 _SummaryCard(
+                                  width: summaryCardWidth,
                                   title: 'Prenotazioni',
                                   value: totals.bookingCount.toString(),
                                   icon: Icons.event_note_outlined,
@@ -4303,6 +4319,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   onTap: () => _toggleCardFilter(_DashboardCardFilter.prenotazioni),
                                 ),
                                 _SummaryCard(
+                                  width: summaryCardWidth,
                                   title: 'In scadenza',
                                   value: totals.expiringCount.toString(),
                                   icon: Icons.warning_amber_rounded,
@@ -4486,7 +4503,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   Expanded(
                     child: LayoutBuilder(
                       builder: (context, tableConstraints) {
-                        final double sideInset = math.min(220, math.max(24, tableConstraints.maxWidth * 0.12));
+                        final double sideInset = _dashboardContentSideInset(tableConstraints.maxWidth);
                         return Padding(
                           padding: EdgeInsets.symmetric(horizontal: sideInset),
                           child: Column(
@@ -5541,6 +5558,7 @@ class _DashboardFamilyState {
 }
 
 class _SummaryCard extends StatelessWidget {
+  final double width;
   final String title;
   final String value;
   final IconData icon;
@@ -5549,6 +5567,7 @@ class _SummaryCard extends StatelessWidget {
   final VoidCallback? onTap;
 
   const _SummaryCard({
+    required this.width,
     required this.title,
     required this.value,
     required this.icon,
@@ -5571,7 +5590,7 @@ class _SummaryCard extends StatelessWidget {
     final Color iconColor = isSelected ? accent : const Color(0xFF101010);
     final Color borderColor = isSelected ? accent.withOpacity(0.92) : accent;
     final Widget card = Container(
-      width: 220,
+      width: width,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
