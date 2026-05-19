@@ -104,6 +104,7 @@ class _DashboardPageState extends State<DashboardPage> {
   static const int _maxDashboardSearchFamilyMemberLookups = 10;
   static const int _maxDashboardSearchFamilyMembersPerFamily = 25;
   static const int _maxDashboardSearchFamilyMemberIndexReads = 50;
+  static const int _maxExpiringImportVisibilityValidationReads = 80;
 
   @override
   void initState() {
@@ -494,9 +495,13 @@ class _DashboardPageState extends State<DashboardPage> {
       final bool snapshotMatchesTotals = snapshot != null &&
           snapshot.totalExpiringCount == totals.expiringCount &&
           snapshotSignature == expectedSnapshotSignature;
+      final List<DashboardExpiringRecipe> snapshotItems = snapshot?.items ?? const <DashboardExpiringRecipe>[];
       final List<DashboardExpiringRecipe> visibleItems = snapshotMatchesTotals
-          ? await _filterPendingExpiringRecipes(snapshot.items)
+          ? await _filterPendingExpiringRecipes(snapshotItems)
           : const <DashboardExpiringRecipe>[];
+      final int remoteVisibilityDelta = snapshotMatchesTotals
+          ? _visibleExpiringPatientCount(visibleItems) - _visibleExpiringPatientCount(snapshotItems)
+          : 0;
       if (!mounted) {
         return;
       }
@@ -529,10 +534,18 @@ class _DashboardPageState extends State<DashboardPage> {
               'Indice ricette in scadenza in aggiornamento. Premi aggiorna se il dato non si aggiorna automaticamente.';
           return;
         }
+        if (remoteVisibilityDelta != 0) {
+          _lastBackendExpiringPatientCount ??= totals.expiringCount;
+          _pendingExpiringPatientCountDelta = remoteVisibilityDelta;
+          _dashboardTotals = _applyPendingArchiveTotalsOverlay(totals);
+        }
+        final int visibleExpiringTotal = _clampDashboardTotalInt(
+          totals.expiringCount + _pendingExpiringPatientCountDelta,
+        );
         _expiringRecipes = visibleItems;
         _expiringRecipesSignature = signature;
         _expiringRecipesLoading = false;
-        _expiringRecipesMessage = visibleItems.isEmpty && totals.expiringCount > 0
+        _expiringRecipesMessage = visibleItems.isEmpty && visibleExpiringTotal > 0
             ? 'Scadenze segnalate dai totali, ma nessuna ricetta visibile nell’indice dedicato.'
             : '';
       });
@@ -591,12 +604,61 @@ class _DashboardPageState extends State<DashboardPage> {
       return const <DashboardExpiringRecipe>[];
     }
     final Map<String, PendingPdfDeleteEntry> pendingByImportId = await loadPendingPdfDeletesByImportId();
-    if (pendingByImportId.isEmpty) {
-      return items;
+    final List<DashboardExpiringRecipe> locallyVisibleItems = pendingByImportId.isEmpty
+        ? items
+        : items.where((DashboardExpiringRecipe item) {
+            return !pendingByImportId.containsKey(item.importId);
+          }).toList();
+    return _filterHiddenRemoteExpiringRecipes(locallyVisibleItems);
+  }
+
+  Future<List<DashboardExpiringRecipe>> _filterHiddenRemoteExpiringRecipes(
+    List<DashboardExpiringRecipe> items,
+  ) async {
+    if (items.isEmpty) {
+      return const <DashboardExpiringRecipe>[];
     }
-    return items.where((DashboardExpiringRecipe item) {
-      return !pendingByImportId.containsKey(item.importId);
-    }).toList();
+    final List<DashboardExpiringRecipe> visibleItems = <DashboardExpiringRecipe>[];
+    final Map<String, bool> visibleByImportId = <String, bool>{};
+    int validationReads = 0;
+
+    for (final DashboardExpiringRecipe item in items) {
+      final String importId = item.importId.trim();
+      if (importId.isEmpty) {
+        visibleItems.add(item);
+        continue;
+      }
+
+      final bool? cachedVisible = visibleByImportId[importId];
+      if (cachedVisible != null) {
+        if (cachedVisible) {
+          visibleItems.add(item);
+        }
+        continue;
+      }
+
+      if (validationReads >= _maxExpiringImportVisibilityValidationReads) {
+        visibleItems.add(item);
+        continue;
+      }
+
+      validationReads += 1;
+      DrivePdfImport? currentImport;
+      try {
+        currentImport = await _drivePdfImportsRepository.getImportById(importId);
+      } catch (_) {
+        visibleByImportId[importId] = true;
+        visibleItems.add(item);
+        continue;
+      }
+      final bool isVisible = currentImport != null && !currentImport.isHiddenFromFrontend;
+      visibleByImportId[importId] = isVisible;
+      if (isVisible) {
+        visibleItems.add(item);
+      }
+    }
+
+    return visibleItems;
   }
 
   int _visibleExpiringPatientCount(List<DashboardExpiringRecipe> items) {
