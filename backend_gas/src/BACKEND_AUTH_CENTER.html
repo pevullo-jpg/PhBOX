@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f7fb;
+        --card: #ffffff;
+        --line: #d9dfeb;
+        --text: #162033;
+        --muted: #61708a;
+        --accent: #1f6feb;
+        --danger: #c62828;
+        --warning: #b26a00;
+        --ok: #18794e;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 Arial, sans-serif; }
+      .wrap { max-width: 860px; margin: 0 auto; padding: 24px; }
+      .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px; box-shadow: 0 8px 24px rgba(18, 32, 51, 0.08); }
+      h1 { margin: 0 0 10px; font-size: 26px; }
+      h2 { margin: 20px 0 10px; font-size: 17px; }
+      p { margin: 8px 0; }
+      .muted { color: var(--muted); }
+      .status { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 8px 12px; font-weight: 800; margin: 12px 0; }
+      .status.ok { color: var(--ok); background: #e7f6ee; }
+      .status.auth_required, .status.wrong_account, .status.config_required, .status.error { color: var(--danger); background: #fdeaea; }
+      .status.trigger_required, .status.checking { color: var(--warning); background: #fff4dd; }
+      .actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 18px 0; }
+      button { border: 0; border-radius: 12px; padding: 13px 16px; font: inherit; font-weight: 800; cursor: pointer; }
+      .primary { background: var(--accent); color: #fff; }
+      .secondary { background: #e8eefc; color: var(--text); }
+      .danger { background: #fdeaea; color: var(--danger); }
+      .steps { margin: 12px 0; padding-left: 20px; }
+      .steps li { margin: 8px 0; }
+      .box { background: #f8fafc; border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-top: 12px; }
+      .kv { display: grid; grid-template-columns: 210px 1fr; gap: 6px 12px; font-size: 13px; }
+      .label { color: var(--muted); font-weight: 700; }
+      pre { white-space: pre-wrap; word-break: break-word; background: #0f172a; color: #e5e7eb; border-radius: 14px; padding: 14px; max-height: 260px; overflow: auto; }
+      .loading { opacity: 0.65; pointer-events: none; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap" id="app">
+      <section class="card">
+        <h1>PhBOX Backend Authorization Center</h1>
+        <p class="muted">Pagina guidata per autorizzare Gmail, Drive, Firestore e trigger backend senza usare la console tecnica.</p>
+        <div id="status" class="status checking">CONTROLLO IN CORSO</div>
+
+        <div id="message" class="box">Caricamento stato backend...</div>
+
+        <h2>Cosa devi fare</h2>
+        <ol class="steps">
+          <li>Apri questa pagina con l’account Google operativo della farmacia.</li>
+          <li>Premi <strong>Verifica / autorizza permessi</strong>.</li>
+          <li>Se Google mostra una richiesta di consenso, accetta i permessi.</li>
+          <li>Quando lo stato diventa verde, torna in PhBOX.</li>
+        </ol>
+
+        <div class="actions">
+          <button class="primary" onclick="verifyAuth()">Verifica / autorizza permessi</button>
+          <button class="secondary" onclick="repairTrigger()">Ripara trigger backend</button>
+          <button class="secondary" onclick="reloadStatus()">Aggiorna stato</button>
+        </div>
+
+        <h2>Account</h2>
+        <div class="box kv">
+          <div class="label">Account richiesto</div><div id="expectedEmail">-</div>
+          <div class="label">Account esecutore</div><div id="executingEmail">-</div>
+          <div class="label">Trigger</div><div id="triggerInfo">-</div>
+          <div class="label">Ultimo controllo</div><div id="checkedAt">-</div>
+        </div>
+
+        <h2>Dettaglio tecnico</h2>
+        <pre id="detail">{}</pre>
+      </section>
+    </div>
+
+    <script>
+      function setBusy(value) {
+        document.getElementById('app').classList.toggle('loading', !!value);
+      }
+      function setStatus(auth) {
+        auth = auth || {};
+        const status = auth.status || 'checking';
+        const el = document.getElementById('status');
+        el.className = 'status ' + status;
+        el.textContent = labelForStatus(status);
+        document.getElementById('message').textContent = auth.message || '';
+      }
+      function labelForStatus(status) {
+        switch (status) {
+          case 'ok': return 'VERDE — BACKEND OPERATIVO';
+          case 'auth_required': return 'ROSSO — AUTORIZZAZIONE RICHIESTA';
+          case 'wrong_account': return 'ROSSO — ACCOUNT GOOGLE SBAGLIATO';
+          case 'config_required': return 'ROSSO — CONFIGURAZIONE MANCANTE';
+          case 'trigger_required': return 'GIALLO — TRIGGER DA RIPARARE';
+          case 'error': return 'ROSSO — ERRORE BACKEND';
+          default: return 'GIALLO — CONTROLLO IN CORSO';
+        }
+      }
+      function applyResponse(data) {
+        const auth = (data && data.auth) || {};
+        const health = (data && data.health) || {};
+        const account = health.operationalAccount || {};
+        const trigger = health.trigger || {};
+        setStatus(auth);
+        document.getElementById('expectedEmail').textContent = account.expectedEmail || '-';
+        document.getElementById('executingEmail').textContent = account.executingEmail || '-';
+        document.getElementById('triggerInfo').textContent = trigger.ok ? 'OK' : ('KO - trigger trovati: ' + String(trigger.triggerCount || 0));
+        document.getElementById('checkedAt').textContent = data && data.checkedAt ? data.checkedAt : '-';
+        document.getElementById('detail').textContent = JSON.stringify(data || {}, null, 2);
+      }
+      function handleFailure(error) {
+        setStatus({ status: 'auth_required', message: error && error.message ? error.message : String(error) });
+        document.getElementById('detail').textContent = String(error && error.message ? error.message : error);
+      }
+      function reloadStatus() {
+        setBusy(true);
+        google.script.run
+          .withSuccessHandler(function(data) { setBusy(false); applyResponse(data); })
+          .withFailureHandler(function(error) { setBusy(false); handleFailure(error); })
+          .getPhboxBackendAuthCenterData();
+      }
+      function verifyAuth() {
+        setBusy(true);
+        google.script.run
+          .withSuccessHandler(function(data) { setBusy(false); applyResponse(data); })
+          .withFailureHandler(function(error) { setBusy(false); handleFailure(error); })
+          .runPhboxBackendAuthorizationCheck();
+      }
+      function repairTrigger() {
+        setBusy(true);
+        google.script.run
+          .withSuccessHandler(function(data) { setBusy(false); applyResponse(data); })
+          .withFailureHandler(function(error) { setBusy(false); handleFailure(error); })
+          .repairPhboxBackendMainTriggerFromAuthCenter();
+      }
+      reloadStatus();
+    </script>
+  </body>
+</html>
