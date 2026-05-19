@@ -4676,7 +4676,7 @@ class _DashboardPageState extends State<DashboardPage> {
         Container(
           padding: const EdgeInsets.only(right: 4),
           decoration: BoxDecoration(
-            color: AppColors.recipe.withOpacity(0.16),
+            color: AppColors.recipe.withOpacity(0.22),
             borderRadius: BorderRadius.circular(999),
           ),
           child: Row(
@@ -5562,14 +5562,14 @@ class _SummaryCard extends StatelessWidget {
     final Color surface = Color.lerp(
       AppColors.panel,
       accent,
-      isSelected ? 0.22 : 0.10,
+      isSelected ? 0.30 : 0.16,
     )!;
     final Color elevatedSurface = Color.lerp(
       AppColors.panelElevated,
       accent,
-      isSelected ? 0.16 : 0.06,
+      isSelected ? 0.24 : 0.11,
     )!;
-    final Color borderColor = isSelected ? accent : accent.withOpacity(0.42);
+    final Color borderColor = isSelected ? accent : accent.withOpacity(0.64);
     final Widget card = Container(
       width: 220,
       padding: const EdgeInsets.all(16),
@@ -5583,7 +5583,7 @@ class _SummaryCard extends StatelessWidget {
         border: Border.all(color: borderColor, width: isSelected ? 1.8 : 1.1),
         boxShadow: <BoxShadow>[
           BoxShadow(
-            color: isSelected ? accent.withOpacity(0.24) : Colors.black.withOpacity(0.20),
+            color: isSelected ? accent.withOpacity(0.30) : Colors.black.withOpacity(0.28),
             blurRadius: isSelected ? 26 : 18,
             offset: const Offset(0, 10),
           ),
@@ -5595,9 +5595,9 @@ class _SummaryCard extends StatelessWidget {
             width: 46,
             height: 46,
             decoration: BoxDecoration(
-              color: accent.withOpacity(isSelected ? 0.28 : 0.18),
+              color: accent.withOpacity(isSelected ? 0.38 : 0.26),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: accent.withOpacity(0.48)),
+              border: Border.all(color: accent.withOpacity(0.68)),
             ),
             child: Icon(icon, color: accent),
           ),
@@ -5726,9 +5726,9 @@ class _ReadOnlyFlagChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: Color.lerp(AppColors.panel, color, 0.26),
+        color: Color.lerp(AppColors.panel, color, 0.34),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: color.withOpacity(0.56)),
+        border: Border.all(color: color.withOpacity(0.72)),
       ),
       child: Text(
         label,
@@ -5782,9 +5782,9 @@ class _FlagChip extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color: Color.lerp(AppColors.panel, color, 0.26),
+            color: Color.lerp(AppColors.panel, color, 0.34),
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: color.withOpacity(0.56)),
+            border: Border.all(color: color.withOpacity(0.72)),
           ),
           child: Text(
             label,
