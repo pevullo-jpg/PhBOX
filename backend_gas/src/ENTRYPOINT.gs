@@ -197,6 +197,11 @@ async function runProtectedStage_(stageName, fn, cfg) {
       error: normalizeRuntimeErrorMessage_(e),
       kind: kind
     });
+    if (kind === 'authorization') {
+      try {
+        publishPhboxBackendAuthorizationFailure_(e, { stage: stageName, source: 'runProtectedStage' });
+      } catch (_) {}
+    }
     return {
       ok: false,
       error: normalizeRuntimeErrorMessage_(e),
