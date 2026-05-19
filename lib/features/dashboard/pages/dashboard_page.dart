@@ -4266,7 +4266,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   title: 'Ricette',
                                   value: totals.recipeCount.toString(),
                                   icon: Icons.receipt_long_outlined,
-                                  accent: AppColors.green,
+                                  accent: AppColors.recipe,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.ricette),
                                   onTap: () => _toggleCardFilter(_DashboardCardFilter.ricette),
                                 ),
@@ -4274,7 +4274,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   title: 'Totale DPC',
                                   value: totals.dpcCount.toString(),
                                   icon: Icons.local_shipping_outlined,
-                                  accent: AppColors.coral,
+                                  accent: AppColors.dpc,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.dpc),
                                   onTap: () => _toggleCardFilter(_DashboardCardFilter.dpc),
                                 ),
@@ -4282,7 +4282,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   title: 'Debiti',
                                   value: '€ ${totals.debtAmount.toStringAsFixed(2)}',
                                   icon: Icons.euro_outlined,
-                                  accent: AppColors.wine,
+                                  accent: AppColors.debt,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.debiti),
                                   onTap: () => _toggleCardFilter(_DashboardCardFilter.debiti),
                                 ),
@@ -4290,7 +4290,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   title: 'Anticipi',
                                   value: totals.advanceCount.toString(),
                                   icon: Icons.payments_outlined,
-                                  accent: AppColors.amber,
+                                  accent: AppColors.advance,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.anticipi),
                                   onTap: () => _toggleCardFilter(_DashboardCardFilter.anticipi),
                                 ),
@@ -4298,7 +4298,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   title: 'Prenotazioni',
                                   value: totals.bookingCount.toString(),
                                   icon: Icons.event_note_outlined,
-                                  accent: AppColors.yellow,
+                                  accent: AppColors.booking,
                                   isSelected: _activeCardFilters.contains(_DashboardCardFilter.prenotazioni),
                                   onTap: () => _toggleCardFilter(_DashboardCardFilter.prenotazioni),
                                 ),
@@ -4306,7 +4306,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   title: 'In scadenza',
                                   value: totals.expiringCount.toString(),
                                   icon: Icons.warning_amber_rounded,
-                                  accent: AppColors.coral,
+                                  accent: AppColors.expiry,
                                   isSelected: false,
                                   onTap: null,
                                 ),
@@ -4541,7 +4541,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                         color: item.hasExpiryAlert ? const Color(0x332A1B00) : AppColors.panel,
                                         borderRadius: BorderRadius.circular(18),
                                         border: Border.all(
-                                          color: item.hasExpiryAlert ? AppColors.amber : Colors.white10,
+                                          color: item.hasExpiryAlert ? AppColors.expiry : Colors.white10,
                                         ),
                                       ),
                                       child: Row(
@@ -4676,13 +4676,13 @@ class _DashboardPageState extends State<DashboardPage> {
         Container(
           padding: const EdgeInsets.only(right: 4),
           decoration: BoxDecoration(
-            color: AppColors.green,
+            color: AppColors.recipe.withOpacity(0.16),
             borderRadius: BorderRadius.circular(999),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _FlagChip(label: 'ricette ${item.recipeCount}', color: AppColors.green, onTap: () => _handleFlagTap(item, 'ricette')),
+              _FlagChip(label: 'ricette ${item.recipeCount}', color: AppColors.recipe, onTap: () => _handleFlagTap(item, 'ricette')),
               IconButton(
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 visualDensity: VisualDensity.compact,
@@ -4699,16 +4699,16 @@ class _DashboardPageState extends State<DashboardPage> {
       final int dpcCount = item.dpcCount > 0
           ? item.dpcCount
           : (item.dpcItems.isNotEmpty ? item.dpcItems.length : 1);
-      widgets.add(_FlagChip(label: 'DPC $dpcCount', color: AppColors.coral, onTap: () => _handleFlagTap(item, 'dpc')));
+      widgets.add(_FlagChip(label: 'DPC $dpcCount', color: AppColors.dpc, onTap: () => _handleFlagTap(item, 'dpc')));
     }
     if (item.hasDebt) {
-      widgets.add(_FlagChip(label: 'debiti € ${item.totalDebt.toStringAsFixed(2)}', color: AppColors.wine, onTap: () => _handleFlagTap(item, 'debiti')));
+      widgets.add(_FlagChip(label: 'debiti € ${item.totalDebt.toStringAsFixed(2)}', color: AppColors.debt, onTap: () => _handleFlagTap(item, 'debiti')));
     }
     if (item.hasAdvance) {
-      widgets.add(_FlagChip(label: 'anticipi ${item.advanceCount}', color: AppColors.amber, onTap: () => _handleFlagTap(item, 'anticipi')));
+      widgets.add(_FlagChip(label: 'anticipi ${item.advanceCount}', color: AppColors.advance, onTap: () => _handleFlagTap(item, 'anticipi')));
     }
     if (item.hasBooking) {
-      widgets.add(_FlagChip(label: 'prenotazioni ${item.bookingCount}', color: AppColors.yellow, onTap: () => _handleFlagTap(item, 'prenotazioni')));
+      widgets.add(_FlagChip(label: 'prenotazioni ${item.bookingCount}', color: AppColors.booking, onTap: () => _handleFlagTap(item, 'prenotazioni')));
     }
     return widgets;
   }
@@ -4783,9 +4783,9 @@ class _DashboardPageState extends State<DashboardPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
       decoration: BoxDecoration(
-        color: const Color(0x332A1B00),
+        color: AppColors.expiry.withOpacity(0.12),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.amber, width: 1.6),
+        border: Border.all(color: AppColors.expiry.withOpacity(0.72), width: 1.6),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -4853,10 +4853,10 @@ class _DashboardPageState extends State<DashboardPage> {
               children: [
                 _ReadOnlyFlagChip(
                   label: item.recipeCount == 1 ? 'in scadenza 1' : 'in scadenza ${item.recipeCount}',
-                  color: AppColors.amber,
+                  color: AppColors.expiry,
                 ),
-                if (item.hasDpc) const _ReadOnlyFlagChip(label: 'DPC', color: AppColors.coral),
-                _ReadOnlyFlagChip(label: item.expiryLabel, color: AppColors.wine),
+                if (item.hasDpc) const _ReadOnlyFlagChip(label: 'DPC', color: AppColors.dpc),
+                _ReadOnlyFlagChip(label: item.expiryLabel, color: AppColors.expiry),
               ],
             ),
           ),
@@ -5559,54 +5559,84 @@ class _SummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final Color surface = Color.lerp(
+      AppColors.panel,
+      accent,
+      isSelected ? 0.22 : 0.10,
+    )!;
+    final Color elevatedSurface = Color.lerp(
+      AppColors.panelElevated,
+      accent,
+      isSelected ? 0.16 : 0.06,
+    )!;
+    final Color borderColor = isSelected ? accent : accent.withOpacity(0.42);
     final Widget card = Container(
       width: 220,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: isSelected ? Colors.white : Colors.transparent,
-          width: 2,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[elevatedSurface, surface],
         ),
+        border: Border.all(color: borderColor, width: isSelected ? 1.8 : 1.1),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: isSelected ? accent.withOpacity(0.24) : Colors.black.withOpacity(0.20),
+            blurRadius: isSelected ? 26 : 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
       ),
       child: Row(
         children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.18),
-                  borderRadius: BorderRadius.circular(14),
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: accent.withOpacity(isSelected ? 0.28 : 0.18),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: accent.withOpacity(0.48)),
+            ),
+            child: Icon(icon, color: accent),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
-                child: Icon(icon, color: Colors.white),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      value,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900),
-                    ),
-                  ],
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
-              ),
+              ],
+            ),
+          ),
         ],
       ),
     );
     return Material(
-      color: accent,
+      color: Colors.transparent,
       borderRadius: BorderRadius.circular(24),
+      clipBehavior: Clip.antiAlias,
       child: onTap == null
           ? card
           : InkWell(
@@ -5696,12 +5726,17 @@ class _ReadOnlyFlagChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: color,
+        color: Color.lerp(AppColors.panel, color, 0.26),
         borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: color.withOpacity(0.56)),
       ),
       child: Text(
         label,
-        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5),
+        style: const TextStyle(
+          color: AppColors.textPrimary,
+          fontWeight: FontWeight.w800,
+          fontSize: 15.5,
+        ),
       ),
     );
   }
@@ -5737,18 +5772,28 @@ class _FlagChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
+    return Material(
+      color: Colors.transparent,
       borderRadius: BorderRadius.circular(18),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: Text(
-          label,
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Color.lerp(AppColors.panel, color, 0.26),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: color.withOpacity(0.56)),
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.w800,
+              fontSize: 15.5,
+            ),
+          ),
         ),
       ),
     );
