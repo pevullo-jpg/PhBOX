@@ -40,6 +40,21 @@ class DrivePdfImportsRepository {
     return items;
   }
 
+  Future<DrivePdfImport?> getImportById(String id) async {
+    final String normalized = id.trim();
+    if (normalized.isEmpty) {
+      return null;
+    }
+    final Map<String, dynamic>? map = await datasource.getDocument(
+      collectionPath: AppCollections.drivePdfImports,
+      documentId: normalized,
+    );
+    if (map == null) {
+      return null;
+    }
+    return DrivePdfImport.fromMap(map);
+  }
+
   Future<List<DrivePdfImport>> getImportsByPatient(
     String fiscalCode, {
     bool includeHidden = false,
