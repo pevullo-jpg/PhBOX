@@ -101,6 +101,7 @@ function checkPhboxBackendHealth_(options) {
   health.ok = !!(health.operationalAccount && health.operationalAccount.ok && health.authorizations && health.authorizations.ok && (!requireTrigger || (health.trigger && health.trigger.ok)));
   if (options.persist !== false) {
     writePhboxBackendHealthSnapshot_(health);
+    publishPhboxBackendAuthRuntimeSnapshot_(health, { source: 'health_check' });
   }
   return health;
 }
@@ -415,4 +416,174 @@ function normalizeRuntimeErrorMessage_(error) {
   if (typeof error === 'string') return error;
   if (error && error.message) return String(error.message);
   return String(error);
+}
+
+function publishPhboxBackendAuthRuntimeSnapshot_(health, options) {
+  options = options || {};
+  var state = buildPhboxBackendAuthState_(health || {});
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty('PHBOX_BACKEND_AUTH_LAST_JSON', JSON.stringify(state || {}));
+
+  var cfg = null;
+  try {
+    cfg = getPhboxConfig_();
+  } catch (e) {
+    return { ok: false, skipped: true, reason: 'config_unavailable', error: normalizeRuntimeErrorMessage_(e) };
+  }
+
+  if (!cfg || !cfg.firestoreProjectId || /^REPLACE_/i.test(String(cfg.firestoreProjectId))) {
+    return { ok: false, skipped: true, reason: 'firestore_project_not_configured' };
+  }
+
+  var patch = {
+    backendAuthStatus: state.status,
+    backendAuthRequired: !!state.authRequired,
+    backendAuthUrl: state.authUrl || '',
+    backendAuthLastCheckAt: state.checkedAt || new Date().toISOString(),
+    backendAuthErrorKind: state.errorKind || '',
+    backendAuthErrorMessage: state.message || '',
+    backendOperationalAccountEmail: state.expectedEmail || '',
+    backendExecutingAccountEmail: state.executingEmail || '',
+    backendAuthSource: String(options.source || '').trim() || 'backend'
+  };
+  if (state.status === 'ok') {
+    patch.backendAuthLastOkAt = state.checkedAt || new Date().toISOString();
+  }
+
+  try {
+    executeFirestoreCommit_(cfg, [buildFirestorePatchWrite_(cfg, 'phbox_runtime', 'main', patch, Object.keys(patch))]);
+    return { ok: true, document: 'phbox_runtime/main', state: state.status };
+  } catch (e) {
+    props.setProperty('PHBOX_BACKEND_AUTH_RUNTIME_SYNC_ERROR', normalizeRuntimeErrorMessage_(e));
+    return { ok: false, skipped: true, reason: 'firestore_write_failed', error: normalizeRuntimeErrorMessage_(e) };
+  }
+}
+
+function publishPhboxBackendAuthorizationFailure_(error, options) {
+  options = options || {};
+  var nowIso = new Date().toISOString();
+  var message = normalizeRuntimeErrorMessage_(error);
+  var kind = classifyRuntimeFailureKind_(error);
+  var health = {
+    ok: false,
+    checkedAt: nowIso,
+    operationalAccount: getPhboxOperationalAccountStatus_(),
+    authorizations: {
+      ok: false,
+      checkedAt: nowIso,
+      runtimeFailure: {
+        ok: false,
+        message: message,
+        detail: {
+          kind: kind,
+          stage: String(options.stage || '').trim()
+        }
+      }
+    },
+    trigger: getPhboxMainTriggerStatus_()
+  };
+  writePhboxBackendHealthSnapshot_(health);
+  return publishPhboxBackendAuthRuntimeSnapshot_(health, { source: String(options.source || '').trim() || 'runtime_failure' });
+}
+
+function buildPhboxBackendAuthState_(health) {
+  health = health || {};
+  var nowIso = health.checkedAt || new Date().toISOString();
+  var account = health.operationalAccount || {};
+  var auth = health.authorizations || {};
+  var trigger = health.trigger || {};
+  var expectedEmail = String(account.expectedEmail || readPhboxOperationalAccountEmail_() || '').trim().toLowerCase();
+  var executingEmail = String(account.executingEmail || getPhboxExecutingAccountEmail_() || '').trim().toLowerCase();
+  var authUrl = getPhboxBackendAuthorizationCenterUrl_();
+  var failure = firstPhboxBackendHealthFailure_(health);
+
+  var state = {
+    ok: !!health.ok,
+    status: 'ok',
+    authRequired: false,
+    checkedAt: nowIso,
+    expectedEmail: expectedEmail,
+    executingEmail: executingEmail,
+    authUrl: authUrl,
+    errorKind: '',
+    message: 'Backend operativo.'
+  };
+
+  if (account && account.ok === false) {
+    state.ok = false;
+    state.status = account.configured === false ? 'config_required' : 'wrong_account';
+    state.authRequired = false;
+    state.errorKind = state.status;
+    state.message = account.message || 'Account operativo backend non valido.';
+    return state;
+  }
+
+  if (failure) {
+    state.ok = false;
+    state.errorKind = failure.kind || 'unknown';
+    state.message = failure.message || 'Backend non operativo.';
+    if (failure.kind === 'authorization' || failure.kind === 'auth_required') {
+      state.status = 'auth_required';
+      state.authRequired = true;
+    } else if (failure.kind === 'config') {
+      state.status = 'config_required';
+    } else if (failure.kind === 'trigger') {
+      state.status = 'trigger_required';
+    } else {
+      state.status = 'error';
+    }
+    return state;
+  }
+
+  if (trigger && trigger.ok === false) {
+    state.ok = false;
+    state.status = 'trigger_required';
+    state.authRequired = false;
+    state.errorKind = 'trigger';
+    state.message = 'Trigger backend mancante o duplicato.';
+    return state;
+  }
+
+  if (!(auth && auth.ok) || !health.ok) {
+    state.ok = false;
+    state.status = 'error';
+    state.errorKind = 'unknown';
+    state.message = summarizePhboxHealthErrors_(health);
+  }
+
+  return state;
+}
+
+function firstPhboxBackendHealthFailure_(health) {
+  health = health || {};
+  var auth = health.authorizations || {};
+  var keys = ['config', 'driveOcr', 'firestore', 'gmail', 'runtimeFailure'];
+  for (var i = 0; i < keys.length; i++) {
+    var item = auth[keys[i]];
+    if (item && item.ok === false) {
+      var detail = item.detail || {};
+      return {
+        key: keys[i],
+        kind: String(detail.kind || classifyRuntimeFailureKind_(item.message || '') || 'unknown'),
+        message: keys[i] + ': ' + String(item.message || 'KO')
+      };
+    }
+  }
+  if (health.trigger && health.trigger.ok === false) {
+    return { key: 'trigger', kind: 'trigger', message: 'trigger: count=' + String(health.trigger.triggerCount || 0) };
+  }
+  return null;
+}
+
+function getPhboxBackendAuthorizationCenterUrl_() {
+  var props = PropertiesService.getScriptProperties();
+  var configured = String(props.getProperty('PHBOX_BACKEND_AUTH_URL') || '').trim();
+  if (configured) return configured;
+  try {
+    var baseUrl = String(ScriptApp.getService().getUrl() || '').trim();
+    if (!baseUrl) return '';
+    return baseUrl + (baseUrl.indexOf('?') === -1 ? '?page=auth' : '&page=auth');
+  } catch (e) {
+    return '';
+  }
 }
