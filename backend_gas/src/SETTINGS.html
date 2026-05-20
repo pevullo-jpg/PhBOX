@@ -132,6 +132,14 @@
 
           <label for="projectId">ID progetto</label>
           <input id="projectId" type="text" autocomplete="off">
+
+          <label for="operationalAccountEmail">Account Gmail operativo backend</label>
+          <input id="operationalAccountEmail" type="text" autocomplete="email" placeholder="farmacia@gmail.com">
+          <div class="actions" style="margin:10px 0 0;">
+            <button class="secondary" type="button" onclick="useDetectedBackendAccount()">Usa account rilevato</button>
+          </div>
+          <div class="hint">Deve essere l’account Google che esegue il backend GAS e concede permessi Gmail/Drive.</div>
+          <div class="hint" id="executingAccountHint"></div>
         </section>
 
         <section class="card">
@@ -183,6 +191,7 @@
         return {
           folderId: document.getElementById('folderId').value,
           firestoreProjectId: document.getElementById('projectId').value,
+          operationalAccountEmail: document.getElementById('operationalAccountEmail').value,
           excludedEmailSendersText: document.getElementById('excludedSenders').value,
           scanUnreadOnly: document.getElementById('scanUnreadOnly').checked,
           scanSpam: document.getElementById('scanSpam').checked,
@@ -192,10 +201,26 @@
         };
       }
 
+      function useDetectedBackendAccount() {
+        const detected = document.getElementById('executingAccountHint').getAttribute('data-email') || '';
+        if (!detected) {
+          setStatus('Account Google non rilevabile automaticamente.', 'error');
+          return;
+        }
+        document.getElementById('operationalAccountEmail').value = detected;
+        setStatus('Account operativo compilato con l’account rilevato.', 'ok');
+      }
+
       function applyData(data) {
         const settings = (data && data.settings) || {};
         document.getElementById('folderId').value = settings.folderId || '';
         document.getElementById('projectId').value = settings.firestoreProjectId || '';
+        document.getElementById('operationalAccountEmail').value = settings.operationalAccountEmail || '';
+        const executingAccount = settings.executingAccountEmail || '';
+        document.getElementById('executingAccountHint').setAttribute('data-email', executingAccount);
+        document.getElementById('executingAccountHint').textContent = executingAccount
+          ? 'Account attualmente rilevato: ' + executingAccount
+          : 'Account attualmente rilevato: non determinabile da Google.';
         document.getElementById('excludedSenders').value = settings.excludedEmailSendersText || '';
         document.getElementById('scanUnreadOnly').checked = !!settings.scanUnreadOnly;
         document.getElementById('scanSpam').checked = !!settings.scanSpam;
