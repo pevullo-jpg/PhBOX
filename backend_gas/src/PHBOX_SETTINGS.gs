@@ -1,7 +1,7 @@
 function doGet(e) {
   var page = String(e && e.parameter && e.parameter.page || '').trim().toLowerCase();
   if (page === 'auth' || page === 'authorize' || page === 'health') {
-    return HtmlService.createHtmlOutputFromFile('BACKEND_AUTH_CENTER')
+    return HtmlService.createHtmlOutputFromFile('BACKEND_AUTH_CENTER_PAGE')
       .setTitle('PhBOX Backend Authorization Center');
   }
 
