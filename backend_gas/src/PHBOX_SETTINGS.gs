@@ -25,6 +25,7 @@ function savePhboxSettings(payload) {
   props.setProperties({
     PHBOX_FOLDER_ID: normalized.folderId,
     PHBOX_FIRESTORE_PROJECT_ID: normalized.firestoreProjectId,
+    PHBOX_OPERATIONAL_ACCOUNT_EMAIL: normalized.operationalAccountEmail,
     PHBOX_EXCLUDED_SENDERS: normalized.excludedEmailSenders.join('\n'),
     PHBOX_SCAN_UNREAD_ONLY: String(normalized.scanUnreadOnly),
     PHBOX_SCAN_SPAM: String(normalized.scanSpam),
@@ -65,6 +66,8 @@ function serializePhboxSettingsForUi_(cfg) {
   return {
     folderId: cfg.folderId || '',
     firestoreProjectId: cfg.firestoreProjectId || '',
+    operationalAccountEmail: readPhboxOperationalAccountEmail_(),
+    executingAccountEmail: getPhboxExecutingAccountEmail_(),
     excludedEmailSendersText: (cfg.excludedEmailSenders || []).join('\n'),
     scanUnreadOnly: !!cfg.scanUnreadOnly,
     scanSpam: !!cfg.scanSpam,
@@ -77,12 +80,15 @@ function serializePhboxSettingsForUi_(cfg) {
 function normalizePhboxSettingsPayload_(payload) {
   var folderId = String(payload.folderId || '').trim();
   var firestoreProjectId = String(payload.firestoreProjectId || '').trim();
+  var operationalAccountEmail = normalizePhboxOperationalAccountEmailForSettings_(payload.operationalAccountEmail);
   if (!folderId) throw new Error('ID cartella root obbligatorio.');
   if (!firestoreProjectId) throw new Error('ID progetto obbligatorio.');
+  if (!operationalAccountEmail) throw new Error('Account Gmail operativo backend obbligatorio.');
 
   return {
     folderId: folderId,
     firestoreProjectId: firestoreProjectId,
+    operationalAccountEmail: operationalAccountEmail,
     excludedEmailSenders: parseNormalizedListProperty_(payload.excludedEmailSendersText, function (item) {
       return normalizeEmailSenderToken_(item);
     }),
@@ -94,6 +100,15 @@ function normalizePhboxSettingsPayload_(payload) {
     }),
     acceptRecipesWithoutCity: !!payload.acceptRecipesWithoutCity
   };
+}
+
+function normalizePhboxOperationalAccountEmailForSettings_(value) {
+  var email = String(value || '').trim().toLowerCase();
+  if (!email) return '';
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    throw new Error('Account Gmail operativo backend non valido.');
+  }
+  return email;
 }
 
 function getPhboxSettingsFeedback_() {
@@ -117,6 +132,7 @@ function buildPhboxSettingsFeedback_(options) {
   lines.push('MODE: ' + String(options.mode || 'config_snapshot'));
   lines.push('ROOT_FOLDER_ID: ' + (cfg.folderId || ''));
   lines.push('FIRESTORE_PROJECT_ID: ' + (cfg.firestoreProjectId || ''));
+  lines.push('OPERATIONAL_ACCOUNT_EMAIL: ' + (readPhboxOperationalAccountEmail_() || ''));
   lines.push('SCAN_UNREAD_ONLY: ' + String(!!cfg.scanUnreadOnly));
   lines.push('SCAN_SPAM: ' + String(!!cfg.scanSpam));
   lines.push('TRASH_VALID_EMAILS: ' + String(!!cfg.trashValidEmails));
