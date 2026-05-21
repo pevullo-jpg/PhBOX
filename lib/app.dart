@@ -10,6 +10,7 @@ import 'data/repositories/backend_auth_status_repository.dart';
 import 'data/repositories/tenant_access_repository.dart';
 import 'features/auth/pages/tenant_access_denied_page.dart';
 import 'features/auth/pages/tenant_login_page.dart';
+import 'features/auth/services/email_password_session_guard.dart';
 import 'features/dashboard/pages/dashboard_page.dart';
 import 'features/families/pages/families_page.dart';
 import 'features/settings/pages/settings_page.dart';
@@ -50,7 +51,7 @@ class _TenantGate extends StatelessWidget {
           return const TenantLoginPage();
         }
         final String email = _normalizedEmail(user.email ?? '');
-        final String? invalidSessionReason = _invalidGoogleSessionReason(
+        final String? invalidSessionReason = _invalidEmailPasswordSessionReason(
           user: user,
           normalizedEmail: email,
         );
@@ -72,21 +73,30 @@ class _TenantGate extends StatelessWidget {
     return TenantAccessRepository.normalizeLoginEmail(value);
   }
 
-  String? _invalidGoogleSessionReason({
+  String? _invalidEmailPasswordSessionReason({
     required User user,
     required String normalizedEmail,
   }) {
-    if (normalizedEmail.isEmpty) {
-      return 'Account Google privo di email verificabile.';
+    if (user.isAnonymous) {
+      return 'Accesso anonimo non consentito.';
     }
-    final bool hasMatchingGoogleProvider = user.providerData.any((UserInfo provider) {
+    if (normalizedEmail.isEmpty) {
+      return 'Account Firebase privo di email verificabile.';
+    }
+    final bool hasMatchingPasswordProvider = user.providerData.any((UserInfo provider) {
       final String providerEmail = _normalizedEmail(provider.email ?? '');
-      return provider.providerId == GoogleAuthProvider.PROVIDER_ID &&
+      return provider.providerId == EmailAuthProvider.PROVIDER_ID &&
           providerEmail.isNotEmpty &&
           providerEmail == normalizedEmail;
     });
-    if (!hasMatchingGoogleProvider) {
-      return 'Accesso consentito solo con account Google verificabile.';
+    if (!hasMatchingPasswordProvider) {
+      return 'Accesso consentito solo con account email/password registrato in Firebase Authentication.';
+    }
+    if (!EmailPasswordSessionGuard.isConfirmed(
+      user: user,
+      normalizedEmail: normalizedEmail,
+    )) {
+      return 'Sessione non confermata da login email/password. Esci e accedi di nuovo con email e password.';
     }
     return null;
   }
@@ -140,7 +150,7 @@ class _TenantAccessGateState extends State<_TenantAccessGate> {
     if (_email.isEmpty) {
       return TenantAccessDeniedPage(
         email: '',
-        reason: 'Account Google privo di email verificabile.',
+        reason: 'Account Firebase privo di email verificabile.',
         onRetry: _retryTenantAccess,
       );
     }

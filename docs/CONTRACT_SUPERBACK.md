@@ -4,7 +4,7 @@
 
 PhBOX integra SuperBack in modo progressivo e read-only tramite Firestore.
 
-Questo fix introduce solo il gate frontend farmacia basato su:
+Questo contratto riguarda solo il gate frontend farmacia basato su:
 
 ```text
 tenant_access/{loginEmail}
@@ -50,42 +50,66 @@ Accesso consentito solo se:
 
 ```text
 FirebaseAuth user presente
-provider Firebase google.com presente
+utente non anonimo
 email Firebase normalizzata non vuota
-email del provider Google non vuota e coerente con email Firebase
+provider Firebase password presente con provider.email non vuota e coerente
+sessione confermata localmente da signInWithEmailAndPassword nella runtime corrente
 frontendEnabled == true
 tenantStatus == active
 subscriptionStatus == active OR subscriptionStatus == trial
 ```
 
-Per sessioni federate Google, la verificabilità dell'identità viene ricavata dal provider `google.com` e dalla coerenza della email provider/Firebase. Non viene usato `FirebaseAuth.user.emailVerified` come gate bloccante, perché può non essere affidabile per alcune sessioni OAuth già federate.
+Accesso negato prima della lettura `tenant_access` se:
 
-Accesso negato se:
+```text
+utente non loggato
+utente anonimo
+email Firebase vuota
+provider password assente
+provider.email assente o non coerente con email Firebase
+sessione ripristinata/non confermata da signInWithEmailAndPassword
+sessione email-link o comunque non generata dalla form email/password PhBOX
+```
+
+Accesso negato dopo 1 read `tenant_access/{loginEmail}` se:
 
 ```text
 tenant_access/{loginEmail} assente
 frontendEnabled == false
 tenantStatus != active
 subscriptionStatus non in [active, trial]
-email Google assente o non verificabile
-provider non Google
 lettura tenant_access fallita
 ```
+
+## Nota su email-link
+
+Il client Firebase usa provider ID `password` anche per scenari email-link. Per evitare che una sessione email-link passi il gate, PhBOX non si basa solo su `providerId`.
+
+Il gate accetta la sessione solo se, nella runtime corrente, il login è stato completato dalla form PhBOX tramite:
+
+```text
+FirebaseAuth.signInWithEmailAndPassword
+```
+
+Le sessioni ripristinate dal browser o generate da flussi diversi devono rieseguire login email/password prima di leggere `tenant_access`.
 
 ## Costi Firestore
 
 | Flusso | Reads |
 |---|---:|
-| login/reload con utente Google valido | 1 read `tenant_access/{loginEmail}` |
-| retry manuale accesso | 1 read `tenant_access/{loginEmail}` |
-| accesso negato per sessione non Google | 0 reads |
-| accesso negato per email vuota/non coerente | 0 reads |
+| login email/password valido | 1 read `tenant_access/{loginEmail}` |
+| retry manuale accesso dopo sessione confermata | 1 read `tenant_access/{loginEmail}` |
+| utente non loggato | 0 reads |
+| sessione anonima | 0 reads |
+| provider password assente/incoerente | 0 reads |
+| sessione non confermata da form email/password | 0 reads |
 | backend auth status | invariato, letto solo dopo accesso tenant consentito |
 
-## Identità accettata
+## Dipendenze
 
-Il frontend PhBOX considera valido solo un utente Firebase con provider `google.com`, email Firebase normalizzata non vuota ed email provider Google non vuota e coerente.
-Sessioni Firebase diverse da Google, anonime o con email provider incoerente vengono bloccate prima della lettura `tenant_access`.
+`firebase_auth` è necessario per autenticazione email/password e futura compatibilità con Firestore Rules basate su `request.auth`.
+
+`google_sign_in` resta temporaneamente in `pubspec.yaml` perché esiste codice legacy esterno al gate tenant che lo importa. Il gate tenant non usa Google OAuth e `web/index.html` non deve iniettare `google-signin-client_id`.
 
 ## Invarianti anti-regressione
 

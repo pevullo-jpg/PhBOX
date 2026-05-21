@@ -1,8 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 
 import '../../../theme/app_theme.dart';
+import '../services/email_password_session_guard.dart';
 
 class TenantLoginPage extends StatefulWidget {
   const TenantLoginPage({super.key});
@@ -12,39 +12,50 @@ class TenantLoginPage extends StatefulWidget {
 }
 
 class _TenantLoginPageState extends State<TenantLoginPage> {
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+
   bool _isLoading = false;
   String _error = '';
 
-  Future<void> _signInWithGoogle() async {
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _signInWithEmailPassword() async {
     if (_isLoading) {
       return;
     }
+
+    final String email = _emailController.text.trim();
+    final String password = _passwordController.text;
+    if (email.isEmpty || password.isEmpty) {
+      setState(() {
+        _error = 'Inserisci email e password.';
+      });
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _error = '';
     });
 
     String nextError = '';
+    EmailPasswordSessionGuard.clear();
     try {
-      final GoogleSignInAccount? googleUser = await GoogleSignIn(
-        scopes: <String>['email'],
-      ).signIn();
-      if (googleUser == null) {
-        nextError = 'Accesso annullato.';
-      } else {
-        final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-        final OAuthCredential credential = GoogleAuthProvider.credential(
-          accessToken: googleAuth.accessToken,
-          idToken: googleAuth.idToken,
-        );
-        await FirebaseAuth.instance.signInWithCredential(credential);
-      }
+      final UserCredential credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      EmailPasswordSessionGuard.markConfirmed(credential.user);
     } on FirebaseAuthException catch (e) {
-      nextError = e.message?.trim().isNotEmpty == true
-          ? e.message!.trim()
-          : 'Accesso Google non riuscito.';
+      nextError = _firebaseAuthMessage(e);
     } catch (e) {
-      nextError = 'Accesso Google non riuscito: $e';
+      nextError = 'Accesso non riuscito: $e';
     }
 
     if (!mounted) {
@@ -54,6 +65,27 @@ class _TenantLoginPageState extends State<TenantLoginPage> {
       _isLoading = false;
       _error = nextError;
     });
+  }
+
+  String _firebaseAuthMessage(FirebaseAuthException e) {
+    switch (e.code) {
+      case 'invalid-email':
+        return 'Email non valida.';
+      case 'user-disabled':
+        return 'Account disabilitato.';
+      case 'user-not-found':
+      case 'wrong-password':
+      case 'invalid-credential':
+        return 'Email o password non corretta.';
+      case 'too-many-requests':
+        return 'Troppi tentativi. Riprova più tardi.';
+      case 'network-request-failed':
+        return 'Errore di rete durante l’accesso.';
+      default:
+        return e.message?.trim().isNotEmpty == true
+            ? e.message!.trim()
+            : 'Accesso non riuscito.';
+    }
   }
 
   Widget _buildErrorPanel(String message) {
@@ -95,44 +127,67 @@ class _TenantLoginPageState extends State<TenantLoginPage> {
             margin: const EdgeInsets.all(24),
             child: Padding(
               padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  const Text(
-                    'PhBOX',
-                    style: TextStyle(
-                      color: AppColors.textPrimary,
-                      fontSize: 30,
-                      fontWeight: FontWeight.w900,
+              child: AutofillGroup(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    const Text(
+                      'PhBOX',
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 30,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Accesso farmacia tramite account Google autorizzato dal SuperBack.',
-                    style: TextStyle(
-                      color: AppColors.textSecondary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Accesso farmacia tramite account Firebase email/password autorizzato dal SuperBack.',
+                      style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
-                  if (_error.isNotEmpty) ...<Widget>[
-                    const SizedBox(height: 18),
-                    _buildErrorPanel(_error),
+                    const SizedBox(height: 22),
+                    TextField(
+                      controller: _emailController,
+                      keyboardType: TextInputType.emailAddress,
+                      autofillHints: const <String>[AutofillHints.username, AutofillHints.email],
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(
+                        labelText: 'Email',
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: _passwordController,
+                      obscureText: true,
+                      autofillHints: const <String>[AutofillHints.password],
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) => _signInWithEmailPassword(),
+                      decoration: const InputDecoration(
+                        labelText: 'Password',
+                      ),
+                    ),
+                    if (_error.isNotEmpty) ...<Widget>[
+                      const SizedBox(height: 18),
+                      _buildErrorPanel(_error),
+                    ],
+                    const SizedBox(height: 22),
+                    FilledButton.icon(
+                      onPressed: _isLoading ? null : _signInWithEmailPassword,
+                      icon: _isLoading
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.login_rounded),
+                      label: Text(_isLoading ? 'Accesso...' : 'Entra'),
+                    ),
                   ],
-                  const SizedBox(height: 22),
-                  FilledButton.icon(
-                    onPressed: _isLoading ? null : _signInWithGoogle,
-                    icon: _isLoading
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.login_rounded),
-                    label: Text(_isLoading ? 'Accesso...' : 'Entra con Google'),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
