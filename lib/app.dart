@@ -80,15 +80,13 @@ class _TenantGate extends StatelessWidget {
       return 'Account Google privo di email verificabile.';
     }
     final bool hasMatchingGoogleProvider = user.providerData.any((UserInfo provider) {
-      final String providerEmail = _normalizedEmail(provider.email ?? user.email ?? '');
+      final String providerEmail = _normalizedEmail(provider.email ?? '');
       return provider.providerId == GoogleAuthProvider.PROVIDER_ID &&
+          providerEmail.isNotEmpty &&
           providerEmail == normalizedEmail;
     });
     if (!hasMatchingGoogleProvider) {
       return 'Accesso consentito solo con account Google verificabile.';
-    }
-    if (!user.emailVerified) {
-      return 'Email Google non verificata. Uscire e accedere di nuovo con Google.';
     }
     return null;
   }
