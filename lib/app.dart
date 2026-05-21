@@ -56,13 +56,7 @@ class _TenantGate extends StatelessWidget {
           normalizedEmail: email,
         );
         if (invalidSessionReason != null) {
-          return TenantAccessDeniedPage(
-            email: email,
-            reason: invalidSessionReason,
-            onRetry: () {
-              FirebaseAuth.instance.currentUser?.reload();
-            },
-          );
+          return const _InvalidSessionLoginReset();
         }
         return _TenantAccessGate(user: user);
       },
@@ -96,6 +90,37 @@ class _TenantGate extends StatelessWidget {
       return 'Sessione email/password non confermata in questo browser. Esegui nuovamente il login.';
     }
     return null;
+  }
+}
+
+class _InvalidSessionLoginReset extends StatefulWidget {
+  const _InvalidSessionLoginReset();
+
+  @override
+  State<_InvalidSessionLoginReset> createState() => _InvalidSessionLoginResetState();
+}
+
+class _InvalidSessionLoginResetState extends State<_InvalidSessionLoginReset> {
+  bool _resetStarted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _resetInvalidSession();
+  }
+
+  Future<void> _resetInvalidSession() async {
+    if (_resetStarted) {
+      return;
+    }
+    _resetStarted = true;
+    EmailPasswordSessionGuard.clear();
+    await FirebaseAuth.instance.signOut();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const TenantLoginPage();
   }
 }
 
@@ -145,11 +170,7 @@ class _TenantAccessGateState extends State<_TenantAccessGate> {
   @override
   Widget build(BuildContext context) {
     if (_email.isEmpty) {
-      return TenantAccessDeniedPage(
-        email: '',
-        reason: 'Account Firebase privo di email verificabile.',
-        onRetry: _retryTenantAccess,
-      );
+      return const _InvalidSessionLoginReset();
     }
 
     return FutureBuilder<TenantAccess?>(
