@@ -1,20 +1,96 @@
 # CONTRACT_SUPERBACK
 
 ## Stato evidenze
-Nel codice non compare il termine “Superback” in classi, endpoint o config.
 
-## Decisione documentale
-Questo documento registra solo ciò che è verificabile.
+PhBOX integra SuperBack in modo progressivo e read-only tramite Firestore.
 
-## Contratto con Superback
-- Identificativo servizio, URL, auth, payload: **DA VERIFICARE**.
-- Mapping responsabilità rispetto a GAS: **DA VERIFICARE**.
+Questo fix introduce solo il gate frontend farmacia basato su:
 
-## Interfacce indirette potenzialmente correlate
-Se “Superback” è il worker backend, i punti di contatto probabili sono:
-- Firestore `phbox_signals` / `phbox_runtime`.
-- Firestore `drive_pdf_imports` (backend-owned).
-- Materializzazioni `dashboard_totals` e `patient_dashboard_index`.
+```text
+tenant_access/{loginEmail}
+```
 
-Questa è un’inferenza architetturale, non una prova diretta.
+Non introduce migrazioni dati, non modifica backend GAS e non tocca Gmail/Drive/PDF.
 
+## Owner della verità
+
+| Dato | Owner |
+|---|---|
+| account farmacia autorizzato | `tenant_access/{loginEmail}` |
+| abilitazione frontend | `tenant_access/{loginEmail}.frontendEnabled` |
+| stato tenant | `tenant_access/{loginEmail}.tenantStatus` |
+| stato abbonamento | `tenant_access/{loginEmail}.subscriptionStatus` |
+| abilitazione backend | `tenant_control/{tenantId}` — non letto dal frontend PhBOX |
+| dati clinici PhBOX legacy | raccolte root attuali, non migrate in questo fix |
+| dati clinici PhBOX target | `tenants/{tenantId}/...`, fase futura separata |
+
+## Contratto tenant_access
+
+Documento:
+
+```text
+tenant_access/{loginEmailLowercase}
+```
+
+Campi letti dal frontend PhBOX:
+
+```text
+loginEmail: string
+tenantId: string
+tenantName: string
+frontendEnabled: boolean
+tenantStatus: active|blocked
+subscriptionStatus: trial|active|suspended|expired
+schemaVersion: number
+```
+
+## Semantica accesso frontend
+
+Accesso consentito solo se:
+
+```text
+frontendEnabled == true
+tenantStatus == active
+subscriptionStatus == active OR subscriptionStatus == trial
+```
+
+Accesso negato se:
+
+```text
+tenant_access/{loginEmail} assente
+frontendEnabled == false
+tenantStatus != active
+subscriptionStatus non in [active, trial]
+email Google assente o non verificabile
+lettura tenant_access fallita
+```
+
+## Costi Firestore
+
+| Flusso | Reads |
+|---|---:|
+| login/reload con utente Google | 1 read `tenant_access/{loginEmail}` |
+| retry manuale accesso | 1 read `tenant_access/{loginEmail}` |
+| accesso negato per email vuota | 0 reads |
+| backend auth status | invariato, letto solo dopo accesso tenant consentito |
+
+## Invarianti anti-regressione
+
+- PhBOX frontend non legge `tenant_control`.
+- PhBOX frontend non scrive `tenant_access`.
+- PhBOX frontend non scrive `tenant_control`.
+- PhBOX frontend non scrive `tenants_public`.
+- PhBOX frontend non scrive `superback_audit`.
+- Nessuna migrazione verso `tenants/{tenantId}/...` in questo fix.
+- Le raccolte legacy root restano in uso dopo accesso consentito.
+- Nessuna modifica a `patients`, `patient_dashboard_index`, `drive_pdf_imports`, `dashboard_totals`.
+- Nessuna modifica a backend GAS.
+- Nessuna chiamata Gmail/Drive/PDF.
+- Nessun listener Firestore e nessun polling automatico.
+
+## Fasi future
+
+1. Stabilizzare il gate frontend con test reali.
+2. Introdurre tenant path resolver in sola lettura.
+3. Migrare dati per moduli con sequenza copia → verifica → switch letture → switch scritture.
+4. Solo dopo, aggiornare backend GAS per scrivere sotto `tenants/{tenantId}/...`.

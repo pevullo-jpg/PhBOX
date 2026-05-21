@@ -1,10 +1,15 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'data/datasources/firestore_firebase_datasource.dart';
 import 'data/models/backend_auth_status.dart';
+import 'data/models/tenant_access.dart';
 import 'data/repositories/backend_auth_status_repository.dart';
+import 'data/repositories/tenant_access_repository.dart';
+import 'features/auth/pages/tenant_access_denied_page.dart';
+import 'features/auth/pages/tenant_login_page.dart';
 import 'features/dashboard/pages/dashboard_page.dart';
 import 'features/families/pages/families_page.dart';
 import 'features/settings/pages/settings_page.dart';
@@ -12,14 +17,144 @@ import 'shared/navigation/app_navigation.dart';
 import 'shared/widgets/floating_page_menu.dart';
 import 'theme/app_theme.dart';
 
-class FarmaciaApp extends StatefulWidget {
+class FarmaciaApp extends StatelessWidget {
   const FarmaciaApp({super.key});
 
   @override
-  State<FarmaciaApp> createState() => _FarmaciaAppState();
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'PhBOX',
+      theme: AppTheme.darkTheme,
+      home: const _TenantGate(),
+    );
+  }
 }
 
-class _FarmaciaAppState extends State<FarmaciaApp> {
+class _TenantGate extends StatelessWidget {
+  const _TenantGate();
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (BuildContext context, AsyncSnapshot<User?> snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            backgroundColor: AppColors.background,
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final User? user = snapshot.data;
+        if (user == null) {
+          return const TenantLoginPage();
+        }
+        return _TenantAccessGate(user: user);
+      },
+    );
+  }
+}
+
+class _TenantAccessGate extends StatefulWidget {
+  final User user;
+
+  const _TenantAccessGate({required this.user});
+
+  @override
+  State<_TenantAccessGate> createState() => _TenantAccessGateState();
+}
+
+class _TenantAccessGateState extends State<_TenantAccessGate> {
+  late final TenantAccessRepository _tenantAccessRepository = TenantAccessRepository(
+    firestore: FirebaseFirestore.instance,
+  );
+  late Future<TenantAccess?> _tenantAccessFuture;
+  late String _email;
+
+  @override
+  void initState() {
+    super.initState();
+    _email = _normalizedEmail(widget.user);
+    _tenantAccessFuture = _tenantAccessRepository.getByLoginEmail(_email);
+  }
+
+  @override
+  void didUpdateWidget(covariant _TenantAccessGate oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final String nextEmail = _normalizedEmail(widget.user);
+    if (nextEmail != _email || oldWidget.user.uid != widget.user.uid) {
+      _email = nextEmail;
+      _tenantAccessFuture = _tenantAccessRepository.getByLoginEmail(_email);
+    }
+  }
+
+  void _retryTenantAccess() {
+    setState(() {
+      _tenantAccessFuture = _tenantAccessRepository.getByLoginEmail(_email);
+    });
+  }
+
+  String _normalizedEmail(User user) {
+    return TenantAccessRepository.normalizeLoginEmail(user.email ?? '');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_email.isEmpty) {
+      return TenantAccessDeniedPage(
+        email: '',
+        reason: 'Account Google privo di email verificabile.',
+        onRetry: _retryTenantAccess,
+      );
+    }
+
+    return FutureBuilder<TenantAccess?>(
+      future: _tenantAccessFuture,
+      builder: (BuildContext context, AsyncSnapshot<TenantAccess?> snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            backgroundColor: AppColors.background,
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (snapshot.hasError) {
+          return TenantAccessDeniedPage(
+            email: _email,
+            reason: 'Impossibile leggere tenant_access/{$_email}: ${snapshot.error}',
+            onRetry: _retryTenantAccess,
+          );
+        }
+        final TenantAccess? tenantAccess = snapshot.data;
+        if (tenantAccess == null) {
+          return TenantAccessDeniedPage(
+            email: _email,
+            reason: 'Nessun tenant_access configurato per questo account.',
+            onRetry: _retryTenantAccess,
+          );
+        }
+        if (!tenantAccess.isAllowed) {
+          return TenantAccessDeniedPage(
+            email: _email,
+            reason: tenantAccess.deniedReason,
+            onRetry: _retryTenantAccess,
+          );
+        }
+        return _PhboxShell(tenantAccess: tenantAccess);
+      },
+    );
+  }
+}
+
+class _PhboxShell extends StatefulWidget {
+  final TenantAccess tenantAccess;
+
+  const _PhboxShell({required this.tenantAccess});
+
+  @override
+  State<_PhboxShell> createState() => _PhboxShellState();
+}
+
+class _PhboxShellState extends State<_PhboxShell> {
   late final BackendAuthStatusRepository _backendAuthStatusRepository;
   BackendAuthStatus _backendAuthStatus = BackendAuthStatus.emptyOk();
   bool _backendAuthLoading = false;
@@ -40,33 +175,31 @@ class _FarmaciaAppState extends State<FarmaciaApp> {
     setState(() {
       _backendAuthLoading = true;
     });
+
+    BackendAuthStatus nextStatus = _backendAuthStatus;
     try {
-      final BackendAuthStatus status = await _backendAuthStatusRepository.getMainStatus();
-      if (!mounted) return;
-      setState(() {
-        _backendAuthStatus = status;
-      });
+      nextStatus = await _backendAuthStatusRepository.getMainStatus();
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _backendAuthStatus = BackendAuthStatus(
-          ok: false,
-          authRequired: false,
-          status: 'error',
-          message: 'Impossibile leggere lo stato backend: $e',
-          errorKind: 'frontend_backend_auth_status_read_failed',
-          authUrl: '',
-          expectedEmail: '',
-          executingEmail: '',
-          checkedAt: DateTime.now(),
-        );
-      });
-    } finally {
-      if (!mounted) return;
-      setState(() {
-        _backendAuthLoading = false;
-      });
+      nextStatus = BackendAuthStatus(
+        ok: false,
+        authRequired: false,
+        status: 'error',
+        message: 'Impossibile leggere lo stato backend: $e',
+        errorKind: 'frontend_backend_auth_status_read_failed',
+        authUrl: '',
+        expectedEmail: '',
+        executingEmail: '',
+        checkedAt: DateTime.now(),
+      );
     }
+
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _backendAuthStatus = nextStatus;
+      _backendAuthLoading = false;
+    });
   }
 
   Future<void> _openBackendAuthCenter() async {
@@ -196,31 +329,26 @@ class _FarmaciaAppState extends State<FarmaciaApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'PhBOX',
-      theme: AppTheme.darkTheme,
-      home: Scaffold(
-        backgroundColor: AppColors.background,
-        body: ValueListenableBuilder<int>(
-          valueListenable: appNavigationIndex,
-          builder: (context, currentIndex, _) {
-            return Stack(
-              children: [
-                _buildPage(currentIndex),
-                FloatingPageMenu(
-                  currentIndex: currentIndex,
-                  onSelected: (index) {
-                    if (appNavigationIndex.value != index) {
-                      appNavigationIndex.value = index;
-                    }
-                  },
-                ),
-                _buildBackendAuthBanner(),
-              ],
-            );
-          },
-        ),
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: ValueListenableBuilder<int>(
+        valueListenable: appNavigationIndex,
+        builder: (context, currentIndex, _) {
+          return Stack(
+            children: [
+              _buildPage(currentIndex),
+              FloatingPageMenu(
+                currentIndex: currentIndex,
+                onSelected: (index) {
+                  if (appNavigationIndex.value != index) {
+                    appNavigationIndex.value = index;
+                  }
+                },
+              ),
+              _buildBackendAuthBanner(),
+            ],
+          );
+        },
       ),
     );
   }
