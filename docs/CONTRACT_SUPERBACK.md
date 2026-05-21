@@ -4,7 +4,7 @@
 
 PhBOX integra SuperBack in modo progressivo e read-only tramite Firestore.
 
-Questo fix introduce solo il gate frontend farmacia basato su:
+Questo fix mantiene il gate frontend farmacia basato su:
 
 ```text
 tenant_access/{loginEmail}
@@ -50,9 +50,9 @@ Accesso consentito solo se:
 
 ```text
 FirebaseAuth user presente
-provider Firebase == google.com
-email Google normalizzata non vuota
-email Firebase verificata
+provider Firebase email/password presente
+email Firebase normalizzata non vuota
+email del provider password non vuota e coerente con email Firebase
 frontendEnabled == true
 tenantStatus == active
 subscriptionStatus == active OR subscriptionStatus == trial
@@ -65,7 +65,9 @@ tenant_access/{loginEmail} assente
 frontendEnabled == false
 tenantStatus != active
 subscriptionStatus non in [active, trial]
-email Google assente o non verificabile
+utente Firebase anonimo
+email Firebase assente o non verificabile
+provider non email/password
 lettura tenant_access fallita
 ```
 
@@ -73,16 +75,16 @@ lettura tenant_access fallita
 
 | Flusso | Reads |
 |---|---:|
-| login/reload con utente Google | 1 read `tenant_access/{loginEmail}` |
+| login/reload con utente Firebase email/password valido | 1 read `tenant_access/{loginEmail}` |
 | retry manuale accesso | 1 read `tenant_access/{loginEmail}` |
-| accesso negato per sessione non Google/email non verificata | 0 reads |
-| accesso negato per email vuota | 0 reads |
+| accesso negato per sessione anonima/non email-password | 0 reads |
+| accesso negato per email vuota/non coerente | 0 reads |
 | backend auth status | invariato, letto solo dopo accesso tenant consentito |
 
 ## Identità accettata
 
-Il frontend PhBOX considera valido solo un utente Firebase con provider `google.com`, email normalizzata non vuota ed email verificata.
-Sessioni Firebase diverse da Google, anonime o con email non verificata vengono bloccate prima della lettura `tenant_access`.
+Il frontend PhBOX considera valido solo un utente Firebase Authentication con provider email/password, email Firebase normalizzata non vuota ed email provider coerente.
+Sessioni anonime, OAuth/Google o con email provider incoerente vengono bloccate prima della lettura `tenant_access`.
 
 ## Invarianti anti-regressione
 

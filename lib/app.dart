@@ -50,7 +50,7 @@ class _TenantGate extends StatelessWidget {
           return const TenantLoginPage();
         }
         final String email = _normalizedEmail(user.email ?? '');
-        final String? invalidSessionReason = _invalidGoogleSessionReason(
+        final String? invalidSessionReason = _invalidEmailPasswordSessionReason(
           user: user,
           normalizedEmail: email,
         );
@@ -72,23 +72,24 @@ class _TenantGate extends StatelessWidget {
     return TenantAccessRepository.normalizeLoginEmail(value);
   }
 
-  String? _invalidGoogleSessionReason({
+  String? _invalidEmailPasswordSessionReason({
     required User user,
     required String normalizedEmail,
   }) {
-    if (normalizedEmail.isEmpty) {
-      return 'Account Google privo di email verificabile.';
+    if (user.isAnonymous) {
+      return 'Accesso anonimo non consentito.';
     }
-    final bool hasMatchingGoogleProvider = user.providerData.any((UserInfo provider) {
+    if (normalizedEmail.isEmpty) {
+      return 'Account Firebase privo di email verificabile.';
+    }
+    final bool hasMatchingPasswordProvider = user.providerData.any((UserInfo provider) {
       final String providerEmail = _normalizedEmail(provider.email ?? user.email ?? '');
-      return provider.providerId == GoogleAuthProvider.PROVIDER_ID &&
+      return provider.providerId == EmailAuthProvider.PROVIDER_ID &&
+          providerEmail.isNotEmpty &&
           providerEmail == normalizedEmail;
     });
-    if (!hasMatchingGoogleProvider) {
-      return 'Accesso consentito solo con account Google verificabile.';
-    }
-    if (!user.emailVerified) {
-      return 'Email Google non verificata. Uscire e accedere di nuovo con Google.';
+    if (!hasMatchingPasswordProvider) {
+      return 'Accesso consentito solo con account Firebase email/password.';
     }
     return null;
   }
@@ -142,7 +143,7 @@ class _TenantAccessGateState extends State<_TenantAccessGate> {
     if (_email.isEmpty) {
       return TenantAccessDeniedPage(
         email: '',
-        reason: 'Account Google privo di email verificabile.',
+        reason: 'Account Firebase privo di email verificabile.',
         onRetry: _retryTenantAccess,
       );
     }
