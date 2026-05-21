@@ -281,6 +281,12 @@ class _PhboxShellState extends State<_PhboxShell> {
     await launchUrl(uri, webOnlyWindowName: '_blank');
   }
 
+  Future<void> _signOut() async {
+    EmailPasswordSessionGuard.clear();
+    appNavigationIndex.value = 0;
+    await FirebaseAuth.instance.signOut();
+  }
+
   Widget _buildPage(int currentIndex) {
     switch (currentIndex) {
       case 1:
@@ -409,6 +415,7 @@ class _PhboxShellState extends State<_PhboxShell> {
                     appNavigationIndex.value = index;
                   }
                 },
+                onLogout: _signOut,
               ),
               _buildBackendAuthBanner(),
             ],

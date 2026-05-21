@@ -10,6 +10,7 @@ class FloatingPageMenu extends StatelessWidget {
   final IconData? pageIcon;
   final String? pageTooltip;
   final VoidCallback? onPageTap;
+  final VoidCallback? onLogout;
 
   const FloatingPageMenu({
     super.key,
@@ -20,6 +21,7 @@ class FloatingPageMenu extends StatelessWidget {
     this.pageIcon,
     this.pageTooltip,
     this.onPageTap,
+    this.onLogout,
   });
 
   @override
@@ -75,6 +77,13 @@ class FloatingPageMenu extends StatelessWidget {
                       selected: true,
                       onTap: onPageTap ?? () {},
                     ),
+                  if (onLogout != null)
+                    _MenuIconButton(
+                      icon: Icons.logout_rounded,
+                      tooltip: 'Esci',
+                      selected: false,
+                      onTap: onLogout!,
+                    ),
                 ],
               ),
             ),
@@ -111,7 +120,7 @@ class _MenuIconButton extends StatelessWidget {
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              color: selected ? Colors.white.withOpacity(0.12) : Colors.transparent,
+              color: selected ? Colors.white.withValues(alpha: 0.12) : Colors.transparent,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(icon, color: Colors.white, size: 20),
