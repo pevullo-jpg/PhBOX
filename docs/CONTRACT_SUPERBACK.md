@@ -50,13 +50,15 @@ Accesso consentito solo se:
 
 ```text
 FirebaseAuth user presente
-provider Firebase == google.com
-email Google normalizzata non vuota
-email Firebase verificata
+provider Firebase google.com presente
+email Firebase normalizzata non vuota
+email del provider Google non vuota e coerente con email Firebase
 frontendEnabled == true
 tenantStatus == active
 subscriptionStatus == active OR subscriptionStatus == trial
 ```
+
+Per sessioni federate Google, la verificabilità dell'identità viene ricavata dal provider `google.com` e dalla coerenza della email provider/Firebase. Non viene usato `FirebaseAuth.user.emailVerified` come gate bloccante, perché può non essere affidabile per alcune sessioni OAuth già federate.
 
 Accesso negato se:
 
@@ -66,6 +68,7 @@ frontendEnabled == false
 tenantStatus != active
 subscriptionStatus non in [active, trial]
 email Google assente o non verificabile
+provider non Google
 lettura tenant_access fallita
 ```
 
@@ -73,16 +76,16 @@ lettura tenant_access fallita
 
 | Flusso | Reads |
 |---|---:|
-| login/reload con utente Google | 1 read `tenant_access/{loginEmail}` |
+| login/reload con utente Google valido | 1 read `tenant_access/{loginEmail}` |
 | retry manuale accesso | 1 read `tenant_access/{loginEmail}` |
-| accesso negato per sessione non Google/email non verificata | 0 reads |
-| accesso negato per email vuota | 0 reads |
+| accesso negato per sessione non Google | 0 reads |
+| accesso negato per email vuota/non coerente | 0 reads |
 | backend auth status | invariato, letto solo dopo accesso tenant consentito |
 
 ## Identità accettata
 
-Il frontend PhBOX considera valido solo un utente Firebase con provider `google.com`, email normalizzata non vuota ed email verificata.
-Sessioni Firebase diverse da Google, anonime o con email non verificata vengono bloccate prima della lettura `tenant_access`.
+Il frontend PhBOX considera valido solo un utente Firebase con provider `google.com`, email Firebase normalizzata non vuota ed email provider Google non vuota e coerente.
+Sessioni Firebase diverse da Google, anonime o con email provider incoerente vengono bloccate prima della lettura `tenant_access`.
 
 ## Invarianti anti-regressione
 
