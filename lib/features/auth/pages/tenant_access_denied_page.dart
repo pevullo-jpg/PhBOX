@@ -1,8 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 
 import '../../../theme/app_theme.dart';
+import '../services/email_password_session_guard.dart';
 
 class TenantAccessDeniedPage extends StatelessWidget {
   final String email;
@@ -17,8 +17,8 @@ class TenantAccessDeniedPage extends StatelessWidget {
   });
 
   Future<void> _signOut() async {
+    EmailPasswordSessionGuard.clear();
     await FirebaseAuth.instance.signOut();
-    await GoogleSignIn().signOut();
   }
 
   @override
@@ -63,7 +63,7 @@ class TenantAccessDeniedPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 14),
                   Text(
-                    'Account Google: ${email.isEmpty ? '-' : email}',
+                    'Account Firebase: ${email.isEmpty ? '-' : email}',
                     style: const TextStyle(
                       color: AppColors.textSecondary,
                       fontSize: 13,
