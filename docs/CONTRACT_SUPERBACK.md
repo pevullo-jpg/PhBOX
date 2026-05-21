@@ -4,11 +4,7 @@
 
 PhBOX integra SuperBack in modo progressivo e read-only tramite Firestore.
 
-Questo fix introduce solo il gate frontend farmacia basato su:
-
-```text
-tenant_access/{loginEmail}
-```
+Questo fix usa Firebase Authentication email/password come livello di autenticazione e `tenant_access/{loginEmail}` come livello di autorizzazione frontend.
 
 Non introduce migrazioni dati, non modifica backend GAS e non tocca Gmail/Drive/PDF.
 
@@ -16,6 +12,7 @@ Non introduce migrazioni dati, non modifica backend GAS e non tocca Gmail/Drive/
 
 | Dato | Owner |
 |---|---|
+| account farmacia autenticato | Firebase Authentication email/password |
 | account farmacia autorizzato | `tenant_access/{loginEmail}` |
 | abilitazione frontend | `tenant_access/{loginEmail}.frontendEnabled` |
 | stato tenant | `tenant_access/{loginEmail}.tenantStatus` |
@@ -50,15 +47,15 @@ Accesso consentito solo se:
 
 ```text
 FirebaseAuth user presente
-provider Firebase google.com presente
+utente non anonimo
+provider Firebase password presente
 email Firebase normalizzata non vuota
-email del provider Google non vuota e coerente con email Firebase
+email provider password non vuota e coerente con email Firebase
+ID token Firebase con signInProvider == password
 frontendEnabled == true
 tenantStatus == active
 subscriptionStatus == active OR subscriptionStatus == trial
 ```
-
-Per sessioni federate Google, la verificabilità dell'identità viene ricavata dal provider `google.com` e dalla coerenza della email provider/Firebase. Non viene usato `FirebaseAuth.user.emailVerified` come gate bloccante, perché può non essere affidabile per alcune sessioni OAuth già federate.
 
 Accesso negato se:
 
@@ -67,8 +64,11 @@ tenant_access/{loginEmail} assente
 frontendEnabled == false
 tenantStatus != active
 subscriptionStatus non in [active, trial]
-email Google assente o non verificabile
-provider non Google
+utente anonimo
+email Firebase assente o non verificabile
+provider password assente
+email provider password incoerente
+ID token Firebase con signInProvider diverso da password, incluso email-link
 lettura tenant_access fallita
 ```
 
@@ -76,16 +76,18 @@ lettura tenant_access fallita
 
 | Flusso | Reads |
 |---|---:|
-| login/reload con utente Google valido | 1 read `tenant_access/{loginEmail}` |
+| login/reload con utente email/password valido | 1 read `tenant_access/{loginEmail}` |
 | retry manuale accesso | 1 read `tenant_access/{loginEmail}` |
-| accesso negato per sessione non Google | 0 reads |
+| accesso negato per sessione anonima/provider non password | 0 reads |
 | accesso negato per email vuota/non coerente | 0 reads |
+| accesso negato per signInProvider diverso da password | 0 reads |
 | backend auth status | invariato, letto solo dopo accesso tenant consentito |
 
 ## Identità accettata
 
-Il frontend PhBOX considera valido solo un utente Firebase con provider `google.com`, email Firebase normalizzata non vuota ed email provider Google non vuota e coerente.
-Sessioni Firebase diverse da Google, anonime o con email provider incoerente vengono bloccate prima della lettura `tenant_access`.
+Il frontend PhBOX considera valido solo un utente Firebase Authentication email/password con provider `password`, email Firebase normalizzata non vuota, email provider coerente e ID token Firebase con `signInProvider == password`. Questo controllo respinge sessioni email-link prima della lettura `tenant_access`.
+
+Google OAuth non è usato in questo flusso. PhBOX non richiede Web OAuth Client ID e non usa `google-signin-client_id`.
 
 ## Invarianti anti-regressione
 
@@ -107,3 +109,7 @@ Sessioni Firebase diverse da Google, anonime o con email provider incoerente ven
 2. Introdurre tenant path resolver in sola lettura.
 3. Migrare dati per moduli con sequenza copia → verifica → switch letture → switch scritture.
 4. Solo dopo, aggiornare backend GAS per scrivere sotto `tenants/{tenantId}/...`.
+
+## Nota dipendenze auth
+
+La dipendenza `google_sign_in` può restare nel progetto finché esistono servizi legacy che la importano, ma non è usata dal login tenant introdotto da questo gate. Il login tenant usa esclusivamente `FirebaseAuth.signInWithEmailAndPassword` e il gate verifica anche `IdTokenResult.signInProvider == password`.

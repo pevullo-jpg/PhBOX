@@ -49,46 +49,129 @@ class _TenantGate extends StatelessWidget {
         if (user == null) {
           return const TenantLoginPage();
         }
-        final String email = _normalizedEmail(user.email ?? '');
-        final String? invalidSessionReason = _invalidGoogleSessionReason(
-          user: user,
-          normalizedEmail: email,
-        );
-        if (invalidSessionReason != null) {
-          return TenantAccessDeniedPage(
-            email: email,
-            reason: invalidSessionReason,
-            onRetry: () {
-              FirebaseAuth.instance.currentUser?.reload();
-            },
-          );
-        }
-        return _TenantAccessGate(user: user);
+        return _EmailPasswordIdentityGate(user: user);
       },
     );
+  }
+}
+
+class _EmailPasswordIdentityGate extends StatefulWidget {
+  final User user;
+
+  const _EmailPasswordIdentityGate({required this.user});
+
+  @override
+  State<_EmailPasswordIdentityGate> createState() => _EmailPasswordIdentityGateState();
+}
+
+class _EmailPasswordIdentityGateState extends State<_EmailPasswordIdentityGate> {
+  static const String _passwordSignInProvider = 'password';
+
+  late Future<String?> _invalidSessionReasonFuture;
+  late String _email;
+
+  @override
+  void initState() {
+    super.initState();
+    _email = _normalizedEmail(widget.user.email ?? '');
+    _invalidSessionReasonFuture = _invalidEmailPasswordSessionReason(
+      user: widget.user,
+      normalizedEmail: _email,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _EmailPasswordIdentityGate oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final String nextEmail = _normalizedEmail(widget.user.email ?? '');
+    if (nextEmail != _email || oldWidget.user.uid != widget.user.uid) {
+      _email = nextEmail;
+      _invalidSessionReasonFuture = _invalidEmailPasswordSessionReason(
+        user: widget.user,
+        normalizedEmail: _email,
+      );
+    }
+  }
+
+  void _retryIdentityCheck() {
+    final User user = FirebaseAuth.instance.currentUser ?? widget.user;
+    setState(() {
+      _email = _normalizedEmail(user.email ?? '');
+      _invalidSessionReasonFuture = _invalidEmailPasswordSessionReason(
+        user: user,
+        normalizedEmail: _email,
+      );
+    });
   }
 
   String _normalizedEmail(String value) {
     return TenantAccessRepository.normalizeLoginEmail(value);
   }
 
-  String? _invalidGoogleSessionReason({
+  Future<String?> _invalidEmailPasswordSessionReason({
     required User user,
     required String normalizedEmail,
-  }) {
-    if (normalizedEmail.isEmpty) {
-      return 'Account Google privo di email verificabile.';
+  }) async {
+    if (user.isAnonymous) {
+      return 'Accesso anonimo non consentito.';
     }
-    final bool hasMatchingGoogleProvider = user.providerData.any((UserInfo provider) {
+    if (normalizedEmail.isEmpty) {
+      return 'Account Firebase privo di email verificabile.';
+    }
+    final bool hasMatchingPasswordProvider = user.providerData.any((UserInfo provider) {
       final String providerEmail = _normalizedEmail(provider.email ?? '');
-      return provider.providerId == GoogleAuthProvider.PROVIDER_ID &&
+      return provider.providerId == EmailAuthProvider.PROVIDER_ID &&
           providerEmail.isNotEmpty &&
           providerEmail == normalizedEmail;
     });
-    if (!hasMatchingGoogleProvider) {
-      return 'Accesso consentito solo con account Google verificabile.';
+    if (!hasMatchingPasswordProvider) {
+      return 'Accesso consentito solo con account email/password registrato in Firebase Authentication.';
+    }
+
+    final IdTokenResult tokenResult;
+    try {
+      tokenResult = await user.getIdTokenResult();
+    } catch (e) {
+      return 'Impossibile verificare il metodo di accesso Firebase: $e';
+    }
+
+    final String signInProvider = tokenResult.signInProvider ?? '';
+    if (signInProvider != _passwordSignInProvider) {
+      final String displayedProvider = signInProvider.isEmpty ? '-' : signInProvider;
+      return 'Accesso consentito solo con login email/password. Metodo rilevato: $displayedProvider.';
     }
     return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<String?>(
+      future: _invalidSessionReasonFuture,
+      builder: (BuildContext context, AsyncSnapshot<String?> snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            backgroundColor: AppColors.background,
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (snapshot.hasError) {
+          return TenantAccessDeniedPage(
+            email: _email,
+            reason: 'Impossibile verificare la sessione Firebase: ${snapshot.error}',
+            onRetry: _retryIdentityCheck,
+          );
+        }
+        final String? invalidSessionReason = snapshot.data;
+        if (invalidSessionReason != null) {
+          return TenantAccessDeniedPage(
+            email: _email,
+            reason: invalidSessionReason,
+            onRetry: _retryIdentityCheck,
+          );
+        }
+        return _TenantAccessGate(user: widget.user);
+      },
+    );
   }
 }
 
@@ -140,7 +223,7 @@ class _TenantAccessGateState extends State<_TenantAccessGate> {
     if (_email.isEmpty) {
       return TenantAccessDeniedPage(
         email: '',
-        reason: 'Account Google privo di email verificabile.',
+        reason: 'Account Firebase privo di email verificabile.',
         onRetry: _retryTenantAccess,
       );
     }
