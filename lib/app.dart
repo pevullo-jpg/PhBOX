@@ -8,6 +8,7 @@ import 'data/models/backend_auth_status.dart';
 import 'data/models/tenant_access.dart';
 import 'data/repositories/backend_auth_status_repository.dart';
 import 'data/repositories/tenant_access_repository.dart';
+import 'features/auth/models/tenant_session.dart';
 import 'features/auth/pages/tenant_access_denied_page.dart';
 import 'features/auth/pages/tenant_login_page.dart';
 import 'features/auth/services/email_password_session_guard.dart';
@@ -204,16 +205,17 @@ class _TenantAccessGateState extends State<_TenantAccessGate> {
             onRetry: _retryTenantAccess,
           );
         }
-        return _PhboxShell(tenantAccess: tenantAccess);
+        return TenantSessionScope(
+          session: TenantSession.fromTenantAccess(tenantAccess),
+          child: const _PhboxShell(),
+        );
       },
     );
   }
 }
 
 class _PhboxShell extends StatefulWidget {
-  final TenantAccess tenantAccess;
-
-  const _PhboxShell({required this.tenantAccess});
+  const _PhboxShell();
 
   @override
   State<_PhboxShell> createState() => _PhboxShellState();
@@ -279,6 +281,12 @@ class _PhboxShellState extends State<_PhboxShell> {
       return;
     }
     await launchUrl(uri, webOnlyWindowName: '_blank');
+  }
+
+  Future<void> _signOut() async {
+    EmailPasswordSessionGuard.clear();
+    appNavigationIndex.value = 0;
+    await FirebaseAuth.instance.signOut();
   }
 
   Widget _buildPage(int currentIndex) {
@@ -409,6 +417,7 @@ class _PhboxShellState extends State<_PhboxShell> {
                     appNavigationIndex.value = index;
                   }
                 },
+                onLogout: _signOut,
               ),
               _buildBackendAuthBanner(),
             ],
