@@ -53,13 +53,13 @@ FirebaseAuth user presente
 utente non anonimo
 email Firebase normalizzata non vuota
 provider Firebase password presente con provider.email non vuota e coerente
-sessione confermata localmente da signInWithEmailAndPassword nella runtime corrente
+sessione confermata localmente da signInWithEmailAndPassword
 frontendEnabled == true
 tenantStatus == active
 subscriptionStatus == active OR subscriptionStatus == trial
 ```
 
-Accesso negato prima della lettura `tenant_access` se:
+Sessioni non valide prima della lettura `tenant_access`:
 
 ```text
 utente non loggato
@@ -69,6 +69,25 @@ provider password assente
 provider.email assente o non coerente con email Firebase
 sessione ripristinata/non confermata da signInWithEmailAndPassword
 sessione email-link o comunque non generata dalla form email/password PhBOX
+```
+
+Comportamento UI per sessioni non valide prima di `tenant_access`:
+
+```text
+cancellare marker locale
+eseguire signOut Firebase
+mostrare direttamente TenantLoginPage
+nessun pannello errore
+nessuna read Firestore
+```
+
+Comportamento UI per login email/password non riuscito:
+
+```text
+restare su TenantLoginPage
+non mostrare pannelli errore
+non leggere tenant_access
+non scrivere Firestore
 ```
 
 Accesso negato dopo 1 read `tenant_access/{loginEmail}` se:
@@ -81,28 +100,33 @@ subscriptionStatus non in [active, trial]
 lettura tenant_access fallita
 ```
 
+In questi casi resta ammessa la schermata `TenantAccessDeniedPage`, perché il login è valido ma l'autorizzazione SuperBack è negata o non leggibile.
+
 ## Nota su email-link
 
 Il client Firebase usa provider ID `password` anche per scenari email-link. Per evitare che una sessione email-link passi il gate, PhBOX non si basa solo su `providerId`.
 
-Il gate accetta la sessione solo se, nella runtime corrente, il login è stato completato dalla form PhBOX tramite:
+Il gate accetta la sessione solo se il login è stato completato dalla form PhBOX tramite:
 
 ```text
 FirebaseAuth.signInWithEmailAndPassword
 ```
 
-Le sessioni ripristinate dal browser o generate da flussi diversi devono rieseguire login email/password prima di leggere `tenant_access`.
+Il marker locale persistente consente il refresh senza richiedere di nuovo la password, ma è valido solo se `uid` ed email normalizzata coincidono con l'utente Firebase corrente.
 
 ## Costi Firestore
 
 | Flusso | Reads |
 |---|---:|
 | login email/password valido | 1 read `tenant_access/{loginEmail}` |
+| refresh dopo login email/password valido | 1 read `tenant_access/{loginEmail}` |
 | retry manuale accesso dopo sessione confermata | 1 read `tenant_access/{loginEmail}` |
 | utente non loggato | 0 reads |
 | sessione anonima | 0 reads |
 | provider password assente/incoerente | 0 reads |
 | sessione non confermata da form email/password | 0 reads |
+| sessione locale non valida ripulita verso login | 0 reads |
+| login email/password non riuscito | 0 reads |
 | backend auth status | invariato, letto solo dopo accesso tenant consentito |
 
 ## Dipendenze

@@ -56,13 +56,7 @@ class _TenantGate extends StatelessWidget {
           normalizedEmail: email,
         );
         if (invalidSessionReason != null) {
-          return TenantAccessDeniedPage(
-            email: email,
-            reason: invalidSessionReason,
-            onRetry: () {
-              FirebaseAuth.instance.currentUser?.reload();
-            },
-          );
+          return const _InvalidTenantSessionReset();
         }
         return _TenantAccessGate(user: user);
       },
@@ -92,13 +86,35 @@ class _TenantGate extends StatelessWidget {
     if (!hasMatchingPasswordProvider) {
       return 'Accesso consentito solo con account email/password registrato in Firebase Authentication.';
     }
-    if (!EmailPasswordSessionGuard.isConfirmed(
-      user: user,
-      normalizedEmail: normalizedEmail,
-    )) {
-      return 'Sessione non confermata da login email/password. Esci e accedi di nuovo con email e password.';
+    if (!EmailPasswordSessionGuard.isConfirmed(user: user, normalizedEmail: normalizedEmail)) {
+      return 'Sessione email/password non confermata in questo browser. Esegui nuovamente il login.';
     }
     return null;
+  }
+}
+
+class _InvalidTenantSessionReset extends StatefulWidget {
+  const _InvalidTenantSessionReset();
+
+  @override
+  State<_InvalidTenantSessionReset> createState() => _InvalidTenantSessionResetState();
+}
+
+class _InvalidTenantSessionResetState extends State<_InvalidTenantSessionReset> {
+  @override
+  void initState() {
+    super.initState();
+    _resetInvalidSession();
+  }
+
+  Future<void> _resetInvalidSession() async {
+    EmailPasswordSessionGuard.clear();
+    await FirebaseAuth.instance.signOut();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const TenantLoginPage();
   }
 }
 
@@ -148,11 +164,7 @@ class _TenantAccessGateState extends State<_TenantAccessGate> {
   @override
   Widget build(BuildContext context) {
     if (_email.isEmpty) {
-      return TenantAccessDeniedPage(
-        email: '',
-        reason: 'Account Firebase privo di email verificabile.',
-        onRetry: _retryTenantAccess,
-      );
+      return const _InvalidTenantSessionReset();
     }
 
     return FutureBuilder<TenantAccess?>(
