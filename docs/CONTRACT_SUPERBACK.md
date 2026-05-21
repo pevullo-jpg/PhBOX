@@ -53,11 +53,22 @@ FirebaseAuth user presente
 utente non anonimo
 email Firebase normalizzata non vuota
 provider Firebase password presente con provider.email non vuota e coerente
-sessione confermata localmente da signInWithEmailAndPassword nella runtime corrente
+sessione confermata localmente da signInWithEmailAndPassword nel browser corrente
 frontendEnabled == true
 tenantStatus == active
 subscriptionStatus == active OR subscriptionStatus == trial
 ```
+
+La conferma locale email/password viene salvata nel browser con un marker minimo contenente:
+
+```text
+uid
+email normalizzata
+confirmedAt
+source=email_password
+```
+
+Il marker non è una fonte di autorizzazione clinica o commerciale: serve solo a distinguere il flusso email/password completato dalla form PhBOX da sessioni Firebase ripristinate o generate da altri metodi. L'autorizzazione resta sempre `tenant_access/{loginEmail}`.
 
 Accesso negato prima della lettura `tenant_access` se:
 
@@ -67,8 +78,8 @@ utente anonimo
 email Firebase vuota
 provider password assente
 provider.email assente o non coerente con email Firebase
-sessione ripristinata/non confermata da signInWithEmailAndPassword
-sessione email-link o comunque non generata dalla form email/password PhBOX
+marker locale mancante, corrotto o riferito ad altro uid/email
+sessione email-link o comunque non confermata dalla form email/password PhBOX
 ```
 
 Accesso negato dopo 1 read `tenant_access/{loginEmail}` se:
@@ -81,28 +92,52 @@ subscriptionStatus non in [active, trial]
 lettura tenant_access fallita
 ```
 
+## Refresh pagina
+
+Dopo un login email/password riuscito, il marker locale viene mantenuto nel browser. Al refresh:
+
+```text
+FirebaseAuth ripristina l'utente
+PhBOX verifica uid/email del marker locale
+se coincidono, procede alla read tenant_access/{loginEmail}
+```
+
+Quindi il refresh non deve richiedere di nuovo la password, salvo logout, cambio utente, marker mancante/corrotto o sessione non coerente.
+
+## Logout
+
+Il logout cancella:
+
+```text
+sessione FirebaseAuth
+marker locale email/password
+```
+
+Dopo logout, un refresh deve mostrare la pagina di login.
+
 ## Nota su email-link
 
-Il client Firebase usa provider ID `password` anche per scenari email-link. Per evitare che una sessione email-link passi il gate, PhBOX non si basa solo su `providerId`.
+Il client Firebase usa provider ID `password` anche per scenari email-link. Per evitare che una sessione email-link passi automaticamente il gate, PhBOX non si basa solo su `providerId`.
 
-Il gate accetta la sessione solo se, nella runtime corrente, il login è stato completato dalla form PhBOX tramite:
+Il gate accetta la sessione solo se è presente un marker locale creato dopo un login riuscito tramite:
 
 ```text
 FirebaseAuth.signInWithEmailAndPassword
 ```
 
-Le sessioni ripristinate dal browser o generate da flussi diversi devono rieseguire login email/password prima di leggere `tenant_access`.
+Sessioni senza marker locale valido vengono bloccate prima di leggere `tenant_access`.
 
 ## Costi Firestore
 
 | Flusso | Reads |
 |---|---:|
 | login email/password valido | 1 read `tenant_access/{loginEmail}` |
+| refresh dopo login valido e marker coerente | 1 read `tenant_access/{loginEmail}` |
 | retry manuale accesso dopo sessione confermata | 1 read `tenant_access/{loginEmail}` |
 | utente non loggato | 0 reads |
 | sessione anonima | 0 reads |
 | provider password assente/incoerente | 0 reads |
-| sessione non confermata da form email/password | 0 reads |
+| marker locale assente/corrotto/non coerente | 0 reads |
 | backend auth status | invariato, letto solo dopo accesso tenant consentito |
 
 ## Dipendenze

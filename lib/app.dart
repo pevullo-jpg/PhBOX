@@ -92,11 +92,8 @@ class _TenantGate extends StatelessWidget {
     if (!hasMatchingPasswordProvider) {
       return 'Accesso consentito solo con account email/password registrato in Firebase Authentication.';
     }
-    if (!EmailPasswordSessionGuard.isConfirmed(
-      user: user,
-      normalizedEmail: normalizedEmail,
-    )) {
-      return 'Sessione non confermata da login email/password. Esci e accedi di nuovo con email e password.';
+    if (!EmailPasswordSessionGuard.isConfirmed(user: user, normalizedEmail: normalizedEmail)) {
+      return 'Sessione email/password non confermata in questo browser. Esegui nuovamente il login.';
     }
     return null;
   }
