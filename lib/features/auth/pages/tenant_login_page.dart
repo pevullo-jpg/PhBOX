@@ -16,7 +16,6 @@ class _TenantLoginPageState extends State<TenantLoginPage> {
   final TextEditingController _passwordController = TextEditingController();
 
   bool _isLoading = false;
-  String _error = '';
 
   @override
   void dispose() {
@@ -33,18 +32,13 @@ class _TenantLoginPageState extends State<TenantLoginPage> {
     final String email = _emailController.text.trim();
     final String password = _passwordController.text;
     if (email.isEmpty || password.isEmpty) {
-      setState(() {
-        _error = 'Inserisci email e password.';
-      });
       return;
     }
 
     setState(() {
       _isLoading = true;
-      _error = '';
     });
 
-    String nextError = '';
     EmailPasswordSessionGuard.clear();
     try {
       final UserCredential credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
@@ -52,10 +46,9 @@ class _TenantLoginPageState extends State<TenantLoginPage> {
         password: password,
       );
       EmailPasswordSessionGuard.markConfirmed(credential.user);
-    } on FirebaseAuthException catch (e) {
-      nextError = _firebaseAuthMessage(e);
-    } catch (e) {
-      nextError = 'Accesso non riuscito: $e';
+    } catch (_) {
+      EmailPasswordSessionGuard.clear();
+      await FirebaseAuth.instance.signOut();
     }
 
     if (!mounted) {
@@ -63,57 +56,7 @@ class _TenantLoginPageState extends State<TenantLoginPage> {
     }
     setState(() {
       _isLoading = false;
-      _error = nextError;
     });
-  }
-
-  String _firebaseAuthMessage(FirebaseAuthException e) {
-    switch (e.code) {
-      case 'invalid-email':
-        return 'Email non valida.';
-      case 'user-disabled':
-        return 'Account disabilitato.';
-      case 'user-not-found':
-      case 'wrong-password':
-      case 'invalid-credential':
-        return 'Email o password non corretta.';
-      case 'too-many-requests':
-        return 'Troppi tentativi. Riprova più tardi.';
-      case 'network-request-failed':
-        return 'Errore di rete durante l’accesso.';
-      default:
-        return e.message?.trim().isNotEmpty == true
-            ? e.message!.trim()
-            : 'Accesso non riuscito.';
-    }
-  }
-
-  Widget _buildErrorPanel(String message) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.red.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.red.withValues(alpha: 0.85)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          const Icon(Icons.error_outline_rounded, color: AppColors.red, size: 22),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              message,
-              style: const TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -170,10 +113,6 @@ class _TenantLoginPageState extends State<TenantLoginPage> {
                         labelText: 'Password',
                       ),
                     ),
-                    if (_error.isNotEmpty) ...<Widget>[
-                      const SizedBox(height: 18),
-                      _buildErrorPanel(_error),
-                    ],
                     const SizedBox(height: 22),
                     FilledButton.icon(
                       onPressed: _isLoading ? null : _signInWithEmailPassword,
