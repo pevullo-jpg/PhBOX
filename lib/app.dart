@@ -8,6 +8,8 @@ import 'data/models/backend_auth_status.dart';
 import 'data/models/tenant_access.dart';
 import 'data/repositories/backend_auth_status_repository.dart';
 import 'data/repositories/tenant_access_repository.dart';
+import 'data/tenancy/tenant_path_resolver.dart';
+import 'features/auth/models/tenant_session.dart';
 import 'features/auth/pages/tenant_access_denied_page.dart';
 import 'features/auth/pages/tenant_login_page.dart';
 import 'features/auth/services/email_password_session_guard.dart';
@@ -204,16 +206,18 @@ class _TenantAccessGateState extends State<_TenantAccessGate> {
             onRetry: _retryTenantAccess,
           );
         }
-        return _PhboxShell(tenantAccess: tenantAccess);
+        return _PhboxShell(
+          tenantSession: TenantSession.fromTenantAccess(tenantAccess),
+        );
       },
     );
   }
 }
 
 class _PhboxShell extends StatefulWidget {
-  final TenantAccess tenantAccess;
+  final TenantSession tenantSession;
 
-  const _PhboxShell({required this.tenantAccess});
+  const _PhboxShell({required this.tenantSession});
 
   @override
   State<_PhboxShell> createState() => _PhboxShellState();
@@ -400,27 +404,33 @@ class _PhboxShellState extends State<_PhboxShell> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: ValueListenableBuilder<int>(
-        valueListenable: appNavigationIndex,
-        builder: (context, currentIndex, _) {
-          return Stack(
-            children: [
-              _buildPage(currentIndex),
-              FloatingPageMenu(
-                currentIndex: currentIndex,
-                onSelected: (index) {
-                  if (appNavigationIndex.value != index) {
-                    appNavigationIndex.value = index;
-                  }
-                },
-                onLogout: _signOut,
-              ),
-              _buildBackendAuthBanner(),
-            ],
-          );
-        },
+    return TenantSessionScope(
+      session: widget.tenantSession,
+      child: TenantPathScope(
+        resolver: TenantPathResolver.legacyRoot(widget.tenantSession),
+        child: Scaffold(
+          backgroundColor: AppColors.background,
+          body: ValueListenableBuilder<int>(
+            valueListenable: appNavigationIndex,
+            builder: (context, currentIndex, _) {
+              return Stack(
+                children: [
+                  _buildPage(currentIndex),
+                  FloatingPageMenu(
+                    currentIndex: currentIndex,
+                    onSelected: (index) {
+                      if (appNavigationIndex.value != index) {
+                        appNavigationIndex.value = index;
+                      }
+                    },
+                    onLogout: _signOut,
+                  ),
+                  _buildBackendAuthBanner(),
+                ],
+              );
+            },
+          ),
+        ),
       ),
     );
   }
