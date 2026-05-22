@@ -41,6 +41,22 @@ dashboard_summaries
 
 Ogni fix multifarmacia deve dichiarare esplicitamente se modifica una di queste raccolte. In assenza di dichiarazione, sono considerate fuori scope.
 
+## Regola legacy codice fiscale
+
+Nella struttura legacy PhBOX 0.2 il codice fiscale resta dove già è usato come identificativo o componente di path.
+
+Path legacy intoccabili da questo contratto:
+
+```text
+patients/{CF}
+patient_dashboard_index/{CF}
+patient_therapeutic_advice/{CF}
+doctor_patient_links/{CF__manual}
+doctor_patient_links/{CF__primary}
+```
+
+Questo contratto non rinomina, non migra e non corregge questi path legacy.
+
 ## Raccolte SuperBack globali
 
 Le raccolte seguenti restano root/globali perché governano il SaaS e non rappresentano dati clinici di una singola farmacia:
@@ -113,9 +129,52 @@ patient_therapeutic_advice
 doctor_patient_links
 ```
 
+## Regole assistitoId target
+
+`assistitoId` è l'identificativo tecnico del documento target.
+
+Regole obbligatorie:
+
+```text
+assistitoId = documentId tecnico/opaco
+generazione = Firestore auto-id o generatore tecnico equivalente
+origine vietata = codice fiscale, nome, email, telefono o altri dati personali
+semantica = nessun significato clinico/anagrafico
+stabilità = persistente dopo creazione del documento
+```
+
+`assistitoId` non deve derivare da `fiscalCode` e non deve essere calcolabile a partire da dati personali.
+
+Il campo `assistitoId` salvato nel documento deve coincidere con il documentId:
+
+```text
+tenants/{tenantId}/assistiti/{assistitoId}.assistitoId == assistitoId
+```
+
+In assenza di uno switch esplicito e validato, nessun runtime deve creare, leggere o scrivere documenti target `assistiti`.
+
+## Regole fiscalCode target
+
+`fiscalCode` nella struttura target è solo un campo dati.
+
+Regole obbligatorie:
+
+```text
+fiscalCode != documentId
+fiscalCode non governa il path
+fiscalCode non garantisce unicità documentale
+fiscalCode non è chiave tecnica primaria
+fiscalCode può essere usato solo per ricerca, deduplica controllata o riconciliazione dichiarata
+```
+
+Ogni futuro processo di deduplica basato su `fiscalCode` dovrà essere esplicito, bounded, testato e separato dalla generazione di `assistitoId`.
+
+## Documento assistito target
+
 Campi target minimi:
 
 ```text
+assistitoId: string
 fiscalCode: string
 fullName: string
 searchPrefixes: array<string>
@@ -125,6 +184,31 @@ therapeuticAdvice: map
 createdAt: timestamp
 updatedAt: timestamp
 sourceVersion: number
+```
+
+Semantica campi:
+
+```text
+assistitoId = id tecnico/opaco, uguale al documentId target
+fiscalCode = codice fiscale normalizzato come dato anagrafico, non id documento
+fullName = nome assistito validato, mai derivato da OCR-fragment o CF-like token
+searchPrefixes = prefissi bounded generati da fullName valido, non da fiscalCode
+doctor = mappa medico consolidata secondo precedenza dichiarata
+dashboard = mappa dashboard target, senza imporre identità documento
+therapeuticAdvice = mappa consiglio terapeutico target
+createdAt = timestamp creazione target o origine controllata
+updatedAt = timestamp aggiornamento target o origine controllata
+sourceVersion = versione del mapping/contratto sorgente
+```
+
+Assenze/parziali:
+
+```text
+assistitoId assente = documento target non valido
+fiscalCode assente/parziale = campo dati incompleto, non blocca l'identità tecnica
+fullName assente/non valido = fallback dichiarato, senza searchPrefixes
+mappe assenti = mappe vuote
+sourceVersion assente = documento target incompleto
 ```
 
 ## Runtime target
@@ -196,6 +280,9 @@ aggiornare backend GAS per target paths
 modificare Gmail/Drive/PDF lifecycle
 introdurre listener Firestore aggiuntivi
 introdurre polling automatico aggiuntivo
+derivare assistitoId da codice fiscale
+derivare assistitoId da nome/email/telefono o altri dati personali
+usare fiscalCode come documentId target
 ```
 
 ## Impatto costi previsto
@@ -219,7 +306,9 @@ fan-out: 0
 - SuperBack root collections restano globali.
 - `tenant_access` resta il gate frontend.
 - `tenant_control` resta destinato al backend.
-- `tenants/{tenantId}/assistiti` è la destinazione futura per dati assistito unificati.
+- `tenants/{tenantId}/assistiti/{assistitoId}` è la destinazione futura per dati assistito unificati.
+- `assistitoId` target è tecnico, opaco e non derivato da dati personali.
+- `fiscalCode` target è solo campo dati e non è documentId.
 - Ogni switch deve essere modulare, reversibile e testato.
 
 ## Test richiesti per ogni futuro switch
@@ -229,6 +318,10 @@ Prima di attivare letture o scritture target:
 ```text
 conteggio legacy == conteggio target
 campi critici presenti
+assistitoId presente e uguale al documentId target
+assistitoId non derivato da fiscalCode/nome/email/telefono
+fiscalCode presente come campo dati quando disponibile
+fiscalCode non usato come documentId target
 dashboard coerente
 doctor link preservato
 therapeutic advice preservato
@@ -240,7 +333,7 @@ nessun aumento Firestore non dichiarato
 ## Stato del contratto
 
 ```text
-versione: 0.3-target-draft
+versione: 0.4-target-draft-assistitoid-auto
 stato: preparatorio
 runtime: non attivo
 migrazione: non avviata
