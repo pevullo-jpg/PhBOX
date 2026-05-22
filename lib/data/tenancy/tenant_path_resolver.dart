@@ -1,3 +1,5 @@
+import 'package:flutter/widgets.dart';
+
 enum TenantDataScope {
   legacyRoot,
 }
@@ -41,5 +43,30 @@ class TenantPathResolver {
       throw ArgumentError.value(value, label, 'Path con segmenti vuoti non valido.');
     }
     return normalized;
+  }
+}
+
+class TenantPathScope extends InheritedWidget {
+  final TenantPathResolver resolver;
+
+  const TenantPathScope({
+    super.key,
+    required this.resolver,
+    required super.child,
+  });
+
+  static TenantPathResolver? maybeOf(BuildContext context) {
+    return context.dependOnInheritedWidgetOfExactType<TenantPathScope>()?.resolver;
+  }
+
+  static TenantPathResolver of(BuildContext context) {
+    final TenantPathResolver? resolver = maybeOf(context);
+    assert(resolver != null, 'TenantPathScope not found in context.');
+    return resolver!;
+  }
+
+  @override
+  bool updateShouldNotify(covariant TenantPathScope oldWidget) {
+    return oldWidget.resolver != resolver;
   }
 }

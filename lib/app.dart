@@ -8,6 +8,7 @@ import 'data/models/backend_auth_status.dart';
 import 'data/models/tenant_access.dart';
 import 'data/repositories/backend_auth_status_repository.dart';
 import 'data/repositories/tenant_access_repository.dart';
+import 'data/tenancy/tenant_path_resolver.dart';
 import 'features/auth/models/tenant_session.dart';
 import 'features/auth/pages/tenant_access_denied_page.dart';
 import 'features/auth/pages/tenant_login_page.dart';
@@ -405,27 +406,32 @@ class _PhboxShellState extends State<_PhboxShell> {
   Widget build(BuildContext context) {
     return TenantSessionScope(
       session: widget.tenantSession,
-      child: Scaffold(
-        backgroundColor: AppColors.background,
-        body: ValueListenableBuilder<int>(
-          valueListenable: appNavigationIndex,
-          builder: (context, currentIndex, _) {
-            return Stack(
-              children: [
-                _buildPage(currentIndex),
-                FloatingPageMenu(
-                  currentIndex: currentIndex,
-                  onSelected: (index) {
-                    if (appNavigationIndex.value != index) {
-                      appNavigationIndex.value = index;
-                    }
-                  },
-                  onLogout: _signOut,
-                ),
-                _buildBackendAuthBanner(),
-              ],
-            );
-          },
+      child: TenantPathScope(
+        resolver: TenantPathResolver.legacyRoot(
+          tenantId: widget.tenantSession.tenantId,
+        ),
+        child: Scaffold(
+          backgroundColor: AppColors.background,
+          body: ValueListenableBuilder<int>(
+            valueListenable: appNavigationIndex,
+            builder: (context, currentIndex, _) {
+              return Stack(
+                children: [
+                  _buildPage(currentIndex),
+                  FloatingPageMenu(
+                    currentIndex: currentIndex,
+                    onSelected: (index) {
+                      if (appNavigationIndex.value != index) {
+                        appNavigationIndex.value = index;
+                      }
+                    },
+                    onLogout: _signOut,
+                  ),
+                  _buildBackendAuthBanner(),
+                ],
+              );
+            },
+          ),
         ),
       ),
     );
