@@ -1,7 +1,6 @@
 import '../models/target_multitenant_collections.dart';
 import '../validators/target_dry_run_plan_validator.dart';
 import '../writers/target_multitenant_writer_dry_run.dart';
-import 'target_write_executor_disabled.dart';
 
 abstract class TargetWriteCommitSink {
   Future<void> setDocument({
@@ -80,19 +79,19 @@ class TargetGuardedWriteBlocker {
   }
 }
 
-class TargetGuardedWriteCommittedIntent {
+class TargetGuardedWriteIntentSummary {
   final String operation;
   final String path;
   final String reason;
 
-  const TargetGuardedWriteCommittedIntent({
+  const TargetGuardedWriteIntentSummary({
     required this.operation,
     required this.path,
     required this.reason,
   });
 
-  factory TargetGuardedWriteCommittedIntent.fromIntent(TargetDryRunWriteIntent intent) {
-    return TargetGuardedWriteCommittedIntent(
+  factory TargetGuardedWriteIntentSummary.fromIntent(TargetDryRunWriteIntent intent) {
+    return TargetGuardedWriteIntentSummary(
       operation: intent.operation,
       path: intent.path,
       reason: intent.reason,
@@ -125,8 +124,8 @@ class TargetGuardedWriteExecutionResult {
   final bool skippedIntentsTruncated;
   final String executionError;
   final List<TargetGuardedWriteBlocker> blockers;
-  final List<TargetGuardedWriteCommittedIntent> committedIntents;
-  final List<TargetWriteExecutionSkippedIntent> skippedIntents;
+  final List<TargetGuardedWriteIntentSummary> committedIntents;
+  final List<TargetGuardedWriteIntentSummary> skippedIntents;
 
   const TargetGuardedWriteExecutionResult({
     required this.tenantId,
@@ -179,10 +178,10 @@ class TargetGuardedWriteExecutionResult {
           .map((TargetGuardedWriteBlocker blocker) => blocker.toMap())
           .toList(growable: false),
       'committedIntents': committedIntents
-          .map((TargetGuardedWriteCommittedIntent intent) => intent.toMap())
+          .map((TargetGuardedWriteIntentSummary intent) => intent.toMap())
           .toList(growable: false),
       'skippedIntents': skippedIntents
-          .map((TargetWriteExecutionSkippedIntent intent) => intent.toMap())
+          .map((TargetGuardedWriteIntentSummary intent) => intent.toMap())
           .toList(growable: false),
     };
   }
@@ -218,7 +217,7 @@ class TargetWriteExecutorGuarded {
     );
 
     if (blockers.isNotEmpty) {
-      final List<TargetWriteExecutionSkippedIntent> skipped = _boundedSkipped(
+      final List<TargetGuardedWriteIntentSummary> skipped = _boundedIntentSummaries(
         plan.intents,
         maxReported: maxReportedSkipped,
       );
@@ -239,13 +238,13 @@ class TargetWriteExecutorGuarded {
         skippedIntentsTruncated: plan.intentCount > skipped.length,
         executionError: '',
         blockers: List<TargetGuardedWriteBlocker>.unmodifiable(blockers),
-        committedIntents: const <TargetGuardedWriteCommittedIntent>[],
-        skippedIntents: List<TargetWriteExecutionSkippedIntent>.unmodifiable(skipped),
+        committedIntents: const <TargetGuardedWriteIntentSummary>[],
+        skippedIntents: List<TargetGuardedWriteIntentSummary>.unmodifiable(skipped),
       );
     }
 
-    final List<TargetGuardedWriteCommittedIntent> reportedCommitted =
-        <TargetGuardedWriteCommittedIntent>[];
+    final List<TargetGuardedWriteIntentSummary> reportedCommitted =
+        <TargetGuardedWriteIntentSummary>[];
     int writesCommitted = 0;
     String executionError = '';
 
@@ -260,7 +259,7 @@ class TargetWriteExecutorGuarded {
         }
         writesCommitted += 1;
         if (reportedCommitted.length < maxReportedCommitted) {
-          reportedCommitted.add(TargetGuardedWriteCommittedIntent.fromIntent(intent));
+          reportedCommitted.add(TargetGuardedWriteIntentSummary.fromIntent(intent));
         }
       } catch (error) {
         executionError = error.toString();
@@ -269,9 +268,9 @@ class TargetWriteExecutorGuarded {
     }
 
     final int skippedIntentCount = plan.intentCount - writesCommitted;
-    final List<TargetWriteExecutionSkippedIntent> skippedAfterError = executionError.isEmpty
-        ? const <TargetWriteExecutionSkippedIntent>[]
-        : _boundedSkipped(
+    final List<TargetGuardedWriteIntentSummary> skippedAfterError = executionError.isEmpty
+        ? const <TargetGuardedWriteIntentSummary>[]
+        : _boundedIntentSummaries(
             plan.intents.skip(writesCommitted),
             maxReported: maxReportedSkipped,
           );
@@ -293,8 +292,8 @@ class TargetWriteExecutorGuarded {
       skippedIntentsTruncated: skippedIntentCount > skippedAfterError.length,
       executionError: executionError,
       blockers: const <TargetGuardedWriteBlocker>[],
-      committedIntents: List<TargetGuardedWriteCommittedIntent>.unmodifiable(reportedCommitted),
-      skippedIntents: List<TargetWriteExecutionSkippedIntent>.unmodifiable(skippedAfterError),
+      committedIntents: List<TargetGuardedWriteIntentSummary>.unmodifiable(reportedCommitted),
+      skippedIntents: List<TargetGuardedWriteIntentSummary>.unmodifiable(skippedAfterError),
     );
   }
 
@@ -404,13 +403,13 @@ class TargetWriteExecutorGuarded {
   }
 }
 
-List<TargetWriteExecutionSkippedIntent> _boundedSkipped(
+List<TargetGuardedWriteIntentSummary> _boundedIntentSummaries(
   Iterable<TargetDryRunWriteIntent> intents, {
   required int maxReported,
 }) {
   return intents
       .take(maxReported)
-      .map(TargetWriteExecutionSkippedIntent.fromIntent)
+      .map(TargetGuardedWriteIntentSummary.fromIntent)
       .toList(growable: false);
 }
 
