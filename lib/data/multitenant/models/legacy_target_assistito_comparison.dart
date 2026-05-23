@@ -123,14 +123,29 @@ class LegacyTargetAssistitoComparison {
         actualValue: actual.assistitoId,
       ),
       LegacyTargetAssistitoFieldComparison.compare(
-        field: 'fiscalCode',
-        expectedValue: expected.fiscalCode.toUpperCase(),
-        actualValue: actual.fiscalCode.toUpperCase(),
+        field: 'cf',
+        expectedValue: expected.cf.toUpperCase(),
+        actualValue: actual.cf.toUpperCase(),
+      ),
+      LegacyTargetAssistitoFieldComparison.compare(
+        field: 'nome',
+        expectedValue: expected.nome.trim(),
+        actualValue: actual.nome.trim(),
+      ),
+      LegacyTargetAssistitoFieldComparison.compare(
+        field: 'cognome',
+        expectedValue: expected.cognome.trim(),
+        actualValue: actual.cognome.trim(),
       ),
       LegacyTargetAssistitoFieldComparison.compare(
         field: 'fullName',
         expectedValue: expected.fullName.trim(),
         actualValue: actual.fullName.trim(),
+      ),
+      LegacyTargetAssistitoFieldComparison.compare(
+        field: 'nameSplitConfidence',
+        expectedValue: expected.nameSplitConfidence.trim(),
+        actualValue: actual.nameSplitConfidence.trim(),
       ),
       LegacyTargetAssistitoFieldComparison.compare(
         field: 'searchPrefixes',

@@ -1,7 +1,12 @@
+import '../normalizers/target_assistito_identity_normalizer.dart';
+
 class TargetAssistito {
   final String assistitoId;
-  final String fiscalCode;
+  final String cf;
+  final String nome;
+  final String cognome;
   final String fullName;
+  final String nameSplitConfidence;
   final List<String> searchPrefixes;
   final Map<String, dynamic> doctor;
   final Map<String, dynamic> dashboard;
@@ -12,8 +17,11 @@ class TargetAssistito {
 
   const TargetAssistito({
     required this.assistitoId,
-    required this.fiscalCode,
+    required this.cf,
+    required this.nome,
+    required this.cognome,
     required this.fullName,
+    required this.nameSplitConfidence,
     required this.searchPrefixes,
     required this.doctor,
     required this.dashboard,
@@ -23,14 +31,21 @@ class TargetAssistito {
     required this.sourceVersion,
   });
 
+  String get fiscalCode => cf;
+
   factory TargetAssistito.empty({
     required String assistitoId,
-    required String fiscalCode,
+    String cf = '',
+    String fiscalCode = '',
   }) {
+    final String resolvedCf = cf.trim().isNotEmpty ? cf : fiscalCode;
     return TargetAssistito(
       assistitoId: assistitoId.trim(),
-      fiscalCode: fiscalCode.trim().toUpperCase(),
+      cf: TargetAssistitoIdentityNormalizer.normalizeCf(resolvedCf),
+      nome: '',
+      cognome: '',
       fullName: '',
+      nameSplitConfidence: TargetAssistitoIdentityNormalizer.splitConfidenceFallback,
       searchPrefixes: const <String>[],
       doctor: const <String, dynamic>{},
       dashboard: const <String, dynamic>{},
@@ -45,10 +60,26 @@ class TargetAssistito {
     required String assistitoId,
     required Map<String, dynamic> map,
   }) {
+    final String cf = _readFirstString(map, const <String>['cf', 'fiscalCode', 'codiceFiscale']);
+    final String nome = _readFirstString(map, const <String>['nome', 'firstName', 'givenName']);
+    final String cognome = _readFirstString(map, const <String>['cognome', 'lastName', 'surname', 'familyName']);
+    final String fullName = _readString(map['fullName']);
+    final TargetAssistitoIdentityNormalizationResult normalized = const TargetAssistitoIdentityNormalizer().normalize(
+      rawCf: cf,
+      rawNome: nome,
+      rawCognome: cognome,
+      rawFullName: fullName,
+    );
+
     return TargetAssistito(
       assistitoId: assistitoId.trim(),
-      fiscalCode: _readString(map['fiscalCode']).toUpperCase(),
-      fullName: _readString(map['fullName']),
+      cf: normalized.cf,
+      nome: normalized.nome,
+      cognome: normalized.cognome,
+      fullName: normalized.fullName,
+      nameSplitConfidence: _readString(map['nameSplitConfidence']).isEmpty
+          ? normalized.nameSplitConfidence
+          : _readString(map['nameSplitConfidence']),
       searchPrefixes: _readStringList(map['searchPrefixes']),
       doctor: _readMap(map['doctor']),
       dashboard: _readMap(map['dashboard']),
@@ -61,8 +92,12 @@ class TargetAssistito {
 
   Map<String, dynamic> toMap() {
     return <String, dynamic>{
-      'fiscalCode': fiscalCode,
+      'assistitoId': assistitoId,
+      'cf': cf,
+      'nome': nome,
+      'cognome': cognome,
       'fullName': fullName,
+      'nameSplitConfidence': nameSplitConfidence,
       'searchPrefixes': searchPrefixes,
       'doctor': doctor,
       'dashboard': dashboard,
@@ -71,6 +106,16 @@ class TargetAssistito {
       'updatedAt': updatedAt,
       'sourceVersion': sourceVersion,
     };
+  }
+
+  static String _readFirstString(Map<String, dynamic> map, List<String> keys) {
+    for (final String key in keys) {
+      final String value = _readString(map[key]);
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+    return '';
   }
 
   static String _readString(Object? value) {
