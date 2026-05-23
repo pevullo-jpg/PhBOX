@@ -21,6 +21,7 @@ class LegacyTargetAssistitoVerificationResult {
   final String expectedAssistitoId;
   final String targetDocumentId;
   final bool targetDocumentPresent;
+  final bool targetDocumentIdProvided;
   final bool targetDocumentIdMatchesExpected;
   final LegacyTargetAssistitoComparison comparison;
 
@@ -28,12 +29,16 @@ class LegacyTargetAssistitoVerificationResult {
     required this.expectedAssistitoId,
     required this.targetDocumentId,
     required this.targetDocumentPresent,
+    required this.targetDocumentIdProvided,
     required this.targetDocumentIdMatchesExpected,
     required this.comparison,
   });
 
   bool get verified {
-    return targetDocumentPresent && targetDocumentIdMatchesExpected && comparison.matches;
+    return targetDocumentPresent &&
+        targetDocumentIdProvided &&
+        targetDocumentIdMatchesExpected &&
+        comparison.matches;
   }
 
   bool get hasIssues => !verified;
@@ -43,6 +48,7 @@ class LegacyTargetAssistitoVerificationResult {
       'expectedAssistitoId': expectedAssistitoId,
       'targetDocumentId': targetDocumentId,
       'targetDocumentPresent': targetDocumentPresent,
+      'targetDocumentIdProvided': targetDocumentIdProvided,
       'targetDocumentIdMatchesExpected': targetDocumentIdMatchesExpected,
       'verified': verified,
       'hasIssues': hasIssues,
@@ -57,6 +63,7 @@ class LegacyTargetAssistitoVerificationReport {
   final int issueCount;
   final int targetDocumentPresentCount;
   final int targetDocumentMissingCount;
+  final int targetDocumentIdMissingCount;
   final int targetDocumentIdMismatchCount;
   final LegacyTargetAssistitoComparisonReport comparisonReport;
 
@@ -66,6 +73,7 @@ class LegacyTargetAssistitoVerificationReport {
     required this.issueCount,
     required this.targetDocumentPresentCount,
     required this.targetDocumentMissingCount,
+    required this.targetDocumentIdMissingCount,
     required this.targetDocumentIdMismatchCount,
     required this.comparisonReport,
   });
@@ -83,6 +91,7 @@ class LegacyTargetAssistitoVerificationReport {
       'issueCount': issueCount,
       'targetDocumentPresentCount': targetDocumentPresentCount,
       'targetDocumentMissingCount': targetDocumentMissingCount,
+      'targetDocumentIdMissingCount': targetDocumentIdMissingCount,
       'targetDocumentIdMismatchCount': targetDocumentIdMismatchCount,
       'allVerified': allVerified,
       'hasIssues': hasIssues,
@@ -105,24 +114,22 @@ class LegacyTargetAssistitoVerifier {
     bool compareTimestamps = false,
   }) {
     final TargetAssistito expected = mapper.map(legacy);
-    final String resolvedTargetDocumentId = targetDocumentId.trim().isEmpty
-        ? expected.assistitoId
-        : targetDocumentId.trim();
+    final String normalizedTargetDocumentId = targetDocumentId.trim();
     final Map<String, dynamic> resolvedTargetData =
         targetData == null ? const <String, dynamic>{} : Map<String, dynamic>.unmodifiable(targetData);
 
     final TargetAssistito actual = targetData == null
         ? TargetAssistito.empty(
-            assistitoId: resolvedTargetDocumentId,
+            assistitoId: normalizedTargetDocumentId,
           )
         : TargetAssistito.fromMap(
-            assistitoId: resolvedTargetDocumentId,
+            assistitoId: normalizedTargetDocumentId,
             map: resolvedTargetData,
           );
 
     final TargetAssistitoDocumentIdentityComparison documentIdentity =
         TargetAssistitoDocumentIdentityComparison.fromDocument(
-      documentId: resolvedTargetDocumentId,
+      documentId: normalizedTargetDocumentId,
       data: resolvedTargetData,
     );
 
@@ -134,11 +141,14 @@ class LegacyTargetAssistitoVerifier {
       compareTimestamps: compareTimestamps,
     );
 
+    final bool targetDocumentIdProvided = normalizedTargetDocumentId.isNotEmpty;
+
     return LegacyTargetAssistitoVerificationResult(
       expectedAssistitoId: expected.assistitoId,
-      targetDocumentId: resolvedTargetDocumentId,
+      targetDocumentId: normalizedTargetDocumentId,
       targetDocumentPresent: targetData != null,
-      targetDocumentIdMatchesExpected: expected.assistitoId == resolvedTargetDocumentId,
+      targetDocumentIdProvided: targetDocumentIdProvided,
+      targetDocumentIdMatchesExpected: targetDocumentIdProvided && expected.assistitoId == normalizedTargetDocumentId,
       comparison: comparison,
     );
   }
@@ -154,6 +164,7 @@ class LegacyTargetAssistitoVerifier {
     int verifiedCount = 0;
     int targetDocumentPresentCount = 0;
     int targetDocumentMissingCount = 0;
+    int targetDocumentIdMissingCount = 0;
     int targetDocumentIdMismatchCount = 0;
 
     final List<LegacyTargetAssistitoComparison> comparisons =
@@ -172,6 +183,10 @@ class LegacyTargetAssistitoVerifier {
         targetDocumentPresentCount += 1;
       } else {
         targetDocumentMissingCount += 1;
+      }
+
+      if (!result.targetDocumentIdProvided) {
+        targetDocumentIdMissingCount += 1;
       }
 
       if (!result.targetDocumentIdMatchesExpected) {
@@ -199,6 +214,7 @@ class LegacyTargetAssistitoVerifier {
       issueCount: inputCount - verifiedCount,
       targetDocumentPresentCount: targetDocumentPresentCount,
       targetDocumentMissingCount: targetDocumentMissingCount,
+      targetDocumentIdMissingCount: targetDocumentIdMissingCount,
       targetDocumentIdMismatchCount: targetDocumentIdMismatchCount,
       comparisonReport: comparisonReport,
     );
