@@ -1,4 +1,5 @@
 import '../models/target_assistito.dart';
+import '../normalizers/target_assistito_identity_normalizer.dart';
 
 class LegacyAssistitoSourceBundle {
   final String assistitoId;
@@ -21,65 +22,100 @@ class LegacyAssistitoSourceBundle {
 }
 
 class LegacyToTargetAssistitoMapper {
-  static const String fallbackFullName = 'Assistito senza nome';
+  static const String fallbackFullName = TargetAssistitoIdentityNormalizer.fallbackFullName;
   static const int maxSearchPrefixCount = 64;
   static const int maxSearchPrefixLength = 40;
 
-  const LegacyToTargetAssistitoMapper();
+  final TargetAssistitoIdentityNormalizer identityNormalizer;
+
+  const LegacyToTargetAssistitoMapper({
+    this.identityNormalizer = const TargetAssistitoIdentityNormalizer(),
+  });
 
   TargetAssistito map(LegacyAssistitoSourceBundle source) {
-    final String fiscalCode = _resolveFiscalCode(source);
-    final String assistitoId = _resolveAssistitoId(source, fiscalCode: fiscalCode);
-    final String? validFullName = _resolveValidFullName(source);
-    final String fullName = validFullName ?? fallbackFullName;
+    final String assistitoId = _resolveAssistitoId(source);
+    final TargetAssistitoIdentityNormalizationResult identity = identityNormalizer.normalize(
+      rawCf: _resolveFiscalCode(source),
+      rawNome: _resolveNome(source),
+      rawCognome: _resolveCognome(source),
+      rawFullName: _resolveFullName(source),
+    );
 
     return TargetAssistito(
       assistitoId: assistitoId,
-      fiscalCode: fiscalCode,
-      fullName: fullName,
-      searchPrefixes: validFullName == null ? const <String>[] : _buildSearchPrefixes(validFullName),
+      cf: identity.cf,
+      nome: identity.nome,
+      cognome: identity.cognome,
+      fullName: identity.fullName,
+      nameSplitConfidence: identity.nameSplitConfidence,
+      searchPrefixes: identity.hasValidName ? _buildSearchPrefixes(identity.fullName) : const <String>[],
       doctor: _resolveDoctor(source),
       dashboard: _sanitizeDashboard(source.dashboardIndex),
       therapeuticAdvice: _sanitizeMap(source.therapeuticAdvice),
       createdAt: _resolveCreatedAt(source),
       updatedAt: _resolveUpdatedAt(source),
-      sourceVersion: 1,
+      sourceVersion: 2,
+    );
+  }
+
+  String _resolveAssistitoId(LegacyAssistitoSourceBundle source) {
+    final String explicit = _readString(source.assistitoId);
+    if (explicit.isNotEmpty && !explicit.contains('/')) {
+      return explicit;
+    }
+    throw ArgumentError.value(
+      source.assistitoId,
+      'assistitoId',
+      'Assistito target privo di identificativo tecnico valido.',
     );
   }
 
   String _resolveFiscalCode(LegacyAssistitoSourceBundle source) {
     final List<Object?> candidates = <Object?>[
       source.fiscalCode,
+      source.patient['cf'],
       source.patient['fiscalCode'],
       source.patient['codiceFiscale'],
-      source.patient['cf'],
+      source.dashboardIndex['cf'],
       source.dashboardIndex['fiscalCode'],
       source.dashboardIndex['codiceFiscale'],
-      source.dashboardIndex['cf'],
       source.assistitoId,
     ];
     for (final Object? candidate in candidates) {
-      final String value = _readString(candidate).toUpperCase();
-      if (_isFiscalCodeLike(value)) {
+      final String value = TargetAssistitoIdentityNormalizer.normalizeCf(_readString(candidate));
+      if (TargetAssistitoIdentityNormalizer.isFiscalCodeLike(value)) {
         return value;
       }
     }
-    return _readString(source.fiscalCode).toUpperCase();
+    return TargetAssistitoIdentityNormalizer.normalizeCf(source.fiscalCode);
   }
 
-  String _resolveAssistitoId(LegacyAssistitoSourceBundle source, {required String fiscalCode}) {
-    final String explicit = _readString(source.assistitoId).toUpperCase();
-    if (explicit.isNotEmpty && !explicit.contains('/')) {
-      return explicit;
-    }
-    if (fiscalCode.isNotEmpty && !fiscalCode.contains('/')) {
-      return fiscalCode;
-    }
-    throw ArgumentError.value(source.assistitoId, 'assistitoId', 'Assistito target privo di identificativo valido.');
+  String _resolveNome(LegacyAssistitoSourceBundle source) {
+    return _firstReadableString(<Object?>[
+      source.patient['nome'],
+      source.patient['firstName'],
+      source.patient['givenName'],
+      source.dashboardIndex['nome'],
+      source.dashboardIndex['firstName'],
+      source.dashboardIndex['givenName'],
+    ]);
   }
 
-  String? _resolveValidFullName(LegacyAssistitoSourceBundle source) {
-    final List<Object?> candidates = <Object?>[
+  String _resolveCognome(LegacyAssistitoSourceBundle source) {
+    return _firstReadableString(<Object?>[
+      source.patient['cognome'],
+      source.patient['lastName'],
+      source.patient['surname'],
+      source.patient['familyName'],
+      source.dashboardIndex['cognome'],
+      source.dashboardIndex['lastName'],
+      source.dashboardIndex['surname'],
+      source.dashboardIndex['familyName'],
+    ]);
+  }
+
+  String _resolveFullName(LegacyAssistitoSourceBundle source) {
+    return _firstValidHumanName(<Object?>[
       source.patient['fullName'],
       source.patient['displayName'],
       source.patient['name'],
@@ -88,14 +124,30 @@ class LegacyToTargetAssistitoMapper {
       source.dashboardIndex['fullName'],
       source.dashboardIndex['displayName'],
       source.dashboardIndex['patientName'],
-    ];
+    ]);
+  }
+
+  String _firstReadableString(Iterable<Object?> candidates) {
     for (final Object? candidate in candidates) {
       final String value = _normalizeWhitespace(_readString(candidate));
-      if (_isValidHumanName(value)) {
+      if (value.isNotEmpty &&
+          !TargetAssistitoIdentityNormalizer.isFiscalCodeLike(value) &&
+          !TargetAssistitoIdentityNormalizer.containsFiscalCodeLikeToken(value) &&
+          !TargetAssistitoIdentityNormalizer.isOcrFragment(value)) {
         return value;
       }
     }
-    return null;
+    return '';
+  }
+
+  String _firstValidHumanName(Iterable<Object?> candidates) {
+    for (final Object? candidate in candidates) {
+      final String value = TargetAssistitoIdentityNormalizer.normalizeFullName(_readString(candidate));
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+    return '';
   }
 
   Map<String, dynamic> _resolveDoctor(LegacyAssistitoSourceBundle source) {
@@ -123,6 +175,16 @@ class LegacyToTargetAssistitoMapper {
       return const <String, dynamic>{};
     }
     final Map<String, dynamic> copy = Map<String, dynamic>.of(sanitized)
+      ..remove('cf')
+      ..remove('fiscalCode')
+      ..remove('codiceFiscale')
+      ..remove('nome')
+      ..remove('cognome')
+      ..remove('firstName')
+      ..remove('lastName')
+      ..remove('givenName')
+      ..remove('familyName')
+      ..remove('surname')
       ..remove('fullName')
       ..remove('displayName')
       ..remove('patientName')
@@ -185,7 +247,10 @@ class LegacyToTargetAssistitoMapper {
 
   List<String> _buildSearchPrefixes(String fullName) {
     final String normalized = _normalizeWhitespace(fullName).toLowerCase();
-    if (!_isValidHumanName(normalized)) {
+    if (normalized.isEmpty ||
+        TargetAssistitoIdentityNormalizer.isPlaceholderName(normalized) ||
+        TargetAssistitoIdentityNormalizer.isFiscalCodeLike(normalized) ||
+        TargetAssistitoIdentityNormalizer.containsFiscalCodeLikeToken(normalized)) {
       return const <String>[];
     }
 
@@ -193,7 +258,12 @@ class LegacyToTargetAssistitoMapper {
     final List<String> tokens = normalized
         .split(' ')
         .map((String token) => token.trim())
-        .where((String token) => token.length >= 2 && !_isOcrFragment(token) && !_isFiscalCodeLike(token.toUpperCase()))
+        .where(
+          (String token) =>
+              token.length >= 2 &&
+              !TargetAssistitoIdentityNormalizer.isOcrFragment(token) &&
+              !TargetAssistitoIdentityNormalizer.isFiscalCodeLike(token),
+        )
         .toList(growable: false);
 
     for (final String token in tokens) {
@@ -224,43 +294,6 @@ String _readString(Object? value) {
 
 String _normalizeWhitespace(String value) {
   return value.trim().replaceAll(RegExp(r'\s+'), ' ');
-}
-
-bool _isValidHumanName(String value) {
-  final String normalized = _normalizeWhitespace(value);
-  if (normalized.isEmpty) {
-    return false;
-  }
-  if (normalized.toLowerCase() == LegacyToTargetAssistitoMapper.fallbackFullName.toLowerCase()) {
-    return false;
-  }
-  if (_isFiscalCodeLike(normalized.toUpperCase())) {
-    return false;
-  }
-  final List<String> tokens = normalized.split(' ');
-  if (tokens.any((String token) => _isFiscalCodeLike(token.toUpperCase()))) {
-    return false;
-  }
-  if (tokens.any(_isOcrFragment)) {
-    return false;
-  }
-  return normalized.length >= 3;
-}
-
-bool _isFiscalCodeLike(String value) {
-  return RegExp(r'^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$').hasMatch(value);
-}
-
-bool _isOcrFragment(String value) {
-  final String normalized = value.trim().toUpperCase();
-  if (normalized.length < 5 || normalized.length > 8) {
-    return false;
-  }
-  if (!RegExp(r'^[A-Z]+$').hasMatch(normalized)) {
-    return false;
-  }
-  final bool hasVowel = RegExp('[AEIOU]').hasMatch(normalized);
-  return !hasVowel;
 }
 
 DateTime? _readDate(Object? value) {
