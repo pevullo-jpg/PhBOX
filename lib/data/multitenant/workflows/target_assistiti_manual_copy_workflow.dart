@@ -56,6 +56,7 @@ class TargetAssistitiManualCopyPreparationResult {
   final int plannedAssistitiCount;
   final int maxAssistitiPerRun;
   final bool sourceLimitExceeded;
+  final bool sourceScanStoppedAtLimit;
   final int duplicateAssistitoIdCount;
   final TargetDryRunWritePlan plan;
   final TargetDryRunPlanValidationResult validation;
@@ -68,6 +69,7 @@ class TargetAssistitiManualCopyPreparationResult {
     required this.plannedAssistitiCount,
     required this.maxAssistitiPerRun,
     required this.sourceLimitExceeded,
+    required this.sourceScanStoppedAtLimit,
     required this.duplicateAssistitoIdCount,
     required this.plan,
     required this.validation,
@@ -77,19 +79,45 @@ class TargetAssistitiManualCopyPreparationResult {
 
   bool get canExecute => blockers.isEmpty && validation.isValid && plan.isNotEmpty;
   bool get blocked => !canExecute;
+  bool get validationFailed => validation.isNotValid;
+  bool get hasInputBlockers => blockers.isNotEmpty;
+
+  String get statusCode {
+    if (sourceLimitExceeded) {
+      return 'source_limit_exceeded';
+    }
+    if (duplicateAssistitoIdCount > 0) {
+      return 'duplicate_assistito_id';
+    }
+    if (requestedSourceCount == 0) {
+      return 'sources_empty';
+    }
+    if (validationFailed) {
+      return 'validation_failed';
+    }
+    if (plan.isEmpty) {
+      return 'plan_empty';
+    }
+    return 'ready';
+  }
 
   Map<String, dynamic> toMap() {
     return <String, dynamic>{
       'tenantId': tenantId,
       'requestedSourceCount': requestedSourceCount,
+      'requestedSourceCountMayBeTruncated': sourceScanStoppedAtLimit,
       'plannedAssistitiCount': plannedAssistitiCount,
       'maxAssistitiPerRun': maxAssistitiPerRun,
       'sourceLimitExceeded': sourceLimitExceeded,
+      'sourceScanStoppedAtLimit': sourceScanStoppedAtLimit,
       'duplicateAssistitoIdCount': duplicateAssistitoIdCount,
+      'statusCode': statusCode,
       'canExecute': canExecute,
       'blocked': blocked,
+      'hasInputBlockers': hasInputBlockers,
       'planIntentCount': plan.intentCount,
       'validationValid': validation.isValid,
+      'validationFailed': validationFailed,
       'validationIssueCount': validation.issueCount,
       'validationIssues': validation.issues
           .map(
@@ -123,7 +151,79 @@ class TargetAssistitiManualCopyWorkflowResult {
   bool get completed => execution?.completed ?? false;
   bool get blocked => !executed || preparation.blocked || (execution?.blocked ?? false);
   bool get partialCommit => execution?.partialCommit ?? false;
+  bool get executionFailed => (execution?.executionError ?? '').isNotEmpty;
+  bool get noWritesCommitted => writesCommitted == 0;
+  bool get automaticRetryAllowed => false;
+  bool get sameBatchManualRetryAllowed {
+    return executed && !completed && !partialCommit && noWritesCommitted;
+  }
+
+  bool get manualRebuildRequired {
+    return preparation.blocked || preparation.validationFailed;
+  }
+
+  bool get postCopyVerificationRequiredBeforeRetry {
+    return !completed && writesCommitted > 0;
+  }
+
   int get writesCommitted => execution?.writesCommitted ?? 0;
+
+  String get outcomeCode {
+    if (preparation.blocked) {
+      return 'preparation_blocked';
+    }
+    if (!executed) {
+      return 'not_executed';
+    }
+    final TargetGuardedWriteExecutionResult resolvedExecution = execution!;
+    if (resolvedExecution.completed) {
+      return 'completed';
+    }
+    if (resolvedExecution.partialCommit) {
+      return 'partial_commit';
+    }
+    if (resolvedExecution.blocked) {
+      return 'execution_blocked';
+    }
+    if (resolvedExecution.executionError.isNotEmpty && resolvedExecution.writesCommitted == 0) {
+      return 'execution_failed_no_commit';
+    }
+    if (resolvedExecution.executionError.isNotEmpty) {
+      return 'execution_failed';
+    }
+    return 'incomplete';
+  }
+
+  String get retryPolicyCode {
+    if (completed) {
+      return 'none_completed';
+    }
+    if (manualRebuildRequired) {
+      return 'manual_rebuild_required';
+    }
+    if (postCopyVerificationRequiredBeforeRetry) {
+      return 'verify_target_before_retry';
+    }
+    if (sameBatchManualRetryAllowed) {
+      return 'manual_retry_allowed_no_writes_committed';
+    }
+    return 'manual_review_required';
+  }
+
+  String get operatorAction {
+    switch (retryPolicyCode) {
+      case 'none_completed':
+        return 'Copia completata: non ripetere il run senza nuova verifica.';
+      case 'manual_rebuild_required':
+        return 'Correggere input/limiti/duplicati e ricostruire manualmente il batch.';
+      case 'verify_target_before_retry':
+        return 'Eseguire verifica post-copia prima di qualsiasi retry manuale.';
+      case 'manual_retry_allowed_no_writes_committed':
+        return 'Retry manuale ammesso solo dopo controllo operatore: nessuna write risulta committata.';
+      default:
+        return 'Richiesta revisione manuale prima di ripetere la copia.';
+    }
+  }
 
   Map<String, dynamic> toMap() {
     return <String, dynamic>{
@@ -131,7 +231,16 @@ class TargetAssistitiManualCopyWorkflowResult {
       'completed': completed,
       'blocked': blocked,
       'partialCommit': partialCommit,
+      'executionFailed': executionFailed,
       'writesCommitted': writesCommitted,
+      'noWritesCommitted': noWritesCommitted,
+      'outcomeCode': outcomeCode,
+      'automaticRetryAllowed': automaticRetryAllowed,
+      'sameBatchManualRetryAllowed': sameBatchManualRetryAllowed,
+      'manualRebuildRequired': manualRebuildRequired,
+      'postCopyVerificationRequiredBeforeRetry': postCopyVerificationRequiredBeforeRetry,
+      'retryPolicyCode': retryPolicyCode,
+      'operatorAction': operatorAction,
       'preparation': preparation.toMap(),
       'execution': execution?.toMap(),
     };
@@ -165,16 +274,20 @@ class TargetAssistitiManualCopyWorkflow {
     int requestedSourceCount = 0;
     int duplicateAssistitoIdCount = 0;
     bool sourceLimitExceeded = false;
+    bool sourceScanStoppedAtLimit = false;
     final Set<String> seenAssistitoIds = <String>{};
     final List<TargetAssistito> assistiti = <TargetAssistito>[];
     final List<TargetAssistitiManualCopyBlocker> blockers = <TargetAssistitiManualCopyBlocker>[];
 
     for (final LegacyAssistitoSourceBundle source in sources) {
-      requestedSourceCount += 1;
-      if (requestedSourceCount > safeLimit) {
+      if (requestedSourceCount >= safeLimit) {
+        requestedSourceCount += 1;
         sourceLimitExceeded = true;
-        continue;
+        sourceScanStoppedAtLimit = true;
+        break;
       }
+
+      requestedSourceCount += 1;
       final TargetAssistito assistito = mapper.map(source);
       if (!seenAssistitoIds.add(assistito.assistitoId)) {
         duplicateAssistitoIdCount += 1;
@@ -202,7 +315,7 @@ class TargetAssistitiManualCopyWorkflow {
 
     if (duplicateAssistitoIdCount > 0) {
       blockers.add(
-        TargetAssistitiManualCopyBlocker(
+        const TargetAssistitiManualCopyBlocker(
           code: 'duplicate_assistito_id',
           message: 'Sono presenti assistitoId duplicati nel batch manuale.',
         ),
@@ -228,6 +341,7 @@ class TargetAssistitiManualCopyWorkflow {
       plannedAssistitiCount: assistiti.length,
       maxAssistitiPerRun: safeLimit,
       sourceLimitExceeded: sourceLimitExceeded,
+      sourceScanStoppedAtLimit: sourceScanStoppedAtLimit,
       duplicateAssistitoIdCount: duplicateAssistitoIdCount,
       plan: plan,
       validation: validation,
