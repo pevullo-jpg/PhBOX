@@ -1,14 +1,15 @@
 import '../mappers/legacy_to_target_assistito_mapper.dart';
 
 class TargetAssistitiSyntheticCopySources {
-  static const String scenarioId = 'synthetic_family_normalization_v3';
-  static const String syntheticFamilyId = 'syn_family_0001';
+  static const String scenarioId = 'synthetic_family_normalization_v4';
+  static const String syntheticFamilyId = 'family_synthetic_villa_v4';
   static const String syntheticCreatedAt = '2026-01-01T00:00:00.000Z';
   static const String syntheticUpdatedAt = '2026-01-02T00:00:00.000Z';
-  static const Map<String, dynamic> syntheticDoctor = <String, dynamic>{
-    'medico': 'Dott.ssa Elena Ferri',
+
+  static const Map<String, dynamic> syntheticDoctorManualLink = <String, dynamic>{
+    'medicoNome': 'Elena',
+    'medicoCognome': 'Ferri',
     'codiceMedico': 'MED-SYN-001',
-    'ambulatorio': 'Studio medico sintetico',
   };
 
   static const List<LegacyAssistitoSourceBundle> familyNormalizationBatch =
@@ -26,7 +27,7 @@ class TargetAssistitiSyntheticCopySources {
         'syntheticScenario': scenarioId,
         'syntheticFamilyId': syntheticFamilyId,
       },
-      doctorManualLink: syntheticDoctor,
+      doctorManualLink: syntheticDoctorManualLink,
     ),
     LegacyAssistitoSourceBundle(
       assistitoId: 'syn_assistito_0002',
@@ -41,7 +42,7 @@ class TargetAssistitiSyntheticCopySources {
         'syntheticScenario': scenarioId,
         'syntheticFamilyId': syntheticFamilyId,
       },
-      doctorManualLink: syntheticDoctor,
+      doctorManualLink: syntheticDoctorManualLink,
     ),
     LegacyAssistitoSourceBundle(
       assistitoId: 'syn_assistito_0003',
@@ -56,7 +57,7 @@ class TargetAssistitiSyntheticCopySources {
         'syntheticScenario': scenarioId,
         'syntheticFamilyId': syntheticFamilyId,
       },
-      doctorManualLink: syntheticDoctor,
+      doctorManualLink: syntheticDoctorManualLink,
     ),
   ];
 

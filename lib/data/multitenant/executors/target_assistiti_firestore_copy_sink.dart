@@ -148,6 +148,12 @@ class TargetAssistitiFirestoreCopySink implements TargetWriteCommitSink {
       );
     }
 
+    _rejectMissingRootField(path: path, data: data, field: 'nome');
+    _rejectMissingRootField(path: path, data: data, field: 'cognome');
+    _rejectMissingRootField(path: path, data: data, field: 'fullName');
+    _rejectMissingRootField(path: path, data: data, field: 'nameSplitConfidence');
+    _rejectMissingRootField(path: path, data: data, field: 'searchPrefixes');
+
     final String cf = _readString(data['cf']);
     if (cf.isNotEmpty && cf != cf.toUpperCase()) {
       throw TargetAssistitiFirestoreCopyRejectedException(
@@ -186,6 +192,20 @@ class TargetAssistitiFirestoreCopySink implements TargetWriteCommitSink {
       hasDoctor: data.containsKey('doctor'),
       value: data['doctor'],
     );
+  }
+
+  static void _rejectMissingRootField({
+    required String path,
+    required Map<String, dynamic> data,
+    required String field,
+  }) {
+    if (!data.containsKey(field)) {
+      throw TargetAssistitiFirestoreCopyRejectedException(
+        code: '${_normalizeMapKey(field)}_missing',
+        message: 'Il payload assistito target deve contenere il campo root $field.',
+        path: path,
+      );
+    }
   }
 
   static void _rejectCfContamination({
@@ -261,46 +281,68 @@ class TargetAssistitiFirestoreCopySink implements TargetWriteCommitSink {
       );
     }
 
-    _rejectDoctorIdentityContaminationInValue(
-      path: path,
-      value: value,
-      breadcrumb: 'doctor',
-    );
+    _validateDoctorMap(path: path, value: value, depth: 0);
   }
 
-  static void _rejectDoctorIdentityContaminationInValue({
+  static void _validateDoctorMap({
     required String path,
-    required Object? value,
-    required String breadcrumb,
+    required Map<dynamic, dynamic> value,
+    required int depth,
   }) {
-    if (value is Map) {
-      for (final MapEntry<dynamic, dynamic> entry in value.entries) {
-        final String normalizedKey = _normalizeMapKey(entry.key);
-        if (_doctorIdentityKeys.contains(normalizedKey)) {
-          throw TargetAssistitiFirestoreCopyRejectedException(
-            code: 'doctor_identity_contamination',
-            message: 'doctor non può contenere campi identità assistito: $breadcrumb.${entry.key}.',
-            path: path,
-          );
-        }
-        _rejectDoctorIdentityContaminationInValue(
-          path: path,
-          value: entry.value,
-          breadcrumb: '$breadcrumb.${entry.key}',
-        );
-      }
-      return;
+    if (depth > 4) {
+      throw TargetAssistitiFirestoreCopyRejectedException(
+        code: 'doctor_nesting_too_deep',
+        message: 'doctor contiene una struttura annidata non ammessa.',
+        path: path,
+      );
     }
 
-    if (value is Iterable) {
-      int index = 0;
-      for (final Object? item in value) {
-        _rejectDoctorIdentityContaminationInValue(
+    for (final MapEntry<dynamic, dynamic> entry in value.entries) {
+      final String normalizedKey = _normalizeMapKey(entry.key);
+      if (_doctorIdentityKeys.contains(normalizedKey)) {
+        throw TargetAssistitiFirestoreCopyRejectedException(
+          code: 'doctor_identity_contamination',
+          message: 'doctor non può contenere campi identità assistito: $normalizedKey.',
           path: path,
-          value: item,
-          breadcrumb: '$breadcrumb[$index]',
         );
-        index += 1;
+      }
+      if (_doctorUnsupportedKeys.contains(normalizedKey)) {
+        throw TargetAssistitiFirestoreCopyRejectedException(
+          code: 'doctor_unsupported_field',
+          message: 'doctor contiene un campo non ammesso: $normalizedKey.',
+          path: path,
+        );
+      }
+
+      final Object? item = entry.value;
+      if (item is Map) {
+        _validateDoctorMap(path: path, value: item, depth: depth + 1);
+      }
+      if (item is Iterable) {
+        _validateDoctorIterable(path: path, value: item, depth: depth + 1);
+      }
+    }
+  }
+
+  static void _validateDoctorIterable({
+    required String path,
+    required Iterable<dynamic> value,
+    required int depth,
+  }) {
+    if (depth > 4) {
+      throw TargetAssistitiFirestoreCopyRejectedException(
+        code: 'doctor_nesting_too_deep',
+        message: 'doctor contiene una struttura annidata non ammessa.',
+        path: path,
+      );
+    }
+
+    for (final Object? item in value) {
+      if (item is Map) {
+        _validateDoctorMap(path: path, value: item, depth: depth + 1);
+      }
+      if (item is Iterable) {
+        _validateDoctorIterable(path: path, value: item, depth: depth + 1);
       }
     }
   }
@@ -321,6 +363,10 @@ class TargetAssistitiFirestoreCopySink implements TargetWriteCommitSink {
     'patientname',
     'searchprefixes',
     'surname',
+  };
+
+  static final Set<String> _doctorUnsupportedKeys = <String>{
+    'ambulatorio',
   };
 
   static String _normalizeMapKey(Object? key) {
