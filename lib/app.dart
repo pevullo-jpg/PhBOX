@@ -15,6 +15,7 @@ import 'features/auth/pages/tenant_login_page.dart';
 import 'features/auth/services/email_password_session_guard.dart';
 import 'features/dashboard/pages/dashboard_page.dart';
 import 'features/families/pages/families_page.dart';
+import 'features/multitenant/pages/target_assistiti_read_only_page.dart';
 import 'features/settings/pages/settings_page.dart';
 import 'shared/navigation/app_navigation.dart';
 import 'shared/widgets/floating_page_menu.dart';
@@ -297,6 +298,8 @@ class _PhboxShellState extends State<_PhboxShell> {
         return const FamiliesPage();
       case 2:
         return const SettingsPage();
+      case 3:
+        return const TargetAssistitiReadOnlyPage();
       case 0:
       default:
         return const DashboardPage();

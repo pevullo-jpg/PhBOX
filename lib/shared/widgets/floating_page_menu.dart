@@ -70,6 +70,12 @@ class FloatingPageMenu extends StatelessWidget {
                     selected: currentIndex == 2,
                     onTap: () => onSelected(2),
                   ),
+                  _MenuIconButton(
+                    icon: Icons.people_alt_rounded,
+                    tooltip: 'Assistiti target',
+                    selected: currentIndex == 3,
+                    onTap: () => onSelected(3),
+                  ),
                   if (pageIcon != null)
                     _MenuIconButton(
                       icon: pageIcon!,
