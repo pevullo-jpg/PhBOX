@@ -157,29 +157,19 @@ class TargetAssistitiFirestoreCopySink implements TargetWriteCommitSink {
       );
     }
 
-    _rejectCfContamination(
-      path: path,
-      cf: cf,
-      field: 'nome',
-      value: data['nome'],
-    );
-    _rejectCfContamination(
-      path: path,
-      cf: cf,
-      field: 'cognome',
-      value: data['cognome'],
-    );
-    _rejectCfContamination(
-      path: path,
-      cf: cf,
-      field: 'fullName',
-      value: data['fullName'],
-    );
+    _rejectCfContamination(path: path, cf: cf, field: 'nome', value: data['nome']);
+    _rejectCfContamination(path: path, cf: cf, field: 'cognome', value: data['cognome']);
+    _rejectCfContamination(path: path, cf: cf, field: 'fullName', value: data['fullName']);
     _rejectSearchPrefixContamination(
       path: path,
       cf: cf,
       hasSearchPrefixes: data.containsKey('searchPrefixes'),
       value: data['searchPrefixes'],
+    );
+    _rejectDoctorIdentityContamination(
+      path: path,
+      hasDoctor: data.containsKey('doctor'),
+      value: data['doctor'],
     );
   }
 
@@ -190,9 +180,7 @@ class TargetAssistitiFirestoreCopySink implements TargetWriteCommitSink {
     required Object? value,
   }) {
     final String normalized = _readString(value);
-    if (normalized.isEmpty) {
-      return;
-    }
+    if (normalized.isEmpty) return;
     if (_isFiscalCodeLike(normalized) || _containsCf(normalized, cf)) {
       throw TargetAssistitiFirestoreCopyRejectedException(
         code: 'cf_contaminates_$field',
@@ -208,9 +196,7 @@ class TargetAssistitiFirestoreCopySink implements TargetWriteCommitSink {
     required bool hasSearchPrefixes,
     required Object? value,
   }) {
-    if (!hasSearchPrefixes) {
-      return;
-    }
+    if (!hasSearchPrefixes) return;
     if (value is! Iterable) {
       throw TargetAssistitiFirestoreCopyRejectedException(
         code: 'search_prefixes_not_iterable',
@@ -227,9 +213,7 @@ class TargetAssistitiFirestoreCopySink implements TargetWriteCommitSink {
         );
       }
       final String prefix = _readString(item);
-      if (prefix.isEmpty) {
-        continue;
-      }
+      if (prefix.isEmpty) continue;
       if (_isFiscalCodeLike(prefix) || _containsCf(prefix, cf)) {
         throw TargetAssistitiFirestoreCopyRejectedException(
           code: 'cf_contaminates_search_prefixes',
@@ -240,10 +224,72 @@ class TargetAssistitiFirestoreCopySink implements TargetWriteCommitSink {
     }
   }
 
-  static bool _containsCf(String value, String cf) {
-    if (cf.trim().isEmpty) {
-      return false;
+  static void _rejectDoctorIdentityContamination({
+    required String path,
+    required bool hasDoctor,
+    required Object? value,
+  }) {
+    if (!hasDoctor || value == null) return;
+    if (value is! Map) {
+      throw TargetAssistitiFirestoreCopyRejectedException(
+        code: 'doctor_not_map',
+        message: 'doctor deve essere una map semantica medico-assistito, non un valore scalare.',
+        path: path,
+      );
     }
+    _rejectDoctorIdentityContaminationInMap(path: path, value: value, parentPath: 'doctor');
+  }
+
+  static void _rejectDoctorIdentityContaminationInMap({
+    required String path,
+    required Map value,
+    required String parentPath,
+  }) {
+    for (final MapEntry<dynamic, dynamic> entry in value.entries) {
+      final String normalizedKey = _normalizeMapKey(entry.key);
+      final String nestedPath = normalizedKey.isEmpty ? parentPath : '$parentPath.$normalizedKey';
+      if (_doctorIdentityKeys.contains(normalizedKey)) {
+        throw TargetAssistitiFirestoreCopyRejectedException(
+          code: 'doctor_identity_contamination',
+          message: 'doctor non può contenere campi identità assistito: $nestedPath.',
+          path: path,
+        );
+      }
+      final Object? nestedValue = entry.value;
+      if (nestedValue is Map) {
+        _rejectDoctorIdentityContaminationInMap(
+          path: path,
+          value: nestedValue,
+          parentPath: nestedPath,
+        );
+      }
+    }
+  }
+
+  static final Set<String> _doctorIdentityKeys = <String>{
+    'assistitoid',
+    'cf',
+    'codicefiscale',
+    'cognome',
+    'familyname',
+    'fiscalcode',
+    'fullname',
+    'givenname',
+    'lastname',
+    'name',
+    'namesplitconfidence',
+    'nome',
+    'patientname',
+    'searchprefixes',
+    'surname',
+  };
+
+  static String _normalizeMapKey(Object? key) {
+    return key.toString().replaceAll(RegExp(r'[^A-Za-z0-9]'), '').trim().toLowerCase();
+  }
+
+  static bool _containsCf(String value, String cf) {
+    if (cf.trim().isEmpty) return false;
     return value.toUpperCase().contains(cf.toUpperCase());
   }
 
@@ -261,8 +307,5 @@ class _TargetAssistitoPath {
   final String canonicalPath;
   final String assistitoId;
 
-  const _TargetAssistitoPath({
-    required this.canonicalPath,
-    required this.assistitoId,
-  });
+  const _TargetAssistitoPath({required this.canonicalPath, required this.assistitoId});
 }

@@ -136,7 +136,6 @@ class _SyntheticTargetAssistitiCopyTestCardState
     }
   }
 
-
   String _describePreparationBlock(TargetAssistitiManualCopyPreparationResult preparation) {
     if (preparation.sourceLimitExceeded) {
       return 'input troppo ampio per il limite manuale';
@@ -184,12 +183,12 @@ class _SyntheticTargetAssistitiCopyTestCardState
     return SettingsFieldCard(
       title: 'Test multifarmacia assistiti target',
       subtitle:
-          'Copia manuale bounded di 3 assistiti sintetici per verificare normalizzazione nome/cognome e struttura target. Non usa dati reali, non legge legacy e non crea famiglie operative.',
+          'Copia manuale bounded di 3 assistiti sintetici per verificare normalizzazione, assistitoId opaco, medico sintetico e struttura target. Non usa dati reali, non legge legacy e non crea famiglie operative.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           const Text(
-            'Dataset: famiglia sintetica Villa · casi: nome normale, nome composto, apostrofo. Scrive solo su tenants/{tenantId}/assistiti dopo conferma manuale.',
+            'Dataset sintetico v3 · assistitoId opachi syn_assistito_0001/0002/0003 · medico: Dott.ssa Elena Ferri · casi: nome normale, nome composto, cognome composto con apostrofo. Scrive solo su tenants/{tenantId}/assistiti dopo conferma manuale.',
             style: TextStyle(
               color: AppColors.textSecondary,
               fontSize: 13,
@@ -263,7 +262,6 @@ class _DiagnosticMapPanel extends StatelessWidget {
     required this.title,
     required this.data,
   });
-
 
   @override
   Widget build(BuildContext context) {
