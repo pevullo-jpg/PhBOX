@@ -1,14 +1,20 @@
 import '../mappers/legacy_to_target_assistito_mapper.dart';
 
 class TargetAssistitiSyntheticCopySources {
-  static const String scenarioId = 'synthetic_family_normalization_v2';
+  static const String scenarioId = 'synthetic_family_normalization_v3';
+  static const String syntheticFamilyId = 'syn_family_0001';
   static const String syntheticCreatedAt = '2026-01-01T00:00:00.000Z';
   static const String syntheticUpdatedAt = '2026-01-02T00:00:00.000Z';
+  static const Map<String, dynamic> syntheticDoctor = <String, dynamic>{
+    'medico': 'Dott.ssa Elena Ferri',
+    'codiceMedico': 'MED-SYN-001',
+    'ambulatorio': 'Studio medico sintetico',
+  };
 
   static const List<LegacyAssistitoSourceBundle> familyNormalizationBatch =
       <LegacyAssistitoSourceBundle>[
     LegacyAssistitoSourceBundle(
-      assistitoId: 'synthetic_family_villa_giuseppe',
+      assistitoId: 'syn_assistito_0001',
       fiscalCode: 'TSTVLL84H27A089I',
       patient: <String, dynamic>{
         'nome': 'giuseppe',
@@ -18,12 +24,12 @@ class TargetAssistitiSyntheticCopySources {
       },
       dashboardIndex: <String, dynamic>{
         'syntheticScenario': scenarioId,
-        'syntheticFamilyId': 'family_synthetic_villa',
-        'syntheticFamilyRole': 'padre',
+        'syntheticFamilyId': syntheticFamilyId,
       },
+      doctorManualLink: syntheticDoctor,
     ),
     LegacyAssistitoSourceBundle(
-      assistitoId: 'synthetic_family_villa_maria_grazia',
+      assistitoId: 'syn_assistito_0002',
       fiscalCode: 'TSTDLU81B02H501X',
       patient: <String, dynamic>{
         'nome': 'maria grazia',
@@ -33,12 +39,12 @@ class TargetAssistitiSyntheticCopySources {
       },
       dashboardIndex: <String, dynamic>{
         'syntheticScenario': scenarioId,
-        'syntheticFamilyId': 'family_synthetic_villa',
-        'syntheticFamilyRole': 'madre',
+        'syntheticFamilyId': syntheticFamilyId,
       },
+      doctorManualLink: syntheticDoctor,
     ),
     LegacyAssistitoSourceBundle(
-      assistitoId: 'synthetic_family_villa_luca_damico',
+      assistitoId: 'syn_assistito_0003',
       fiscalCode: 'TSTDMC82C03H501X',
       patient: <String, dynamic>{
         'nome': 'luca',
@@ -48,9 +54,9 @@ class TargetAssistitiSyntheticCopySources {
       },
       dashboardIndex: <String, dynamic>{
         'syntheticScenario': scenarioId,
-        'syntheticFamilyId': 'family_synthetic_villa',
-        'syntheticFamilyRole': 'figlio',
+        'syntheticFamilyId': syntheticFamilyId,
       },
+      doctorManualLink: syntheticDoctor,
     ),
   ];
 
