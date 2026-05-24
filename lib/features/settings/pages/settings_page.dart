@@ -18,6 +18,7 @@ import '../../../shared/navigation/app_navigation.dart';
 import '../../../shared/widgets/floating_page_menu.dart';
 import '../../../shared/widgets/settings_field_card.dart';
 import '../../../theme/app_theme.dart';
+import '../widgets/synthetic_target_assistiti_copy_test_card.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -289,6 +290,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 20),
+                  const SyntheticTargetAssistitiCopyTestCard(),
                   if (message.isNotEmpty) ...<Widget>[
                     const SizedBox(height: 16),
                     Text(
