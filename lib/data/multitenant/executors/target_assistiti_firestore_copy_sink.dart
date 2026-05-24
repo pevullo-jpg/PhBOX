@@ -261,14 +261,46 @@ class TargetAssistitiFirestoreCopySink implements TargetWriteCommitSink {
       );
     }
 
-    for (final Object? key in value.keys) {
-      final String normalizedKey = _normalizeMapKey(key);
-      if (_doctorIdentityKeys.contains(normalizedKey)) {
-        throw TargetAssistitiFirestoreCopyRejectedException(
-          code: 'doctor_identity_contamination',
-          message: 'doctor non può contenere campi identità assistito: $normalizedKey.',
+    _rejectDoctorIdentityContaminationInValue(
+      path: path,
+      value: value,
+      breadcrumb: 'doctor',
+    );
+  }
+
+  static void _rejectDoctorIdentityContaminationInValue({
+    required String path,
+    required Object? value,
+    required String breadcrumb,
+  }) {
+    if (value is Map) {
+      for (final MapEntry<dynamic, dynamic> entry in value.entries) {
+        final String normalizedKey = _normalizeMapKey(entry.key);
+        if (_doctorIdentityKeys.contains(normalizedKey)) {
+          throw TargetAssistitiFirestoreCopyRejectedException(
+            code: 'doctor_identity_contamination',
+            message: 'doctor non può contenere campi identità assistito: $breadcrumb.${entry.key}.',
+            path: path,
+          );
+        }
+        _rejectDoctorIdentityContaminationInValue(
           path: path,
+          value: entry.value,
+          breadcrumb: '$breadcrumb.${entry.key}',
         );
+      }
+      return;
+    }
+
+    if (value is Iterable) {
+      int index = 0;
+      for (final Object? item in value) {
+        _rejectDoctorIdentityContaminationInValue(
+          path: path,
+          value: item,
+          breadcrumb: '$breadcrumb[$index]',
+        );
+        index += 1;
       }
     }
   }
