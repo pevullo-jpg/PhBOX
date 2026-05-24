@@ -1,7 +1,9 @@
 import '../mappers/legacy_to_target_assistito_mapper.dart';
 
 class TargetAssistitiSyntheticCopySources {
-  static const String scenarioId = 'synthetic_family_normalization_v1';
+  static const String scenarioId = 'synthetic_family_normalization_v2';
+  static const String syntheticCreatedAt = '2026-01-01T00:00:00.000Z';
+  static const String syntheticUpdatedAt = '2026-01-02T00:00:00.000Z';
 
   static const List<LegacyAssistitoSourceBundle> familyNormalizationBatch =
       <LegacyAssistitoSourceBundle>[
@@ -11,6 +13,8 @@ class TargetAssistitiSyntheticCopySources {
       patient: <String, dynamic>{
         'nome': 'giuseppe',
         'cognome': 'villa',
+        'createdAt': syntheticCreatedAt,
+        'updatedAt': syntheticUpdatedAt,
       },
       dashboardIndex: <String, dynamic>{
         'syntheticScenario': scenarioId,
@@ -24,6 +28,8 @@ class TargetAssistitiSyntheticCopySources {
       patient: <String, dynamic>{
         'nome': 'maria grazia',
         'cognome': 'de luca',
+        'createdAt': syntheticCreatedAt,
+        'updatedAt': syntheticUpdatedAt,
       },
       dashboardIndex: <String, dynamic>{
         'syntheticScenario': scenarioId,
@@ -36,7 +42,9 @@ class TargetAssistitiSyntheticCopySources {
       fiscalCode: 'TSTDMC82C03H501X',
       patient: <String, dynamic>{
         'nome': 'luca',
-        'cognome': "d'amico",
+        'cognome': "villa d'amico",
+        'createdAt': syntheticCreatedAt,
+        'updatedAt': syntheticUpdatedAt,
       },
       dashboardIndex: <String, dynamic>{
         'syntheticScenario': scenarioId,

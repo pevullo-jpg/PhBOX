@@ -181,6 +181,11 @@ class TargetAssistitiFirestoreCopySink implements TargetWriteCommitSink {
       hasSearchPrefixes: data.containsKey('searchPrefixes'),
       value: data['searchPrefixes'],
     );
+    _rejectDoctorIdentityContamination(
+      path: path,
+      hasDoctor: data.containsKey('doctor'),
+      value: data['doctor'],
+    );
   }
 
   static void _rejectCfContamination({
@@ -238,6 +243,60 @@ class TargetAssistitiFirestoreCopySink implements TargetWriteCommitSink {
         );
       }
     }
+  }
+
+  static void _rejectDoctorIdentityContamination({
+    required String path,
+    required bool hasDoctor,
+    required Object? value,
+  }) {
+    if (!hasDoctor || value == null) {
+      return;
+    }
+    if (value is! Map) {
+      throw TargetAssistitiFirestoreCopyRejectedException(
+        code: 'doctor_not_map',
+        message: 'doctor deve essere una map semantica medico-assistito, non un valore scalare.',
+        path: path,
+      );
+    }
+
+    for (final Object? key in value.keys) {
+      final String normalizedKey = _normalizeMapKey(key);
+      if (_doctorIdentityKeys.contains(normalizedKey)) {
+        throw TargetAssistitiFirestoreCopyRejectedException(
+          code: 'doctor_identity_contamination',
+          message: 'doctor non può contenere campi identità assistito: $normalizedKey.',
+          path: path,
+        );
+      }
+    }
+  }
+
+  static final Set<String> _doctorIdentityKeys = <String>{
+    'assistitoid',
+    'cf',
+    'codicefiscale',
+    'cognome',
+    'familyname',
+    'fiscalcode',
+    'fullname',
+    'givenname',
+    'lastname',
+    'name',
+    'namesplitconfidence',
+    'nome',
+    'patientname',
+    'searchprefixes',
+    'surname',
+  };
+
+  static String _normalizeMapKey(Object? key) {
+    return key
+        .toString()
+        .replaceAll(RegExp(r'[^A-Za-z0-9]'), '')
+        .trim()
+        .toLowerCase();
   }
 
   static bool _containsCf(String value, String cf) {
