@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-import '../normalizers/target_assistito_identity_normalizer.dart';
+import '../validators/manual_fiscal_code_input_validator.dart';
 
 class LegacyRealAssistitiBoundedReadRejectedException implements Exception {
   final String code;
@@ -139,7 +139,7 @@ class LegacyRealAssistitiBoundedReadResult {
 }
 
 class LegacyRealAssistitiBoundedReader {
-  static const int maxFiscalCodes = 3;
+  static const int maxFiscalCodes = ManualFiscalCodeInputValidator.defaultMaxFiscalCodes;
   static const int readsPerFiscalCode = 5;
 
   static const String patientsCollection = 'patients';
@@ -223,50 +223,16 @@ class LegacyRealAssistitiBoundedReader {
   }
 
   static List<String> normalizeAndValidateManualFiscalCodes(Iterable<String> fiscalCodes) {
-    final List<String> normalizedFiscalCodes = fiscalCodes
-        .map(TargetAssistitoIdentityNormalizer.normalizeCf)
-        .toList(growable: false);
-
-    if (normalizedFiscalCodes.isEmpty) {
-      throw const LegacyRealAssistitiBoundedReadRejectedException(
-        code: 'manual_cf_empty',
-        message: 'Inserire almeno un CF manuale per la lettura legacy bounded.',
+    try {
+      return ManualFiscalCodeInputValidator.normalizeAndValidate(
+        fiscalCodes: fiscalCodes,
+        maxFiscalCodes: maxFiscalCodes,
+      );
+    } on ManualFiscalCodeInputRejectedException catch (error) {
+      throw LegacyRealAssistitiBoundedReadRejectedException(
+        code: error.code,
+        message: error.message,
       );
     }
-    if (normalizedFiscalCodes.length > maxFiscalCodes) {
-      throw const LegacyRealAssistitiBoundedReadRejectedException(
-        code: 'manual_cf_exceeds_hard_cap',
-        message: 'La lettura legacy reale è limitata a massimo 3 CF manuali per run.',
-      );
-    }
-
-    final Set<String> seen = <String>{};
-    for (int index = 0; index < normalizedFiscalCodes.length; index++) {
-      final String cf = normalizedFiscalCodes[index];
-      if (cf.isEmpty) {
-        throw LegacyRealAssistitiBoundedReadRejectedException(
-          code: 'manual_cf_blank',
-          message: 'CF manuale vuoto non ammesso alla posizione ${index + 1}.',
-        );
-      }
-      if (!_isValidFiscalCode(cf)) {
-        throw LegacyRealAssistitiBoundedReadRejectedException(
-          code: 'manual_cf_invalid',
-          message: 'CF manuale non valido o non canonico: $cf.',
-        );
-      }
-      if (!seen.add(cf)) {
-        throw LegacyRealAssistitiBoundedReadRejectedException(
-          code: 'manual_cf_duplicate',
-          message: 'CF manuale duplicato nello stesso run: $cf.',
-        );
-      }
-    }
-
-    return List<String>.unmodifiable(normalizedFiscalCodes);
-  }
-
-  static bool _isValidFiscalCode(String cf) {
-    return RegExp(r'^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$').hasMatch(cf);
   }
 }
