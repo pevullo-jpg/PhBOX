@@ -114,7 +114,7 @@ class RealAssistitiDryRunPreviewResult {
 
 class RealAssistitiDryRunPreviewReader {
   static const int maxFiscalCodes = LegacyRealAssistitiBoundedReader.maxFiscalCodes;
-  static const int sourceVersion = 2;
+  static const int sourceVersion = 3;
 
   final FirebaseFirestore firestore;
 
@@ -214,9 +214,9 @@ class RealAssistitiDryRunPreviewReader {
       'searchPrefixes': identity.hasSearchableFullName
           ? _buildSearchPrefixes(identity.fullName)
           : const <String>[],
-      'doctor': _buildDoctorPreview(bundle),
-      'dashboard': _sanitizeIdentityFields(bundle.dashboardIndex.rawData),
-      'therapeuticAdvice': _sanitizeIdentityFields(bundle.therapeuticAdvice.rawData),
+      'doctor': _buildDoctorPreview(bundle, identity),
+      'dashboard': _sanitizeIdentityFields(bundle.dashboardIndex.rawData, identity),
+      'therapeuticAdvice': _sanitizeIdentityFields(bundle.therapeuticAdvice.rawData, identity),
       'createdAt': createdAt,
       'updatedAt': updatedAt,
       'sourceVersion': sourceVersion,
@@ -243,13 +243,24 @@ class RealAssistitiDryRunPreviewReader {
   }
 
   _ResolvedIdentity _resolveIdentity(LegacyRealAssistitoReadBundle bundle) {
-    final String rawNome = _readFirstString(
+    final List<Map<String, dynamic>> identitySources = <Map<String, dynamic>>[
       bundle.patient.rawData,
+      bundle.dashboardIndex.rawData,
+      bundle.therapeuticAdvice.rawData,
+    ];
+    final String rawNome = _readFirstStringFromSources(
+      identitySources,
       const <String>['nome', 'firstName', 'givenName'],
     );
-    final String rawCognome = _readFirstString(
-      bundle.patient.rawData,
-      const <String>['cognome', 'lastName', 'surname', 'familyName'],
+    final String rawCognome = _readFirstStringFromSources(
+      identitySources,
+      const <String>[
+        'cognome',
+        'lastName',
+        'surname',
+        'familyName',
+        'alias',
+      ],
     );
 
     final List<String> fullNameCandidates = <String>[
@@ -295,9 +306,18 @@ class RealAssistitiDryRunPreviewReader {
     );
   }
 
-  static Map<String, dynamic> _buildDoctorPreview(LegacyRealAssistitoReadBundle bundle) {
-    final Map<String, dynamic> manual = _sanitizeDoctorFields(bundle.doctorManual.rawData);
-    final Map<String, dynamic> primary = _sanitizeDoctorFields(bundle.doctorPrimary.rawData);
+  static Map<String, dynamic> _buildDoctorPreview(
+    LegacyRealAssistitoReadBundle bundle,
+    _ResolvedIdentity identity,
+  ) {
+    final Map<String, dynamic> manual = _sanitizeDoctorFields(
+      bundle.doctorManual.rawData,
+      identity,
+    );
+    final Map<String, dynamic> primary = _sanitizeDoctorFields(
+      bundle.doctorPrimary.rawData,
+      identity,
+    );
 
     if (manual.isEmpty && primary.isEmpty) {
       return const <String, dynamic>{};
@@ -308,7 +328,10 @@ class RealAssistitiDryRunPreviewReader {
     });
   }
 
-  static Map<String, dynamic> _sanitizeDoctorFields(Map<String, dynamic> rawData) {
+  static Map<String, dynamic> _sanitizeDoctorFields(
+    Map<String, dynamic> rawData,
+    _ResolvedIdentity identity,
+  ) {
     if (rawData.isEmpty) {
       return const <String, dynamic>{};
     }
@@ -337,14 +360,17 @@ class RealAssistitiDryRunPreviewReader {
 
     final Map<String, dynamic> sanitized = <String, dynamic>{};
     for (final MapEntry<String, dynamic> entry in rawData.entries) {
-      if (allowedKeys.contains(entry.key)) {
+      if (allowedKeys.contains(entry.key) && !_isPatientIdentityEcho(entry.value, identity)) {
         sanitized[entry.key] = entry.value;
       }
     }
     return Map<String, dynamic>.unmodifiable(sanitized);
   }
 
-  static Map<String, dynamic> _sanitizeIdentityFields(Map<String, dynamic> rawData) {
+  static Map<String, dynamic> _sanitizeIdentityFields(
+    Map<String, dynamic> rawData,
+    _ResolvedIdentity identity,
+  ) {
     if (rawData.isEmpty) {
       return const <String, dynamic>{};
     }
@@ -370,11 +396,29 @@ class RealAssistitiDryRunPreviewReader {
 
     final Map<String, dynamic> sanitized = <String, dynamic>{};
     for (final MapEntry<String, dynamic> entry in rawData.entries) {
-      if (!blockedKeys.contains(entry.key)) {
+      if (!blockedKeys.contains(entry.key) && !_isPatientIdentityEcho(entry.value, identity)) {
         sanitized[entry.key] = entry.value;
       }
     }
     return Map<String, dynamic>.unmodifiable(sanitized);
+  }
+
+  static bool _isPatientIdentityEcho(Object? value, _ResolvedIdentity identity) {
+    final String normalized = value?.toString().trim() ?? '';
+    if (normalized.isEmpty) {
+      return false;
+    }
+    final String lower = normalized.toLowerCase();
+    final String normalizedCf = TargetAssistitoIdentityNormalizer.normalizeCf(normalized);
+    final Set<String> forbiddenLowerValues = <String>{
+      identity.nome.trim().toLowerCase(),
+      identity.cognome.trim().toLowerCase(),
+      identity.fullName.trim().toLowerCase(),
+    }..remove('');
+    if (forbiddenLowerValues.contains(lower)) {
+      return true;
+    }
+    return identity.cf.trim().isNotEmpty && normalizedCf == identity.cf;
   }
 
   static DateTime _resolveTimestamp({
@@ -427,6 +471,19 @@ class RealAssistitiDryRunPreviewReader {
     return '';
   }
 
+  static String _readFirstStringFromSources(
+    List<Map<String, dynamic>> sources,
+    List<String> keys,
+  ) {
+    for (final Map<String, dynamic> source in sources) {
+      final String value = _readFirstString(source, keys);
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+    return '';
+  }
+
   static List<String> _buildSearchPrefixes(String fullName) {
     final String normalized = fullName.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
     if (normalized.isEmpty ||
@@ -469,6 +526,54 @@ class RealAssistitiDryRunPreviewReader {
   }
 }
 
+
+class _BestEffortNameSplit {
+  final String nome;
+  final String cognome;
+  final String nameSplitConfidence;
+
+  const _BestEffortNameSplit({
+    required this.nome,
+    required this.cognome,
+    required this.nameSplitConfidence,
+  });
+
+  factory _BestEffortNameSplit.fromNormalized(
+    TargetAssistitoIdentityNormalizationResult normalized,
+  ) {
+    if (!normalized.hasValidName) {
+      return _BestEffortNameSplit(
+        nome: normalized.nome,
+        cognome: normalized.cognome,
+        nameSplitConfidence: normalized.nameSplitConfidence,
+      );
+    }
+    final List<String> parts = normalized.fullName
+        .trim()
+        .split(' ')
+        .where((String part) => part.trim().isNotEmpty)
+        .toList(growable: false);
+    if (parts.length < 2) {
+      return _BestEffortNameSplit(
+        nome: normalized.nome,
+        cognome: normalized.cognome,
+        nameSplitConfidence: normalized.nameSplitConfidence,
+      );
+    }
+    final String nome = normalized.nome.trim().isNotEmpty ? normalized.nome : parts.first;
+    final String cognome = normalized.cognome.trim().isNotEmpty
+        ? normalized.cognome
+        : parts.skip(1).join(' ');
+    final bool derivedFromFullName = nome != normalized.nome || cognome != normalized.cognome;
+    return _BestEffortNameSplit(
+      nome: nome,
+      cognome: cognome,
+      nameSplitConfidence:
+          derivedFromFullName ? 'derived_from_full_name' : normalized.nameSplitConfidence,
+    );
+  }
+}
+
 class _ResolvedIdentity {
   final String cf;
   final String nome;
@@ -488,12 +593,15 @@ class _ResolvedIdentity {
     required String cf,
     required TargetAssistitoIdentityNormalizationResult normalized,
   }) {
+    final _BestEffortNameSplit bestEffortSplit = _BestEffortNameSplit.fromNormalized(
+      normalized,
+    );
     return _ResolvedIdentity(
       cf: TargetAssistitoIdentityNormalizer.normalizeCf(cf),
-      nome: normalized.nome,
-      cognome: normalized.cognome,
+      nome: bestEffortSplit.nome,
+      cognome: bestEffortSplit.cognome,
       fullName: normalized.fullName,
-      nameSplitConfidence: normalized.nameSplitConfidence,
+      nameSplitConfidence: bestEffortSplit.nameSplitConfidence,
     );
   }
 
