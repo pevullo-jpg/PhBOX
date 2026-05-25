@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../../data/multitenant/readers/assistiti_target_with_legacy_fallback_reader.dart';
+import '../../../data/multitenant/verifiers/real_assistiti_post_copy_verifier.dart';
+import '../../../data/multitenant/writers/real_assistiti_target_copy_writer.dart';
 import '../../../theme/app_theme.dart';
 import '../../auth/models/tenant_session.dart';
 
@@ -16,10 +18,15 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   final TextEditingController _cfController = TextEditingController();
 
   AssistitiTargetWithLegacyFallbackResult? _result;
+  RealAssistitiTargetCopyResult? _copyResult;
+  RealAssistitiPostCopyVerificationResult? _verificationResult;
   Object? _error;
+  Object? _copyError;
   bool _loading = false;
+  bool _copying = false;
   bool _requested = false;
   bool _enableLegacyFallback = true;
+  bool _copyConfirmed = false;
 
   @override
   void dispose() {
@@ -28,7 +35,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   }
 
   Future<void> _loadAssistitiByManualCf() async {
-    if (_loading) {
+    if (_loading || _copying) {
       return;
     }
 
@@ -42,6 +49,10 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
       _loading = true;
       _requested = true;
       _error = null;
+      _copyError = null;
+      _copyResult = null;
+      _verificationResult = null;
+      _copyConfirmed = false;
     });
 
     try {
@@ -67,6 +78,103 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
         _loading = false;
       });
     }
+  }
+
+  Future<void> _copyLegacyFallbackItems() async {
+    if (_loading || _copying) {
+      return;
+    }
+
+    final AssistitiTargetWithLegacyFallbackResult? result = _result;
+    if (result == null) {
+      setState(() {
+        _copyError = const _FrontendCopyRejectedException(
+          code: 'read_result_missing',
+          message: 'Eseguire prima una lettura CF con fallback legacy.',
+        );
+      });
+      return;
+    }
+
+    final List<String> candidateFiscalCodes = _copyCandidateFiscalCodes(result);
+    if (candidateFiscalCodes.isEmpty) {
+      setState(() {
+        _copyError = const _FrontendCopyRejectedException(
+          code: 'copy_candidates_empty',
+          message: 'Nessun assistito LEGACY candidabile alla copia target.',
+        );
+      });
+      return;
+    }
+    if (!_copyConfirmed) {
+      setState(() {
+        _copyError = const _FrontendCopyRejectedException(
+          code: 'manual_copy_confirmation_missing',
+          message: 'Confermare manualmente la copia target prima di procedere.',
+        );
+      });
+      return;
+    }
+
+    final TenantSession session = TenantSessionScope.of(context);
+    final String manualConfirmationToken =
+        RealAssistitiTargetCopyWriter.buildRequiredManualConfirmationToken(
+      tenantId: session.tenantId,
+      normalizedFiscalCodes: candidateFiscalCodes,
+    );
+    final RealAssistitiTargetCopyWriter writer = RealAssistitiTargetCopyWriter(
+      firestore: FirebaseFirestore.instance,
+    );
+    final RealAssistitiPostCopyVerifier verifier = RealAssistitiPostCopyVerifier(
+      firestore: FirebaseFirestore.instance,
+    );
+
+    setState(() {
+      _copying = true;
+      _copyError = null;
+      _copyResult = null;
+      _verificationResult = null;
+    });
+
+    try {
+      final RealAssistitiTargetCopyResult copyResult = await writer.copyByManualFiscalCodes(
+        tenantId: session.tenantId,
+        fiscalCodes: candidateFiscalCodes,
+        manualConfirmationToken: manualConfirmationToken,
+      );
+      final RealAssistitiPostCopyVerificationResult verificationResult =
+          await verifier.verifyCopyResult(copyResult: copyResult);
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _copyResult = copyResult;
+        _verificationResult = verificationResult;
+        _copyConfirmed = false;
+        _copying = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _copyError = error;
+        _copyResult = null;
+        _verificationResult = null;
+        _copying = false;
+      });
+    }
+  }
+
+  static List<String> _copyCandidateFiscalCodes(AssistitiTargetWithLegacyFallbackResult result) {
+    final List<String> candidates = <String>[];
+    for (final AssistitiTargetWithLegacyFallbackItem item in result.items) {
+      if (item.usedLegacyFallback && !item.missing) {
+        candidates.add(item.cf);
+      }
+    }
+    return List<String>.unmodifiable(candidates);
   }
 
   static List<String> _parseManualFiscalCodes(String rawInput) {
@@ -101,9 +209,9 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
                 tenantId: session.tenantId,
                 tenantName: session.tenantName,
                 controller: _cfController,
-                loading: _loading,
+                loading: _loading || _copying,
                 legacyFallbackEnabled: _enableLegacyFallback,
-                onLegacyFallbackChanged: _loading
+                onLegacyFallbackChanged: (_loading || _copying)
                     ? null
                     : (bool value) {
                         setState(() {
@@ -154,10 +262,29 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
       );
     }
 
+    final List<String> copyCandidateFiscalCodes = _copyCandidateFiscalCodes(result);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         _AssistitiReadSummary(result: result),
+        const SizedBox(height: 12),
+        _AssistitiCopyPanel(
+          candidateFiscalCodes: copyCandidateFiscalCodes,
+          copyConfirmed: _copyConfirmed,
+          copying: _copying,
+          copyError: _copyError,
+          copyResult: _copyResult,
+          verificationResult: _verificationResult,
+          onCopyConfirmedChanged: _copying
+              ? null
+              : (bool value) {
+                  setState(() {
+                    _copyConfirmed = value;
+                  });
+                },
+          onCopy: _copyLegacyFallbackItems,
+        ),
         const SizedBox(height: 12),
         Expanded(
           child: ListView.separated(
@@ -170,6 +297,21 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
         ),
       ],
     );
+  }
+}
+
+class _FrontendCopyRejectedException implements Exception {
+  final String code;
+  final String message;
+
+  const _FrontendCopyRejectedException({
+    required this.code,
+    required this.message,
+  });
+
+  @override
+  String toString() {
+    return '_FrontendCopyRejectedException($code): $message';
   }
 }
 
@@ -224,7 +366,7 @@ class _AssistitiFallbackHeader extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Modulo isolato read-only · tenant: ${tenantName.trim().isEmpty ? tenantId : tenantName}',
+                      'Modulo isolato read/write controllato · tenant: ${tenantName.trim().isEmpty ? tenantId : tenantName}',
                       style: const TextStyle(
                         color: AppColors.textSecondary,
                         fontSize: 13,
@@ -233,7 +375,7 @@ class _AssistitiFallbackHeader extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     const Text(
-                      'Nessun listener, nessuna write, nessuno switch dashboard. Lettura solo su richiesta manuale, massimo 3 CF.',
+                      'Nessun listener, nessuno switch dashboard. Lettura manuale max 3 CF; copia target solo da LEGACY con conferma esplicita.',
                       style: TextStyle(
                         color: AppColors.textMuted,
                         fontSize: 12,
@@ -308,7 +450,7 @@ class _AssistitiFallbackHeader extends StatelessWidget {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.search_rounded),
-                label: Text(loading ? 'Lettura...' : 'Leggi CF'),
+                label: Text(loading ? 'Operazione...' : 'Leggi CF'),
               ),
             ],
           ),
@@ -342,6 +484,162 @@ class _AssistitiReadSummary extends StatelessWidget {
           _SummaryChip(label: 'Read legacy', value: '${result.legacyAttemptedDocumentReads}'),
           _SummaryChip(label: 'Fallback', value: result.legacyFallbackEnabled ? 'attivo' : 'disattivo'),
           _SummaryChip(label: 'Missing', value: result.hasMissingItems ? result.missingFiscalCodes.join(', ') : '-'),
+        ],
+      ),
+    );
+  }
+}
+
+class _AssistitiCopyPanel extends StatelessWidget {
+  final List<String> candidateFiscalCodes;
+  final bool copyConfirmed;
+  final bool copying;
+  final Object? copyError;
+  final RealAssistitiTargetCopyResult? copyResult;
+  final RealAssistitiPostCopyVerificationResult? verificationResult;
+  final ValueChanged<bool>? onCopyConfirmedChanged;
+  final VoidCallback onCopy;
+
+  const _AssistitiCopyPanel({
+    required this.candidateFiscalCodes,
+    required this.copyConfirmed,
+    required this.copying,
+    required this.copyError,
+    required this.copyResult,
+    required this.verificationResult,
+    required this.onCopyConfirmedChanged,
+    required this.onCopy,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bool hasCandidates = candidateFiscalCodes.isNotEmpty;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.panelSoft,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: hasCandidates ? AppColors.dpc : AppColors.outlineSoft),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Icon(
+                hasCandidates ? Icons.upload_file_rounded : Icons.lock_outline_rounded,
+                color: hasCandidates ? AppColors.dpc : AppColors.textMuted,
+                size: 24,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  hasCandidates
+                      ? 'Copia target disponibile per CF LEGACY: ${candidateFiscalCodes.join(', ')}'
+                      : 'Nessun assistito LEGACY candidabile alla copia target.',
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (hasCandidates) ...<Widget>[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.panel,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.outlineSoft),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Checkbox(
+                    value: copyConfirmed,
+                    onChanged: onCopyConfirmedChanged == null
+                        ? null
+                        : (bool? value) {
+                            onCopyConfirmedChanged!(value ?? false);
+                          },
+                  ),
+                  const Expanded(
+                    child: Text(
+                      'Confermo la copia reale dei CF LEGACY indicati verso il target. Il token tecnico viene generato automaticamente dalla pagina.',
+                      style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.icon(
+                onPressed: copying || !copyConfirmed ? null : onCopy,
+                icon: copying
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.verified_user_rounded),
+                label: Text(copying ? 'Copia e verifica...' : 'Conferma e copia LEGACY → TARGET'),
+              ),
+            ),
+          ],
+          if (copyError != null) ...<Widget>[
+            const SizedBox(height: 10),
+            Text(
+              copyError.toString(),
+              style: const TextStyle(
+                color: AppColors.expiry,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          if (copyResult != null) ...<Widget>[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 14,
+              runSpacing: 8,
+              children: <Widget>[
+                _SummaryChip(label: 'Write assistiti', value: '${copyResult!.attemptedAssistitiWrites}'),
+                _SummaryChip(label: 'Write lock CF', value: '${copyResult!.attemptedCfLockWrites}'),
+                _SummaryChip(label: 'Totale write', value: '${copyResult!.attemptedWrites}'),
+              ],
+            ),
+          ],
+          if (verificationResult != null) ...<Widget>[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 14,
+              runSpacing: 8,
+              children: <Widget>[
+                _SummaryChip(
+                  label: 'Verifica post-copia',
+                  value: verificationResult!.allVerified ? 'OK' : 'KO',
+                ),
+                _SummaryChip(label: 'Read verifica', value: '${verificationResult!.totalAttemptedReads}'),
+                _SummaryChip(
+                  label: 'Falliti',
+                  value: verificationResult!.failedFiscalCodes.isEmpty
+                      ? '-'
+                      : verificationResult!.failedFiscalCodes.join(', '),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -412,6 +710,11 @@ class _AssistitoFallbackCard extends StatelessWidget {
             _MetaLine(
               label: 'legacySources',
               value: '${item.legacyBundle?.existingSourceCount ?? 0}',
+            ),
+          if (item.usedLegacyFallback)
+            const _MetaLine(
+              label: 'copyCandidate',
+              value: 'true',
             ),
           if (item.reasons.isNotEmpty) _MetaLine(label: 'reasons', value: item.reasons.join(', ')),
         ],
