@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/target_multitenant_collections.dart';
+import '../normalizers/target_assistito_identity_normalizer.dart';
 import '../readers/legacy_real_assistiti_bounded_reader.dart';
 import '../readers/real_assistiti_dry_run_preview_reader.dart';
 import '../validators/manual_fiscal_code_input_validator.dart';
@@ -375,7 +376,6 @@ class RealAssistitiPostCopyVerifier {
     if (writtenDocument.cfLockDocumentPath != expectedCfLockDocumentPath) {
       mismatchReasons.add('written_cf_lock_path_mismatch');
     }
-
     if (!legacyBundle.hasAnyLegacySource) {
       mismatchReasons.add('legacy_source_missing_after_copy');
     }
@@ -451,6 +451,21 @@ class RealAssistitiPostCopyVerifier {
         Map<String, dynamic>.from(previewItem.targetPreviewPayloadWithoutAssistitoId);
     expected['assistitoId'] = writtenDocument.documentId;
     return _deepEquivalent(expected, writtenDocument.targetPayload);
+  }
+
+  static bool _hasAcceptedIdentityAnchor(Map<String, dynamic> payload) {
+    final String cf = _readString(payload['cf']);
+    if (cf.isNotEmpty) {
+      return true;
+    }
+    if (_readString(payload['nome']).isNotEmpty || _readString(payload['cognome']).isNotEmpty) {
+      return true;
+    }
+    final String fullName = _readString(payload['fullName']);
+    return fullName.isNotEmpty &&
+        !TargetAssistitoIdentityNormalizer.isPlaceholderName(fullName) &&
+        !TargetAssistitoIdentityNormalizer.isFiscalCodeLike(fullName) &&
+        !TargetAssistitoIdentityNormalizer.containsFiscalCodeLikeToken(fullName);
   }
 
   static void _assertCopyResultPaths({
@@ -581,13 +596,6 @@ class RealAssistitiPostCopyVerifier {
     }
 
     return left == right;
-  }
-
-  static bool _hasAcceptedIdentityAnchor(Map<String, dynamic> payload) {
-    return _readString(payload['cf']).isNotEmpty ||
-        _readString(payload['nome']).isNotEmpty ||
-        _readString(payload['cognome']).isNotEmpty ||
-        _readString(payload['fullName']).isNotEmpty;
   }
 
   static bool _hasNonNullTimestamp(Object? value) {

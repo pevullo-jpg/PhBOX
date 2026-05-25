@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/target_multitenant_collections.dart';
+import '../normalizers/target_assistito_identity_normalizer.dart';
 import '../readers/real_assistiti_dry_run_preview_reader.dart';
 import '../validators/manual_fiscal_code_input_validator.dart';
 
@@ -354,7 +355,7 @@ class RealAssistitiTargetCopyWriter {
 
     targetPayload['assistitoId'] = assistitoId;
 
-    if (_readString(targetPayload['cf']) != item.cf) {
+    if (targetPayload['cf'] != item.cf) {
       throw RealAssistitiTargetCopyRejectedException(
         code: 'target_payload_cf_mismatch',
         message: 'Payload target con CF non coerente per CF ${item.cf}.',
@@ -363,7 +364,7 @@ class RealAssistitiTargetCopyWriter {
     if (!_hasAcceptedIdentityAnchor(targetPayload)) {
       throw RealAssistitiTargetCopyRejectedException(
         code: 'target_payload_identity_absent',
-        message: 'Payload target senza CF/nome/cognome/fullName per CF ${item.cf}.',
+        message: 'Payload target senza CF/nome/cognome/fullName validi per CF ${item.cf}.',
       );
     }
     if (!_hasNonNullTimestamp(targetPayload['createdAt']) ||
@@ -398,6 +399,21 @@ class RealAssistitiTargetCopyWriter {
     });
   }
 
+  static bool _hasAcceptedIdentityAnchor(Map<String, dynamic> payload) {
+    final String cf = _readString(payload['cf']);
+    if (cf.isNotEmpty) {
+      return true;
+    }
+    if (_readString(payload['nome']).isNotEmpty || _readString(payload['cognome']).isNotEmpty) {
+      return true;
+    }
+    final String fullName = _readString(payload['fullName']);
+    return fullName.isNotEmpty &&
+        !TargetAssistitoIdentityNormalizer.isPlaceholderName(fullName) &&
+        !TargetAssistitoIdentityNormalizer.isFiscalCodeLike(fullName) &&
+        !TargetAssistitoIdentityNormalizer.containsFiscalCodeLikeToken(fullName);
+  }
+
   static List<String> _normalizeAndValidateManualFiscalCodes(Iterable<String> fiscalCodes) {
     try {
       return ManualFiscalCodeInputValidator.normalizeAndValidate(
@@ -427,13 +443,6 @@ class RealAssistitiTargetCopyWriter {
       );
     }
     return normalized;
-  }
-
-  static bool _hasAcceptedIdentityAnchor(Map<String, dynamic> payload) {
-    return _readString(payload['cf']).isNotEmpty ||
-        _readString(payload['nome']).isNotEmpty ||
-        _readString(payload['cognome']).isNotEmpty ||
-        _readString(payload['fullName']).isNotEmpty;
   }
 
   static bool _hasNonNullTimestamp(Object? value) {
