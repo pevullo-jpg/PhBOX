@@ -343,36 +343,45 @@ class RealAssistitiTargetCopyWriter {
       );
     }
 
-    final Map<String, dynamic> targetPayload =
+    final Map<String, dynamic> previewPayload =
         Map<String, dynamic>.from(item.targetPreviewPayloadWithoutAssistitoId);
-    if (targetPayload.containsKey('assistitoId')) {
+    if (previewPayload.containsKey('assistitoId')) {
       throw RealAssistitiTargetCopyRejectedException(
         code: 'target_payload_assistito_id_preexisting',
         message: 'Payload target contiene assistitoId prima della copia per CF ${item.cf}.',
       );
     }
-
-    targetPayload['assistitoId'] = assistitoId;
-
-    if (_readString(targetPayload['cf']) != item.cf) {
+    if (_readString(previewPayload['cf']) != item.cf) {
       throw RealAssistitiTargetCopyRejectedException(
         code: 'target_payload_cf_mismatch',
         message: 'Payload target con CF non coerente per CF ${item.cf}.',
       );
     }
-    if (!_hasAcceptedIdentityAnchor(targetPayload)) {
+    if (!_hasAcceptedIdentityAnchor(previewPayload)) {
       throw RealAssistitiTargetCopyRejectedException(
         code: 'target_payload_identity_absent',
         message: 'Payload target senza CF/nome/cognome/fullName per CF ${item.cf}.',
       );
     }
-    if (!_hasNonNullTimestamp(targetPayload['createdAt']) ||
-        !_hasNonNullTimestamp(targetPayload['updatedAt'])) {
+    if (!_hasNonNullTimestamp(previewPayload['createdAt'])) {
       throw RealAssistitiTargetCopyRejectedException(
-        code: 'target_payload_timestamp_missing',
-        message: 'Payload target senza createdAt/updatedAt validi per CF ${item.cf}.',
+        code: 'target_payload_created_at_missing',
+        message: 'Payload target senza createdAt valido per CF ${item.cf}.',
       );
     }
+
+    final Map<String, dynamic> targetPayload = <String, dynamic>{
+      'assistitoId': assistitoId,
+      'cf': previewPayload['cf'],
+      'fullName': previewPayload['fullName'],
+      'cognome': previewPayload['cognome'],
+      'nome': previewPayload['nome'],
+      'createdAt': previewPayload['createdAt'],
+      'dashboard': previewPayload['dashboard'] ?? const <String, dynamic>{},
+      'nameSplitConfidence': previewPayload['nameSplitConfidence'],
+      'doctor': previewPayload['doctor'] ?? const <String, dynamic>{},
+      'therapeuticAdvice': previewPayload['therapeuticAdvice'] ?? const <String, dynamic>{},
+    };
 
     return Map<String, dynamic>.unmodifiable(targetPayload);
   }
