@@ -1,7 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
-import '../../../data/multitenant/readers/target_assistiti_read_only_reader.dart';
+import '../../../data/multitenant/readers/assistiti_target_with_legacy_fallback_reader.dart';
 import '../../../theme/app_theme.dart';
 import '../../auth/models/tenant_session.dart';
 
@@ -13,22 +13,30 @@ class TargetAssistitiReadOnlyPage extends StatefulWidget {
 }
 
 class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPage> {
-  static const int _maxDocuments = TargetAssistitiReadOnlyReader.defaultMaxDocuments;
+  final TextEditingController _cfController = TextEditingController();
 
-  TargetAssistitiReadOnlyResult? _result;
+  AssistitiTargetWithLegacyFallbackResult? _result;
   Object? _error;
   bool _loading = false;
   bool _requested = false;
+  bool _enableLegacyFallback = true;
 
-  Future<void> _loadTargetAssistiti() async {
+  @override
+  void dispose() {
+    _cfController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadAssistitiByManualCf() async {
     if (_loading) {
       return;
     }
 
     final TenantSession session = TenantSessionScope.of(context);
-    final TargetAssistitiReadOnlyReader reader = TargetAssistitiReadOnlyReader(
+    final AssistitiTargetWithLegacyFallbackReader reader = AssistitiTargetWithLegacyFallbackReader(
       firestore: FirebaseFirestore.instance,
     );
+    final List<String> fiscalCodes = _parseManualFiscalCodes(_cfController.text);
 
     setState(() {
       _loading = true;
@@ -37,9 +45,10 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
     });
 
     try {
-      final TargetAssistitiReadOnlyResult result = await reader.readAssistiti(
+      final AssistitiTargetWithLegacyFallbackResult result = await reader.readByManualFiscalCodes(
         tenantId: session.tenantId,
-        maxDocuments: _maxDocuments,
+        fiscalCodes: fiscalCodes,
+        enableLegacyFallback: _enableLegacyFallback,
       );
       if (!mounted) {
         return;
@@ -60,6 +69,23 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
     }
   }
 
+  static List<String> _parseManualFiscalCodes(String rawInput) {
+    final List<String> values = <String>[];
+    final String normalizedSeparators = rawInput
+        .replaceAll(',', ' ')
+        .replaceAll(';', ' ')
+        .replaceAll('\n', ' ')
+        .replaceAll('\t', ' ');
+    final List<String> tokens = normalizedSeparators.split(' ');
+    for (final String token in tokens) {
+      final String value = token.trim();
+      if (value.isNotEmpty) {
+        values.add(value);
+      }
+    }
+    return values;
+  }
+
   @override
   Widget build(BuildContext context) {
     final TenantSession session = TenantSessionScope.of(context);
@@ -71,16 +97,23 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              _TargetAssistitiHeader(
+              _AssistitiFallbackHeader(
                 tenantId: session.tenantId,
                 tenantName: session.tenantName,
+                controller: _cfController,
                 loading: _loading,
-                onLoad: _loadTargetAssistiti,
+                legacyFallbackEnabled: _enableLegacyFallback,
+                onLegacyFallbackChanged: _loading
+                    ? null
+                    : (bool value) {
+                        setState(() {
+                          _enableLegacyFallback = value;
+                        });
+                      },
+                onLoad: _loadAssistitiByManualCf,
               ),
               const SizedBox(height: 18),
-              Expanded(
-                child: _buildBody(),
-              ),
+              Expanded(child: _buildBody()),
             ],
           ),
         ),
@@ -90,11 +123,11 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
 
   Widget _buildBody() {
     if (!_requested) {
-      return const _TargetAssistitiInfoCard(
+      return const _AssistitiInfoCard(
         icon: Icons.touch_app_rounded,
         title: 'Lettura non avviata',
         message:
-            'Questo modulo non legge automaticamente Firestore. Premi “Carica assistiti target” per eseguire una singola query bounded su tenants/{tenantId}/assistiti.',
+            'Inserisci massimo 3 CF manuali. Il modulo legge prima tenants/{tenantId}/assistiti e usa il legacy solo come fallback controllato.',
       );
     }
 
@@ -104,42 +137,34 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
 
     final Object? error = _error;
     if (error != null) {
-      return _TargetAssistitiInfoCard(
+      return _AssistitiInfoCard(
         icon: Icons.error_outline_rounded,
-        title: 'Lettura target non riuscita',
+        title: 'Lettura assistiti non riuscita',
         message: error.toString(),
         warning: true,
       );
     }
 
-    final TargetAssistitiReadOnlyResult? result = _result;
-    if (result == null || result.empty) {
-      return const _TargetAssistitiInfoCard(
+    final AssistitiTargetWithLegacyFallbackResult? result = _result;
+    if (result == null || result.items.isEmpty) {
+      return const _AssistitiInfoCard(
         icon: Icons.inventory_2_outlined,
-        title: 'Nessun assistito target disponibile',
-        message:
-            'La collection target può essere assente o vuota: è uno stato valido. Il modulo non crea documenti e non modifica il legacy.',
+        title: 'Nessun risultato disponibile',
+        message: 'La lettura è bounded e manuale: nessun documento viene creato o modificato.',
       );
     }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(
-          'Documenti letti: ${result.returnedCount}/${result.requestedLimit}',
-          style: const TextStyle(
-            color: AppColors.textSecondary,
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
+        _AssistitiReadSummary(result: result),
         const SizedBox(height: 12),
         Expanded(
           child: ListView.separated(
-            itemCount: result.documents.length,
+            itemCount: result.items.length,
             separatorBuilder: (_, __) => const SizedBox(height: 10),
             itemBuilder: (BuildContext context, int index) {
-              return _TargetAssistitoCard(document: result.documents[index]);
+              return _AssistitoFallbackCard(item: result.items[index]);
             },
           ),
         ),
@@ -148,16 +173,22 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   }
 }
 
-class _TargetAssistitiHeader extends StatelessWidget {
+class _AssistitiFallbackHeader extends StatelessWidget {
   final String tenantId;
   final String tenantName;
+  final TextEditingController controller;
   final bool loading;
+  final bool legacyFallbackEnabled;
+  final ValueChanged<bool>? onLegacyFallbackChanged;
   final VoidCallback onLoad;
 
-  const _TargetAssistitiHeader({
+  const _AssistitiFallbackHeader({
     required this.tenantId,
     required this.tenantName,
+    required this.controller,
     required this.loading,
+    required this.legacyFallbackEnabled,
+    required this.onLegacyFallbackChanged,
     required this.onLoad,
   });
 
@@ -171,55 +202,115 @@ class _TargetAssistitiHeader extends StatelessWidget {
         borderRadius: BorderRadius.circular(22),
         border: Border.all(color: AppColors.outlineSoft),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          const Icon(Icons.people_alt_rounded, color: AppColors.dpc, size: 30),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                const Text(
-                  'Assistiti target',
-                  style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w900,
-                  ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Icon(Icons.people_alt_rounded, color: AppColors.dpc, size: 30),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Text(
+                      'Assistiti target + fallback legacy',
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Modulo isolato read-only · tenant: ${tenantName.trim().isEmpty ? tenantId : tenantName}',
+                      style: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Nessun listener, nessuna write, nessuno switch dashboard. Lettura solo su richiesta manuale, massimo 3 CF.',
+                      style: TextStyle(
+                        color: AppColors.textMuted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  'Modulo isolato read-only · tenant: ${tenantName.trim().isEmpty ? tenantId : tenantName}',
-                  style: const TextStyle(
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: controller,
+            enabled: !loading,
+            maxLines: 2,
+            textCapitalization: TextCapitalization.characters,
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+            decoration: InputDecoration(
+              labelText: 'CF manuali, massimo 3',
+              hintText: 'RSSMRA80A01H501U, VRDLGI90B02F205X',
+              labelStyle: const TextStyle(color: AppColors.textSecondary),
+              hintStyle: const TextStyle(color: AppColors.textMuted),
+              filled: true,
+              fillColor: AppColors.panelSoft,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: const BorderSide(color: AppColors.outlineSoft),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: const BorderSide(color: AppColors.outlineSoft),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: const BorderSide(color: AppColors.dpc, width: 1.4),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: <Widget>[
+              Checkbox(
+                value: legacyFallbackEnabled,
+                onChanged: onLegacyFallbackChanged == null
+                    ? null
+                    : (bool? value) {
+                        onLegacyFallbackChanged!(value ?? false);
+                      },
+              ),
+              const Expanded(
+                child: Text(
+                  'Usa fallback legacy se il CF non è presente nel target',
+                  style: TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Nessun listener, nessuna write, nessuno switch dashboard. La collection target assente o vuota è gestita come stato valido.',
-                  style: TextStyle(
-                    color: AppColors.textMuted,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 14),
-          FilledButton.icon(
-            onPressed: loading ? null : onLoad,
-            icon: loading
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.refresh_rounded),
-            label: Text(loading ? 'Caricamento...' : 'Carica assistiti target'),
+              ),
+              const SizedBox(width: 14),
+              FilledButton.icon(
+                onPressed: loading ? null : onLoad,
+                icon: loading
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.search_rounded),
+                label: Text(loading ? 'Lettura...' : 'Leggi CF'),
+              ),
+            ],
           ),
         ],
       ),
@@ -227,24 +318,72 @@ class _TargetAssistitiHeader extends StatelessWidget {
   }
 }
 
-class _TargetAssistitoCard extends StatelessWidget {
-  final TargetAssistitiReadDocument document;
+class _AssistitiReadSummary extends StatelessWidget {
+  final AssistitiTargetWithLegacyFallbackResult result;
 
-  const _TargetAssistitoCard({required this.document});
+  const _AssistitiReadSummary({required this.result});
 
   @override
   Widget build(BuildContext context) {
-    final String fullName = document.assistito.fullName.trim().isEmpty
-        ? 'Assistito senza nome'
-        : document.assistito.fullName.trim();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.panelSoft,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.outlineSoft),
+      ),
+      child: Wrap(
+        spacing: 14,
+        runSpacing: 8,
+        children: <Widget>[
+          _SummaryChip(label: 'CF', value: '${result.requestedCount}/${result.maxFiscalCodes}'),
+          _SummaryChip(label: 'Query target', value: '${result.targetAttemptedQueries}'),
+          _SummaryChip(label: 'Read legacy', value: '${result.legacyAttemptedDocumentReads}'),
+          _SummaryChip(label: 'Fallback', value: result.legacyFallbackEnabled ? 'attivo' : 'disattivo'),
+          _SummaryChip(label: 'Missing', value: result.hasMissingItems ? result.missingFiscalCodes.join(', ') : '-'),
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryChip extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _SummaryChip({
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      '$label: $value',
+      style: const TextStyle(
+        color: AppColors.textSecondary,
+        fontSize: 12,
+        fontWeight: FontWeight.w800,
+      ),
+    );
+  }
+}
+
+class _AssistitoFallbackCard extends StatelessWidget {
+  final AssistitiTargetWithLegacyFallbackItem item;
+
+  const _AssistitoFallbackCard({required this.item});
+
+  @override
+  Widget build(BuildContext context) {
+    final String displayName = _displayName(item);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.panelSoft,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: document.documentIdentityValid ? Colors.white10 : AppColors.expiry,
-        ),
+        border: Border.all(color: _borderColor(item)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -253,7 +392,7 @@ class _TargetAssistitoCard extends StatelessWidget {
             children: <Widget>[
               Expanded(
                 child: Text(
-                  fullName,
+                  displayName,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: AppColors.textPrimary,
@@ -262,42 +401,104 @@ class _TargetAssistitoCard extends StatelessWidget {
                   ),
                 ),
               ),
-              _IdentityBadge(valid: document.documentIdentityValid),
+              _SourceBadge(source: item.source),
             ],
           ),
           const SizedBox(height: 8),
-          _MetaLine(label: 'documentId', value: document.documentId),
-          _MetaLine(label: 'assistitoId', value: document.assistito.assistitoId),
-          _MetaLine(label: 'cf', value: document.assistito.cf.isEmpty ? '-' : document.assistito.cf),
-          _MetaLine(
-            label: 'nome/cognome',
-            value: '${_dash(document.assistito.nome)} / ${_dash(document.assistito.cognome)}',
-          ),
+          _MetaLine(label: 'cf', value: item.cf),
+          _MetaLine(label: 'source', value: item.source),
+          if (item.foundInTarget) _MetaLine(label: 'targetDocumentId', value: item.targetDocumentId),
+          if (item.usedLegacyFallback)
+            _MetaLine(
+              label: 'legacySources',
+              value: '${item.legacyBundle?.existingSourceCount ?? 0}',
+            ),
+          if (item.reasons.isNotEmpty) _MetaLine(label: 'reasons', value: item.reasons.join(', ')),
         ],
       ),
     );
   }
 
-  static String _dash(String value) {
-    return value.trim().isEmpty ? '-' : value.trim();
+  static Color _borderColor(AssistitiTargetWithLegacyFallbackItem item) {
+    if (item.foundInTarget) {
+      return Colors.white10;
+    }
+    if (item.usedLegacyFallback) {
+      return AppColors.dpc;
+    }
+    return AppColors.expiry;
+  }
+
+  static String _displayName(AssistitiTargetWithLegacyFallbackItem item) {
+    if (item.foundInTarget) {
+      return _firstString(item.targetRawData, const <String>[
+        'fullName',
+        'displayName',
+        'patientName',
+        'assistitoName',
+        'name',
+      ]);
+    }
+    final Map<String, dynamic> patient = item.legacyBundle?.patient.rawData ?? const <String, dynamic>{};
+    final Map<String, dynamic> dashboard =
+        item.legacyBundle?.dashboardIndex.rawData ?? const <String, dynamic>{};
+    final String patientName = _firstString(patient, const <String>[
+      'fullName',
+      'displayName',
+      'patientName',
+      'assistitoName',
+      'name',
+    ]);
+    if (patientName != 'Assistito senza nome') {
+      return patientName;
+    }
+    return _firstString(dashboard, const <String>[
+      'fullName',
+      'displayName',
+      'patientName',
+      'assistitoName',
+      'name',
+    ]);
+  }
+
+  static String _firstString(Map<String, dynamic> map, List<String> keys) {
+    for (final String key in keys) {
+      final String value = map[key]?.toString().trim() ?? '';
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+    return 'Assistito senza nome';
   }
 }
 
-class _IdentityBadge extends StatelessWidget {
-  final bool valid;
+class _SourceBadge extends StatelessWidget {
+  final String source;
 
-  const _IdentityBadge({required this.valid});
+  const _SourceBadge({required this.source});
 
   @override
   Widget build(BuildContext context) {
+    final String label;
+    final Color color;
+    if (source == AssistitiTargetWithLegacyFallbackItem.sourceTarget) {
+      label = 'TARGET';
+      color = AppColors.recipe;
+    } else if (source == AssistitiTargetWithLegacyFallbackItem.sourceLegacyFallback) {
+      label = 'LEGACY';
+      color = AppColors.dpc;
+    } else {
+      label = 'MISSING';
+      color = AppColors.expiry;
+    }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: valid ? AppColors.recipe : AppColors.expiry,
+        color: color,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
-        valid ? 'ID valido' : 'ID da verificare',
+        label,
         style: const TextStyle(
           color: Color(0xFF121212),
           fontSize: 11,
@@ -334,13 +535,13 @@ class _MetaLine extends StatelessWidget {
   }
 }
 
-class _TargetAssistitiInfoCard extends StatelessWidget {
+class _AssistitiInfoCard extends StatelessWidget {
   final IconData icon;
   final String title;
   final String message;
   final bool warning;
 
-  const _TargetAssistitiInfoCard({
+  const _AssistitiInfoCard({
     required this.icon,
     required this.title,
     required this.message,
