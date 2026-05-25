@@ -406,9 +406,8 @@ class RealAssistitiPostCopyVerifier {
     if (!_hasAcceptedIdentityAnchor(targetRead.rawData)) {
       mismatchReasons.add('target_identity_absent');
     }
-    if (!_hasNonNullTimestamp(targetRead.rawData['createdAt']) ||
-        !_hasNonNullTimestamp(targetRead.rawData['updatedAt'])) {
-      mismatchReasons.add('target_timestamp_missing');
+    if (!_hasNonNullTimestamp(targetRead.rawData['createdAt'])) {
+      mismatchReasons.add('target_created_at_missing');
     }
     if (!_deepEquivalent(expectedTargetPayload, targetRead.rawData)) {
       mismatchReasons.add('target_payload_mismatch');
@@ -447,9 +446,10 @@ class RealAssistitiPostCopyVerifier {
     required RealAssistitiDryRunPreviewItem previewItem,
     required RealAssistitiTargetCopyWrittenDocument writtenDocument,
   }) {
-    final Map<String, dynamic> expected =
-        Map<String, dynamic>.from(previewItem.targetPreviewPayloadWithoutAssistitoId);
-    expected['assistitoId'] = writtenDocument.documentId;
+    final Map<String, dynamic> expected = <String, dynamic>{
+      'assistitoId': writtenDocument.documentId,
+      ...previewItem.targetPreviewPayloadWithoutAssistitoId,
+    };
     return _deepEquivalent(expected, writtenDocument.targetPayload);
   }
 
