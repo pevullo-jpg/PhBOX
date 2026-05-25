@@ -75,17 +75,29 @@ class RealAssistitiDryRunPreviewResult {
   int get requestedCount => requestedFiscalCodes.length;
 
   bool get hasBlockingIssues {
-    return items.any((RealAssistitiDryRunPreviewItem item) => item.blocked);
+    for (final RealAssistitiDryRunPreviewItem item in items) {
+      if (item.blocked) {
+        return true;
+      }
+    }
+    return false;
   }
 
   List<String> get blockedFiscalCodes {
-    return items
-        .where((RealAssistitiDryRunPreviewItem item) => item.blocked)
-        .map((RealAssistitiDryRunPreviewItem item) => item.cf)
-        .toList(growable: false);
+    final List<String> blocked = <String>[];
+    for (final RealAssistitiDryRunPreviewItem item in items) {
+      if (item.blocked) {
+        blocked.add(item.cf);
+      }
+    }
+    return List<String>.unmodifiable(blocked);
   }
 
   Map<String, dynamic> toMap() {
+    final List<Map<String, dynamic>> mappedItems = <Map<String, dynamic>>[];
+    for (final RealAssistitiDryRunPreviewItem item in items) {
+      mappedItems.add(item.toMap());
+    }
     return <String, dynamic>{
       'tenantId': tenantId,
       'requestedFiscalCodes': requestedFiscalCodes,
@@ -95,9 +107,7 @@ class RealAssistitiDryRunPreviewResult {
       'targetAttemptedQueries': targetAttemptedQueries,
       'hasBlockingIssues': hasBlockingIssues,
       'blockedFiscalCodes': blockedFiscalCodes,
-      'items': items
-          .map((RealAssistitiDryRunPreviewItem item) => item.toMap())
-          .toList(growable: false),
+      'items': mappedItems,
     };
   }
 }
@@ -121,9 +131,7 @@ class RealAssistitiDryRunPreviewReader {
       firestore: firestore,
     );
     final TargetAssistitiDuplicateGuardReader duplicateGuardReader =
-        TargetAssistitiDuplicateGuardReader(
-      firestore: firestore,
-    );
+        TargetAssistitiDuplicateGuardReader(firestore: firestore);
 
     final LegacyRealAssistitiBoundedReadResult legacyResult =
         await legacyReader.readByManualFiscalCodes(fiscalCodes: fiscalCodes);
@@ -134,10 +142,10 @@ class RealAssistitiDryRunPreviewReader {
     );
 
     final Map<String, TargetAssistitiDuplicateGuardCheck> duplicateChecksByCf =
-        <String, TargetAssistitiDuplicateGuardCheck>{
-      for (final TargetAssistitiDuplicateGuardCheck check in duplicateGuardResult.checks)
-        check.cf: check,
-    };
+        <String, TargetAssistitiDuplicateGuardCheck>{};
+    for (final TargetAssistitiDuplicateGuardCheck check in duplicateGuardResult.checks) {
+      duplicateChecksByCf[check.cf] = check;
+    }
 
     final DateTime previewGeneratedAt = DateTime.now().toUtc();
     final List<RealAssistitiDryRunPreviewItem> items = <RealAssistitiDryRunPreviewItem>[];
@@ -227,8 +235,7 @@ class RealAssistitiDryRunPreviewReader {
       cf: bundle.cf,
       legacyBundle: bundle,
       duplicateGuard: duplicateGuard,
-      targetPreviewPayloadWithoutAssistitoId:
-          Map<String, dynamic>.unmodifiable(targetPreviewPayload),
+      targetPreviewPayloadWithoutAssistitoId: Map<String, dynamic>.unmodifiable(targetPreviewPayload),
       blockingReasons: List<String>.unmodifiable(blockingReasons),
       previewGeneratedAt: previewGeneratedAt,
     );
@@ -259,8 +266,7 @@ class RealAssistitiDryRunPreviewReader {
       ),
     ];
 
-    final TargetAssistitoIdentityNormalizer normalizer =
-        const TargetAssistitoIdentityNormalizer();
+    const TargetAssistitoIdentityNormalizer normalizer = TargetAssistitoIdentityNormalizer();
 
     for (final String rawFullName in fullNameCandidates) {
       final TargetAssistitoIdentityNormalizationResult normalized = normalizer.normalize(
@@ -469,9 +475,7 @@ class _ResolvedIdentity {
     required this.nameSplitConfidence,
   });
 
-  factory _ResolvedIdentity.fromNormalized(
-    TargetAssistitoIdentityNormalizationResult normalized,
-  ) {
+  factory _ResolvedIdentity.fromNormalized(TargetAssistitoIdentityNormalizationResult normalized) {
     return _ResolvedIdentity(
       nome: normalized.nome,
       cognome: normalized.cognome,
