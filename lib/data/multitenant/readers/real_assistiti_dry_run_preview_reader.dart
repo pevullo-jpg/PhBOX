@@ -114,7 +114,7 @@ class RealAssistitiDryRunPreviewResult {
 
 class RealAssistitiDryRunPreviewReader {
   static const int maxFiscalCodes = LegacyRealAssistitiBoundedReader.maxFiscalCodes;
-  static const int sourceVersion = 4;
+  static const int sourceVersion = 5;
 
   final FirebaseFirestore firestore;
 
@@ -236,23 +236,13 @@ class RealAssistitiDryRunPreviewReader {
   }
 
   _ResolvedIdentity _resolveIdentity(LegacyRealAssistitoReadBundle bundle) {
-    final List<Map<String, dynamic>> identitySources = <Map<String, dynamic>>[
+    final String rawNome = _readFirstString(
       bundle.patient.rawData,
-      bundle.dashboardIndex.rawData,
-      bundle.therapeuticAdvice.rawData,
-    ];
-    final String rawNome = _readFirstStringFromSources(
-      identitySources,
       const <String>['nome', 'firstName', 'givenName'],
     );
-    final String rawCognome = _readFirstStringFromSources(
-      identitySources,
-      const <String>[
-        'cognome',
-        'lastName',
-        'surname',
-        'familyName',
-      ],
+    final String rawCognome = _readFirstString(
+      bundle.patient.rawData,
+      const <String>['cognome', 'lastName', 'surname', 'familyName'],
     );
 
     final List<_FullNameCandidate> fullNameCandidates = <_FullNameCandidate>[
@@ -555,19 +545,6 @@ class RealAssistitiDryRunPreviewReader {
   static String _readFirstString(Map<String, dynamic> map, List<String> keys) {
     for (final String key in keys) {
       final String value = map[key]?.toString().trim() ?? '';
-      if (value.isNotEmpty) {
-        return value;
-      }
-    }
-    return '';
-  }
-
-  static String _readFirstStringFromSources(
-    List<Map<String, dynamic>> sources,
-    List<String> keys,
-  ) {
-    for (final Map<String, dynamic> source in sources) {
-      final String value = _readFirstString(source, keys);
       if (value.isNotEmpty) {
         return value;
       }
