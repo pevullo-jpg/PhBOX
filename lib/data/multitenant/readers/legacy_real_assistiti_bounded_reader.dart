@@ -63,11 +63,7 @@ class LegacyRealAssistitoReadBundle {
   bool get hasCanonicalPatient => patient.exists;
 
   bool get hasAnyLegacySource =>
-      patient.exists ||
-      dashboardIndex.exists ||
-      therapeuticAdvice.exists ||
-      doctorManual.exists ||
-      doctorPrimary.exists;
+      patient.exists || dashboardIndex.exists || therapeuticAdvice.exists || doctorManual.exists || doctorPrimary.exists;
 
   int get existingSourceCount {
     int count = 0;
@@ -114,16 +110,24 @@ class LegacyRealAssistitiBoundedReadResult {
     required this.attemptedDocumentReads,
   });
 
-  bool get empty => bundles.isEmpty;
-
   int get requestedCount => requestedFiscalCodes.length;
 
   int get returnedCount => bundles.length;
 
-  bool get hasMissingLegacySources =>
-      bundles.any((LegacyRealAssistitoReadBundle bundle) => !bundle.hasAnyLegacySource);
+  bool get hasMissingLegacySources {
+    for (final LegacyRealAssistitoReadBundle bundle in bundles) {
+      if (!bundle.hasAnyLegacySource) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   Map<String, dynamic> toMap() {
+    final List<Map<String, dynamic>> mappedBundles = <Map<String, dynamic>>[];
+    for (final LegacyRealAssistitoReadBundle bundle in bundles) {
+      mappedBundles.add(bundle.toMap());
+    }
     return <String, dynamic>{
       'requestedFiscalCodes': requestedFiscalCodes,
       'requestedCount': requestedCount,
@@ -131,9 +135,7 @@ class LegacyRealAssistitiBoundedReadResult {
       'maxFiscalCodes': maxFiscalCodes,
       'attemptedDocumentReads': attemptedDocumentReads,
       'hasMissingLegacySources': hasMissingLegacySources,
-      'bundles': bundles
-          .map((LegacyRealAssistitoReadBundle bundle) => bundle.toMap())
-          .toList(growable: false),
+      'bundles': mappedBundles,
     };
   }
 }
