@@ -16,7 +16,6 @@ class TargetAssistitiReadOnlyPage extends StatefulWidget {
 
 class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPage> {
   final TextEditingController _cfController = TextEditingController();
-  final TextEditingController _copyTokenController = TextEditingController();
 
   AssistitiTargetWithLegacyFallbackResult? _result;
   RealAssistitiTargetCopyResult? _copyResult;
@@ -27,11 +26,11 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   bool _copying = false;
   bool _requested = false;
   bool _enableLegacyFallback = true;
+  bool _copyConfirmed = false;
 
   @override
   void dispose() {
     _cfController.dispose();
-    _copyTokenController.dispose();
     super.dispose();
   }
 
@@ -53,6 +52,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
       _copyError = null;
       _copyResult = null;
       _verificationResult = null;
+      _copyConfirmed = false;
     });
 
     try {
@@ -107,12 +107,26 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
       return;
     }
 
+    if (!_copyConfirmed) {
+      setState(() {
+        _copyError = const _FrontendCopyRejectedException(
+          code: 'manual_copy_confirmation_missing',
+          message: 'Spuntare la conferma manuale prima della copia target.',
+        );
+      });
+      return;
+    }
+
     final TenantSession session = TenantSessionScope.of(context);
     final RealAssistitiTargetCopyWriter writer = RealAssistitiTargetCopyWriter(
       firestore: FirebaseFirestore.instance,
     );
     final RealAssistitiPostCopyVerifier verifier = RealAssistitiPostCopyVerifier(
       firestore: FirebaseFirestore.instance,
+    );
+    final String technicalToken = RealAssistitiTargetCopyWriter.buildRequiredManualConfirmationToken(
+      tenantId: session.tenantId,
+      normalizedFiscalCodes: candidateFiscalCodes,
     );
 
     setState(() {
@@ -126,7 +140,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
       final RealAssistitiTargetCopyResult copyResult = await writer.copyByManualFiscalCodes(
         tenantId: session.tenantId,
         fiscalCodes: candidateFiscalCodes,
-        manualConfirmationToken: _copyTokenController.text,
+        manualConfirmationToken: technicalToken,
       );
       final RealAssistitiPostCopyVerificationResult verificationResult =
           await verifier.verifyCopyResult(copyResult: copyResult);
@@ -138,6 +152,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
         _copyResult = copyResult;
         _verificationResult = verificationResult;
         _copying = false;
+        _copyConfirmed = false;
       });
     } catch (error) {
       if (!mounted) {
@@ -256,12 +271,20 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
         const SizedBox(height: 12),
         _AssistitiCopyPanel(
           candidateFiscalCodes: copyCandidateFiscalCodes,
-          tokenController: _copyTokenController,
+          copyConfirmed: _copyConfirmed,
           copying: _copying,
           copyError: _copyError,
           copyResult: _copyResult,
           verificationResult: _verificationResult,
-          onCopy: _copyLegacyFallbackItems,
+          onCopyConfirmedChanged: _copying
+              ? null
+              : (bool value) {
+                  setState(() {
+                    _copyConfirmed = value;
+                    _copyError = null;
+                  });
+                },
+          onCopy: _copyConfirmed ? _copyLegacyFallbackItems : null,
         ),
         const SizedBox(height: 12),
         Expanded(
@@ -353,7 +376,7 @@ class _AssistitiFallbackHeader extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     const Text(
-                      'Nessun listener, nessuno switch dashboard. Lettura manuale max 3 CF; copia target solo da LEGACY con token.',
+                      'Nessun listener, nessuno switch dashboard. Lettura manuale max 3 CF; copia target solo da LEGACY con conferma esplicita.',
                       style: TextStyle(
                         color: AppColors.textMuted,
                         fontSize: 12,
@@ -470,20 +493,22 @@ class _AssistitiReadSummary extends StatelessWidget {
 
 class _AssistitiCopyPanel extends StatelessWidget {
   final List<String> candidateFiscalCodes;
-  final TextEditingController tokenController;
+  final bool copyConfirmed;
   final bool copying;
   final Object? copyError;
   final RealAssistitiTargetCopyResult? copyResult;
   final RealAssistitiPostCopyVerificationResult? verificationResult;
-  final VoidCallback onCopy;
+  final ValueChanged<bool>? onCopyConfirmedChanged;
+  final VoidCallback? onCopy;
 
   const _AssistitiCopyPanel({
     required this.candidateFiscalCodes,
-    required this.tokenController,
+    required this.copyConfirmed,
     required this.copying,
     required this.copyError,
     required this.copyResult,
     required this.verificationResult,
+    required this.onCopyConfirmedChanged,
     required this.onCopy,
   });
 
@@ -526,41 +551,34 @@ class _AssistitiCopyPanel extends StatelessWidget {
           ),
           if (hasCandidates) ...<Widget>[
             const SizedBox(height: 12),
-            TextField(
-              controller: tokenController,
-              enabled: !copying,
-              textCapitalization: TextCapitalization.characters,
-              style: const TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-              decoration: InputDecoration(
-                labelText: 'Token manuale copia target',
-                hintText: 'COPIA_REALE_ASSISTITI_TARGET:<tenantId>:CF1,CF2',
-                labelStyle: const TextStyle(color: AppColors.textSecondary),
-                hintStyle: const TextStyle(color: AppColors.textMuted),
-                filled: true,
-                fillColor: AppColors.panel,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: const BorderSide(color: AppColors.outlineSoft),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Checkbox(
+                  value: copyConfirmed,
+                  onChanged: onCopyConfirmedChanged == null
+                      ? null
+                      : (bool? value) {
+                          onCopyConfirmedChanged!(value ?? false);
+                        },
                 ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: const BorderSide(color: AppColors.outlineSoft),
+                const Expanded(
+                  child: Text(
+                    'Confermo la copia reale degli assistiti LEGACY selezionati verso TARGET. Il token tecnico viene generato automaticamente.',
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: const BorderSide(color: AppColors.dpc, width: 1.4),
-                ),
-              ),
+              ],
             ),
             const SizedBox(height: 10),
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(
-                onPressed: copying ? null : onCopy,
+                onPressed: copying || !copyConfirmed ? null : onCopy,
                 icon: copying
                     ? const SizedBox(
                         width: 16,
@@ -568,7 +586,7 @@ class _AssistitiCopyPanel extends StatelessWidget {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.verified_user_rounded),
-                label: Text(copying ? 'Copia e verifica...' : 'Copia LEGACY → TARGET'),
+                label: Text(copying ? 'Copia e verifica...' : 'Conferma e copia LEGACY → TARGET'),
               ),
             ),
           ],
