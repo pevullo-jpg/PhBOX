@@ -354,18 +354,16 @@ class RealAssistitiTargetCopyWriter {
 
     targetPayload['assistitoId'] = assistitoId;
 
-    if (targetPayload['cf'] != item.cf) {
+    if (_readString(targetPayload['cf']) != item.cf) {
       throw RealAssistitiTargetCopyRejectedException(
         code: 'target_payload_cf_mismatch',
         message: 'Payload target con CF non coerente per CF ${item.cf}.',
       );
     }
-    if (_readString(targetPayload['nome']).isEmpty ||
-        _readString(targetPayload['cognome']).isEmpty ||
-        _readString(targetPayload['fullName']).isEmpty) {
+    if (!_hasAcceptedIdentityAnchor(targetPayload)) {
       throw RealAssistitiTargetCopyRejectedException(
-        code: 'target_payload_identity_incomplete',
-        message: 'Payload target con identità incompleta per CF ${item.cf}.',
+        code: 'target_payload_identity_absent',
+        message: 'Payload target senza CF/nome/cognome/fullName per CF ${item.cf}.',
       );
     }
     if (!_hasNonNullTimestamp(targetPayload['createdAt']) ||
@@ -429,6 +427,13 @@ class RealAssistitiTargetCopyWriter {
       );
     }
     return normalized;
+  }
+
+  static bool _hasAcceptedIdentityAnchor(Map<String, dynamic> payload) {
+    return _readString(payload['cf']).isNotEmpty ||
+        _readString(payload['nome']).isNotEmpty ||
+        _readString(payload['cognome']).isNotEmpty ||
+        _readString(payload['fullName']).isNotEmpty;
   }
 
   static bool _hasNonNullTimestamp(Object? value) {

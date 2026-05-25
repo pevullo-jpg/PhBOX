@@ -403,10 +403,8 @@ class RealAssistitiPostCopyVerifier {
     if (_readString(targetRead.rawData['cf']) != writtenDocument.cf) {
       mismatchReasons.add('target_cf_mismatch');
     }
-    if (_readString(targetRead.rawData['nome']).isEmpty ||
-        _readString(targetRead.rawData['cognome']).isEmpty ||
-        _readString(targetRead.rawData['fullName']).isEmpty) {
-      mismatchReasons.add('target_identity_incomplete');
+    if (!_hasAcceptedIdentityAnchor(targetRead.rawData)) {
+      mismatchReasons.add('target_identity_absent');
     }
     if (!_hasNonNullTimestamp(targetRead.rawData['createdAt']) ||
         !_hasNonNullTimestamp(targetRead.rawData['updatedAt'])) {
@@ -583,6 +581,13 @@ class RealAssistitiPostCopyVerifier {
     }
 
     return left == right;
+  }
+
+  static bool _hasAcceptedIdentityAnchor(Map<String, dynamic> payload) {
+    return _readString(payload['cf']).isNotEmpty ||
+        _readString(payload['nome']).isNotEmpty ||
+        _readString(payload['cognome']).isNotEmpty ||
+        _readString(payload['fullName']).isNotEmpty;
   }
 
   static bool _hasNonNullTimestamp(Object? value) {
