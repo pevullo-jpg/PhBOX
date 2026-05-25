@@ -114,7 +114,6 @@ class RealAssistitiDryRunPreviewResult {
 
 class RealAssistitiDryRunPreviewReader {
   static const int maxFiscalCodes = LegacyRealAssistitiBoundedReader.maxFiscalCodes;
-  static const int sourceVersion = 4;
 
   final FirebaseFirestore firestore;
 
@@ -199,30 +198,17 @@ class RealAssistitiDryRunPreviewReader {
       candidateKeys: const <String>['createdAt', 'creationTime', 'importedAt', 'firstSeenAt'],
       fallback: previewGeneratedAt,
     );
-    final DateTime updatedAt = _resolveTimestamp(
-      bundle: bundle,
-      candidateKeys: const <String>['updatedAt', 'lastUpdatedAt', 'modifiedAt', 'lastSeenAt'],
-      fallback: previewGeneratedAt,
-    );
 
     final Map<String, dynamic> targetPreviewPayload = <String, dynamic>{
       'cf': bundle.cf,
-      'nome': identity.nome,
-      'cognome': identity.cognome,
       'fullName': identity.fullName,
-      'nameSplitConfidence': identity.nameSplitConfidence,
-      'searchPrefixes': identity.hasSearchableFullName
-          ? _buildSearchPrefixes(identity.fullName)
-          : const <String>[],
-      'doctor': _buildDoctorPreview(bundle, identity),
-      'dashboard': _buildDashboardSnapshot(bundle.dashboardIndex.rawData, identity),
-      'therapeuticAdvice': _sanitizeNonIdentityFields(
-        bundle.therapeuticAdvice.rawData,
-        identity,
-      ),
+      'cognome': identity.cognome,
+      'nome': identity.nome,
       'createdAt': createdAt,
-      'updatedAt': updatedAt,
-      'sourceVersion': sourceVersion,
+      'dashboard': _buildDashboardSnapshot(bundle.dashboardIndex.rawData, identity),
+      'nameSplitConfidence': identity.nameSplitConfidence,
+      'doctor': _buildDoctorPreview(bundle, identity),
+      'therapeuticAdvice': _buildTherapeuticAdvicePreview(bundle.therapeuticAdvice.rawData),
     };
 
     return RealAssistitiDryRunPreviewItem(
@@ -236,74 +222,163 @@ class RealAssistitiDryRunPreviewReader {
   }
 
   _ResolvedIdentity _resolveIdentity(LegacyRealAssistitoReadBundle bundle) {
-    final List<Map<String, dynamic>> identitySources = <Map<String, dynamic>>[
-      bundle.patient.rawData,
-      bundle.dashboardIndex.rawData,
-      bundle.therapeuticAdvice.rawData,
-    ];
-    final String rawNome = _readFirstStringFromSources(
-      identitySources,
-      const <String>['nome', 'firstName', 'givenName'],
+    final String explicitNome = TargetAssistitoIdentityNormalizer.normalizeNamePart(
+      _readFirstString(bundle.patient.rawData, const <String>['nome', 'firstName', 'givenName']),
     );
-    final String rawCognome = _readFirstStringFromSources(
-      identitySources,
-      const <String>[
-        'cognome',
-        'lastName',
-        'surname',
-        'familyName',
-      ],
+    final String explicitCognome = TargetAssistitoIdentityNormalizer.normalizeNamePart(
+      _readFirstString(bundle.patient.rawData, const <String>['cognome', 'lastName', 'surname', 'familyName']),
     );
 
-    final List<_FullNameCandidate> fullNameCandidates = <_FullNameCandidate>[
-      _FullNameCandidate(
-        rawValue: _readFirstString(
-          bundle.patient.rawData,
-          const <String>['fullName', 'displayName', 'patientName', 'assistitoName', 'name'],
-        ),
+    final List<String> fullNameCandidates = <String>[
+      _readFirstString(
+        bundle.patient.rawData,
+        const <String>['fullName', 'displayName', 'patientName', 'assistitoName', 'name'],
       ),
-      _FullNameCandidate(
-        rawValue: _readFirstString(
-          bundle.dashboardIndex.rawData,
-          const <String>['fullName', 'displayName', 'patientName', 'assistitoName', 'name'],
-        ),
+      _readFirstString(
+        bundle.dashboardIndex.rawData,
+        const <String>['fullName', 'displayName', 'patientName', 'assistitoName', 'name'],
       ),
-      _FullNameCandidate(
-        rawValue: _readFirstString(
-          bundle.therapeuticAdvice.rawData,
-          const <String>['fullName', 'displayName', 'patientName', 'assistitoName', 'name'],
-        ),
+      _readFirstString(
+        bundle.therapeuticAdvice.rawData,
+        const <String>['fullName', 'displayName', 'patientName', 'assistitoName', 'name'],
       ),
     ];
 
-    const TargetAssistitoIdentityNormalizer normalizer = TargetAssistitoIdentityNormalizer();
-
-    for (final _FullNameCandidate candidate in fullNameCandidates) {
-      final TargetAssistitoIdentityNormalizationResult normalized = normalizer.normalize(
-        rawCf: bundle.cf,
-        rawNome: rawNome,
-        rawCognome: rawCognome,
-        rawFullName: candidate.rawValue,
+    for (final String rawFullName in fullNameCandidates) {
+      final String fullName = TargetAssistitoIdentityNormalizer.normalizeFullName(rawFullName);
+      if (fullName.isEmpty) {
+        continue;
+      }
+      final _BestEffortNameSplit split = _splitFullNameUsingCf(
+        cf: bundle.cf,
+        fullName: fullName,
       );
-      if (normalized.hasValidName) {
-        return _ResolvedIdentity.fromNormalized(
+      return _ResolvedIdentity(
+        cf: TargetAssistitoIdentityNormalizer.normalizeCf(bundle.cf),
+        fullName: fullName,
+        cognome: _preferCoherentExplicitPart(
+          explicitPart: explicitCognome,
+          derivedPart: split.cognome,
+          fullName: fullName,
           cf: bundle.cf,
-          normalized: normalized,
-          rawFullName: candidate.rawValue,
-        );
+          isSurname: true,
+        ),
+        nome: _preferCoherentExplicitPart(
+          explicitPart: explicitNome,
+          derivedPart: split.nome,
+          fullName: fullName,
+          cf: bundle.cf,
+          isSurname: false,
+        ),
+        nameSplitConfidence: split.nameSplitConfidence,
+      );
+    }
+
+    final bool explicitCognomeCoherent = _partMatchesCfCode(
+      value: explicitCognome,
+      cf: bundle.cf,
+      isSurname: true,
+    );
+    final bool explicitNomeCoherent = _partMatchesCfCode(
+      value: explicitNome,
+      cf: bundle.cf,
+      isSurname: false,
+    );
+    final String safeCognome = explicitCognomeCoherent ? explicitCognome : '';
+    final String safeNome = explicitNomeCoherent ? explicitNome : '';
+    final String fallbackFullName = <String>[safeNome, safeCognome]
+        .where((String item) => item.trim().isNotEmpty)
+        .join(' ')
+        .trim();
+
+    return _ResolvedIdentity(
+      cf: TargetAssistitoIdentityNormalizer.normalizeCf(bundle.cf),
+      fullName: fallbackFullName,
+      cognome: safeCognome,
+      nome: safeNome,
+      nameSplitConfidence: fallbackFullName.isEmpty ? 'cf_only' : 'explicit_patient_fields_cf_checked',
+    );
+  }
+
+  static String _preferCoherentExplicitPart({
+    required String explicitPart,
+    required String derivedPart,
+    required String fullName,
+    required String cf,
+    required bool isSurname,
+  }) {
+    if (explicitPart.isEmpty) {
+      return derivedPart;
+    }
+    final String comparableExplicit = _normalizeComparableName(explicitPart);
+    final String comparableFullName = _normalizeComparableName(fullName);
+    if (comparableFullName.split(' ').contains(comparableExplicit) &&
+        _partMatchesCfCode(value: explicitPart, cf: cf, isSurname: isSurname)) {
+      return explicitPart;
+    }
+    return derivedPart;
+  }
+
+  static _BestEffortNameSplit _splitFullNameUsingCf({
+    required String cf,
+    required String fullName,
+  }) {
+    final List<String> parts = fullName
+        .trim()
+        .split(' ')
+        .where((String part) => part.trim().isNotEmpty)
+        .toList(growable: false);
+    if (parts.length < 2) {
+      return _BestEffortNameSplit(
+        nome: '',
+        cognome: '',
+        nameSplitConfidence: 'full_name_only',
+      );
+    }
+
+    _SplitCandidate? best;
+    for (int index = 1; index < parts.length; index++) {
+      final _SplitCandidate surnameFirst = _SplitCandidate(
+        nome: parts.sublist(index).join(' '),
+        cognome: parts.sublist(0, index).join(' '),
+      ).scoreAgainstCf(cf);
+      final _SplitCandidate nameFirst = _SplitCandidate(
+        nome: parts.sublist(0, index).join(' '),
+        cognome: parts.sublist(index).join(' '),
+      ).scoreAgainstCf(cf);
+      for (final _SplitCandidate candidate in <_SplitCandidate>[surnameFirst, nameFirst]) {
+        if (best == null || candidate.score > best.score) {
+          best = candidate;
+        }
       }
     }
 
-    final TargetAssistitoIdentityNormalizationResult fallback = normalizer.normalize(
-      rawCf: bundle.cf,
-      rawNome: rawNome,
-      rawCognome: rawCognome,
+    final _SplitCandidate selected = best ??
+        _SplitCandidate(
+          nome: parts.first,
+          cognome: parts.skip(1).join(' '),
+        );
+    return _BestEffortNameSplit(
+      nome: selected.nome,
+      cognome: selected.cognome,
+      nameSplitConfidence: selected.score >= 2
+          ? 'derived_from_full_name_cf'
+          : 'derived_from_full_name',
     );
-    return _ResolvedIdentity.fromNormalized(
-      cf: bundle.cf,
-      normalized: fallback,
-      rawFullName: '',
-    );
+  }
+
+  static bool _partMatchesCfCode({
+    required String value,
+    required String cf,
+    required bool isSurname,
+  }) {
+    final String normalizedCf = TargetAssistitoIdentityNormalizer.normalizeCf(cf);
+    if (normalizedCf.length < 6 || value.trim().isEmpty) {
+      return false;
+    }
+    final String expected = isSurname ? normalizedCf.substring(0, 3) : normalizedCf.substring(3, 6);
+    final String actual = isSurname ? _surnameCode(value) : _nameCode(value);
+    return actual == expected;
   }
 
   static Map<String, dynamic> _buildDoctorPreview(
@@ -314,17 +389,11 @@ class RealAssistitiDryRunPreviewReader {
       bundle.doctorManual.rawData,
       identity,
     );
-    final Map<String, dynamic> primary = _sanitizeDoctorFields(
-      bundle.doctorPrimary.rawData,
-      identity,
-    );
-
-    if (manual.isEmpty && primary.isEmpty) {
+    if (manual.isEmpty) {
       return const <String, dynamic>{};
     }
     return Map<String, dynamic>.unmodifiable(<String, dynamic>{
-      if (manual.isNotEmpty) 'manual': manual,
-      if (primary.isNotEmpty) 'primary': primary,
+      'manual': manual,
     });
   }
 
@@ -336,39 +405,20 @@ class RealAssistitiDryRunPreviewReader {
       return const <String, dynamic>{};
     }
 
-    const Set<String> allowedKeys = <String>{
-      'doctorId',
-      'doctorCode',
-      'doctorName',
-      'doctorFullName',
-      'doctorFiscalCode',
-      'doctorLicense',
-      'doctorPhone',
-      'doctorEmail',
-      'medicoId',
-      'medicoCodice',
-      'medicoNome',
-      'medicoCognome',
-      'medicoFullName',
-      'medicoCodiceFiscale',
-      'medicoTelefono',
-      'medicoEmail',
-      'specialization',
-      'specializzazione',
-    };
-
+    final String doctorFullName = _readFirstString(
+      rawData,
+      const <String>['doctorFullName', 'medicoFullName'],
+    );
+    final String doctorName = _readFirstString(
+      rawData,
+      const <String>['doctorName', 'medico', 'medicoNome'],
+    );
     final Map<String, dynamic> sanitized = <String, dynamic>{};
-    for (final MapEntry<String, dynamic> entry in rawData.entries) {
-      if (!allowedKeys.contains(entry.key)) {
-        continue;
-      }
-      if (!_isSafeScalar(entry.value)) {
-        continue;
-      }
-      if (_containsPatientIdentityEcho(entry.value, identity)) {
-        continue;
-      }
-      sanitized[entry.key] = entry.value;
+    if (doctorFullName.isNotEmpty && !_containsPatientIdentityEcho(doctorFullName, identity)) {
+      sanitized['doctorFullName'] = doctorFullName;
+    }
+    if (doctorName.isNotEmpty && !_containsPatientIdentityEcho(doctorName, identity)) {
+      sanitized['doctorName'] = doctorName;
     }
     return Map<String, dynamic>.unmodifiable(sanitized);
   }
@@ -381,7 +431,8 @@ class RealAssistitiDryRunPreviewReader {
       return const <String, dynamic>{};
     }
 
-    const Set<String> allowedKeys = <String>{
+    final Map<String, dynamic> sanitized = <String, dynamic>{};
+    for (final String key in const <String>[
       'advanceCount',
       'bookingCount',
       'debtAmount',
@@ -397,62 +448,21 @@ class RealAssistitiDryRunPreviewReader {
       'lastPrescriptionDate',
       'nearestExpiryDate',
       'recipeCount',
-    };
-
-    final Map<String, dynamic> sanitized = <String, dynamic>{};
-    for (final MapEntry<String, dynamic> entry in rawData.entries) {
-      if (!allowedKeys.contains(entry.key)) {
-        continue;
+    ]) {
+      if (rawData.containsKey(key) && !_containsPatientIdentityEcho(rawData[key], identity)) {
+        sanitized[key] = rawData[key];
       }
-      if (_containsPatientIdentityEcho(entry.value, identity)) {
-        continue;
-      }
-      sanitized[entry.key] = entry.value;
     }
     return Map<String, dynamic>.unmodifiable(sanitized);
   }
 
-  static Map<String, dynamic> _sanitizeNonIdentityFields(
-    Map<String, dynamic> rawData,
-    _ResolvedIdentity identity,
-  ) {
-    if (rawData.isEmpty) {
+  static Map<String, dynamic> _buildTherapeuticAdvicePreview(Map<String, dynamic> rawData) {
+    if (rawData.isEmpty || !rawData.containsKey('updatedAt')) {
       return const <String, dynamic>{};
     }
-
-    const Set<String> blockedKeys = <String>{
-      'cf',
-      'fiscalCode',
-      'codiceFiscale',
-      'nome',
-      'cognome',
-      'firstName',
-      'givenName',
-      'lastName',
-      'surname',
-      'familyName',
-      'fullName',
-      'displayName',
-      'patientName',
-      'assistitoName',
-      'name',
-      'alias',
-      'familyId',
-      'familyColorIndex',
-      'doctorFullName',
-      'source',
-      'schemaVersion',
-      'searchPrefixes',
-      'updatedAt',
-    };
-
-    final Map<String, dynamic> sanitized = <String, dynamic>{};
-    for (final MapEntry<String, dynamic> entry in rawData.entries) {
-      if (!blockedKeys.contains(entry.key) && !_containsPatientIdentityEcho(entry.value, identity)) {
-        sanitized[entry.key] = entry.value;
-      }
-    }
-    return Map<String, dynamic>.unmodifiable(sanitized);
+    return Map<String, dynamic>.unmodifiable(<String, dynamic>{
+      'updatedAt': rawData['updatedAt'],
+    });
   }
 
   static bool _containsPatientIdentityEcho(Object? value, _ResolvedIdentity identity) {
@@ -483,33 +493,11 @@ class RealAssistitiDryRunPreviewReader {
       _normalizeComparableName(identity.nome),
       _normalizeComparableName(identity.cognome),
       _normalizeComparableName(identity.fullName),
-      _normalizeComparableName(_reverseNameOrder(identity.fullName)),
+      _normalizeComparableName('${identity.cognome} ${identity.nome}'),
+      _normalizeComparableName('${identity.nome} ${identity.cognome}'),
     }..remove('');
 
-    if (forbiddenComparableValues.contains(normalizedComparable)) {
-      return true;
-    }
-
-    final List<String> identityTokens = _normalizeComparableName(identity.fullName)
-        .split(' ')
-        .where((String token) => token.isNotEmpty)
-        .toList(growable: false);
-    final List<String> valueTokens = normalizedComparable
-        .split(' ')
-        .where((String token) => token.isNotEmpty)
-        .toList(growable: false);
-
-    if (identityTokens.length >= 2 &&
-        valueTokens.length >= 2 &&
-        identityTokens.every(valueTokens.contains)) {
-      return true;
-    }
-
-    return false;
-  }
-
-  static bool _isSafeScalar(Object? value) {
-    return value == null || value is String || value is num || value is bool || value is DateTime;
+    return forbiddenComparableValues.contains(normalizedComparable);
   }
 
   static DateTime _resolveTimestamp({
@@ -562,43 +550,6 @@ class RealAssistitiDryRunPreviewReader {
     return '';
   }
 
-  static String _readFirstStringFromSources(
-    List<Map<String, dynamic>> sources,
-    List<String> keys,
-  ) {
-    for (final Map<String, dynamic> source in sources) {
-      final String value = _readFirstString(source, keys);
-      if (value.isNotEmpty) {
-        return value;
-      }
-    }
-    return '';
-  }
-
-  static List<String> _buildSearchPrefixes(String fullName) {
-    final String normalized = fullName.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
-    if (normalized.isEmpty ||
-        TargetAssistitoIdentityNormalizer.isPlaceholderName(normalized) ||
-        TargetAssistitoIdentityNormalizer.isFiscalCodeLike(normalized) ||
-        TargetAssistitoIdentityNormalizer.containsFiscalCodeLikeToken(normalized)) {
-      return const <String>[];
-    }
-
-    final Set<String> prefixes = <String>{};
-    final List<String> tokens = normalized.split(' ');
-    for (final String token in tokens) {
-      for (int length = 1; length <= token.length; length++) {
-        prefixes.add(token.substring(0, length));
-      }
-    }
-    for (int length = 1; length <= normalized.length; length++) {
-      prefixes.add(normalized.substring(0, length));
-    }
-
-    final List<String> sorted = prefixes.toList(growable: false)..sort();
-    return List<String>.unmodifiable(sorted.take(50).toList(growable: false));
-  }
-
   static String _normalizeTenantId(String value) {
     final String normalized = value.trim();
     if (normalized.isEmpty) {
@@ -617,46 +568,49 @@ class RealAssistitiDryRunPreviewReader {
   }
 
   static String _normalizeComparableName(String value) {
-    return value
-        .trim()
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .toLowerCase();
+    return value.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
   }
 
-  static String _reverseNameOrder(String value) {
-    final List<String> parts = value
-        .trim()
-        .split(' ')
-        .where((String item) => item.trim().isNotEmpty)
-        .toList(growable: false);
-    if (parts.length < 2) {
-      return value;
-    }
-    return <String>[
-      parts.sublist(1).join(' '),
-      parts.first,
-    ].join(' ');
+  static String _surnameCode(String value) {
+    return _fiscalNameCode(value, surname: true);
   }
 
-  static bool _looksAllUppercaseHumanName(String rawFullName) {
-    final String normalized = rawFullName.trim().replaceAll(RegExp(r'\s+'), ' ');
-    if (normalized.isEmpty) {
-      return false;
-    }
-    final String lettersOnly = normalized.replaceAll(RegExp(r"[^A-Za-zÀ-ÖØ-öø-ÿ']"), '');
-    if (lettersOnly.length < 3) {
-      return false;
-    }
-    return lettersOnly == lettersOnly.toUpperCase() && lettersOnly != lettersOnly.toLowerCase();
+  static String _nameCode(String value) {
+    return _fiscalNameCode(value, surname: false);
   }
-}
 
-class _FullNameCandidate {
-  final String rawValue;
+  static String _fiscalNameCode(String value, {required bool surname}) {
+    final String letters = _normalizeFiscalLetters(value);
+    final String consonants = letters.replaceAll(RegExp('[AEIOU]'), '');
+    final String vowels = letters.replaceAll(RegExp('[^AEIOU]'), '');
+    final String base;
+    if (!surname && consonants.length >= 4) {
+      base = '${consonants[0]}${consonants[2]}${consonants[3]}';
+    } else {
+      base = '$consonants$vowels';
+    }
+    return base.padRight(3, 'X').substring(0, 3);
+  }
 
-  const _FullNameCandidate({
-    required this.rawValue,
-  });
+  static String _normalizeFiscalLetters(String value) {
+    final String upper = value.toUpperCase();
+    const Map<String, String> replacements = <String, String>{
+      'À': 'A', 'Á': 'A', 'Â': 'A', 'Ã': 'A', 'Ä': 'A', 'Å': 'A',
+      'È': 'E', 'É': 'E', 'Ê': 'E', 'Ë': 'E',
+      'Ì': 'I', 'Í': 'I', 'Î': 'I', 'Ï': 'I',
+      'Ò': 'O', 'Ó': 'O', 'Ô': 'O', 'Õ': 'O', 'Ö': 'O',
+      'Ù': 'U', 'Ú': 'U', 'Û': 'U', 'Ü': 'U',
+      'Ç': 'C',
+    };
+    final StringBuffer buffer = StringBuffer();
+    for (int index = 0; index < upper.length; index++) {
+      final String char = replacements[upper[index]] ?? upper[index];
+      if (RegExp('[A-Z]').hasMatch(char)) {
+        buffer.write(char);
+      }
+    }
+    return buffer.toString();
+  }
 }
 
 class _BestEffortNameSplit {
@@ -669,57 +623,36 @@ class _BestEffortNameSplit {
     required this.cognome,
     required this.nameSplitConfidence,
   });
+}
 
-  factory _BestEffortNameSplit.fromNormalized(
-    TargetAssistitoIdentityNormalizationResult normalized, {
-    required String rawFullName,
-  }) {
-    if (!normalized.hasValidName) {
-      return _BestEffortNameSplit(
-        nome: normalized.nome,
-        cognome: normalized.cognome,
-        nameSplitConfidence: normalized.nameSplitConfidence,
-      );
+class _SplitCandidate {
+  final String nome;
+  final String cognome;
+  final int score;
+
+  const _SplitCandidate({
+    required this.nome,
+    required this.cognome,
+    this.score = 0,
+  });
+
+  _SplitCandidate scoreAgainstCf(String cf) {
+    int value = 0;
+    if (RealAssistitiDryRunPreviewReader._partMatchesCfCode(
+      value: cognome,
+      cf: cf,
+      isSurname: true,
+    )) {
+      value++;
     }
-    final List<String> parts = normalized.fullName
-        .trim()
-        .split(' ')
-        .where((String part) => part.trim().isNotEmpty)
-        .toList(growable: false);
-    if (parts.length < 2) {
-      return _BestEffortNameSplit(
-        nome: normalized.nome,
-        cognome: normalized.cognome,
-        nameSplitConfidence: normalized.nameSplitConfidence,
-      );
+    if (RealAssistitiDryRunPreviewReader._partMatchesCfCode(
+      value: nome,
+      cf: cf,
+      isSurname: false,
+    )) {
+      value++;
     }
-    final bool hasExplicitNome = normalized.nome.trim().isNotEmpty;
-    final bool hasExplicitCognome = normalized.cognome.trim().isNotEmpty;
-    if (hasExplicitNome && hasExplicitCognome) {
-      return _BestEffortNameSplit(
-        nome: normalized.nome,
-        cognome: normalized.cognome,
-        nameSplitConfidence: normalized.nameSplitConfidence,
-      );
-    }
-
-    final bool surnameFirst = !hasExplicitNome &&
-        !hasExplicitCognome &&
-        RealAssistitiDryRunPreviewReader._looksAllUppercaseHumanName(rawFullName);
-
-    final String derivedNome = surnameFirst ? parts.skip(1).join(' ') : parts.first;
-    final String derivedCognome = surnameFirst ? parts.first : parts.skip(1).join(' ');
-
-    final String nome = hasExplicitNome ? normalized.nome : derivedNome;
-    final String cognome = hasExplicitCognome ? normalized.cognome : derivedCognome;
-
-    final bool derivedFromFullName = nome != normalized.nome || cognome != normalized.cognome;
-    return _BestEffortNameSplit(
-      nome: nome,
-      cognome: cognome,
-      nameSplitConfidence:
-          derivedFromFullName ? 'derived_from_full_name' : normalized.nameSplitConfidence,
-    );
+    return _SplitCandidate(nome: nome, cognome: cognome, score: value);
   }
 }
 
@@ -738,35 +671,10 @@ class _ResolvedIdentity {
     required this.nameSplitConfidence,
   });
 
-  factory _ResolvedIdentity.fromNormalized({
-    required String cf,
-    required TargetAssistitoIdentityNormalizationResult normalized,
-    required String rawFullName,
-  }) {
-    final _BestEffortNameSplit bestEffortSplit = _BestEffortNameSplit.fromNormalized(
-      normalized,
-      rawFullName: rawFullName,
-    );
-    return _ResolvedIdentity(
-      cf: TargetAssistitoIdentityNormalizer.normalizeCf(cf),
-      nome: bestEffortSplit.nome,
-      cognome: bestEffortSplit.cognome,
-      fullName: normalized.fullName,
-      nameSplitConfidence: bestEffortSplit.nameSplitConfidence,
-    );
-  }
-
   bool get hasAnyAcceptedIdentityAnchor {
     return cf.trim().isNotEmpty ||
         nome.trim().isNotEmpty ||
         cognome.trim().isNotEmpty ||
-        hasSearchableFullName;
-  }
-
-  bool get hasSearchableFullName {
-    return fullName.trim().isNotEmpty &&
-        !TargetAssistitoIdentityNormalizer.isPlaceholderName(fullName) &&
-        !TargetAssistitoIdentityNormalizer.isFiscalCodeLike(fullName) &&
-        !TargetAssistitoIdentityNormalizer.containsFiscalCodeLikeToken(fullName);
+        fullName.trim().isNotEmpty;
   }
 }
