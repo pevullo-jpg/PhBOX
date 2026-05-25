@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../../data/multitenant/readers/assistiti_target_with_legacy_fallback_reader.dart';
+import '../../../data/multitenant/readers/real_assistiti_dry_run_preview_reader.dart';
 import '../../../data/multitenant/verifiers/real_assistiti_post_copy_verifier.dart';
 import '../../../data/multitenant/writers/real_assistiti_target_copy_writer.dart';
 import '../../../theme/app_theme.dart';
@@ -20,6 +21,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   AssistitiTargetWithLegacyFallbackResult? _result;
   RealAssistitiTargetCopyResult? _copyResult;
   RealAssistitiPostCopyVerificationResult? _verificationResult;
+  RealAssistitiDryRunPreviewResult? _dryRunDiagnosticResult;
   Object? _error;
   Object? _copyError;
   bool _loading = false;
@@ -52,6 +54,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
       _copyError = null;
       _copyResult = null;
       _verificationResult = null;
+      _dryRunDiagnosticResult = null;
       _copyConfirmed = false;
     });
 
@@ -134,6 +137,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
       _copyError = null;
       _copyResult = null;
       _verificationResult = null;
+      _dryRunDiagnosticResult = null;
     });
 
     try {
@@ -155,16 +159,59 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
         _copyConfirmed = false;
       });
     } catch (error) {
+      RealAssistitiDryRunPreviewResult? diagnosticResult;
+      if (error is RealAssistitiTargetCopyRejectedException &&
+          error.code == 'dry_run_preview_blocked') {
+        diagnosticResult = await _loadDryRunDiagnostic(
+          tenantId: session.tenantId,
+          fiscalCodes: candidateFiscalCodes,
+        );
+      }
+
       if (!mounted) {
         return;
       }
       setState(() {
-        _copyError = error;
+        _copyError = diagnosticResult == null ? error : _FrontendCopyRejectedException(
+          code: 'dry_run_preview_blocked',
+          message: _formatDryRunBlockingReasons(diagnosticResult),
+        );
+        _dryRunDiagnosticResult = diagnosticResult;
         _copyResult = null;
         _verificationResult = null;
         _copying = false;
       });
     }
+  }
+
+  Future<RealAssistitiDryRunPreviewResult?> _loadDryRunDiagnostic({
+    required String tenantId,
+    required List<String> fiscalCodes,
+  }) async {
+    try {
+      final RealAssistitiDryRunPreviewReader reader = RealAssistitiDryRunPreviewReader(
+        firestore: FirebaseFirestore.instance,
+      );
+      return await reader.previewByManualFiscalCodes(
+        tenantId: tenantId,
+        fiscalCodes: fiscalCodes,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static String _formatDryRunBlockingReasons(RealAssistitiDryRunPreviewResult result) {
+    final List<String> lines = <String>[];
+    for (final RealAssistitiDryRunPreviewItem item in result.items) {
+      if (item.blocked) {
+        lines.add('${item.cf}: ${item.blockingReasons.join(', ')}');
+      }
+    }
+    if (lines.isEmpty) {
+      return 'Dry-run bloccato, ma nessun dettaglio diagnostico disponibile.';
+    }
+    return 'Copia bloccata dal dry-run: ${lines.join(' | ')}';
   }
 
   static List<String> _copyCandidateFiscalCodes(AssistitiTargetWithLegacyFallbackResult result) {
@@ -276,12 +323,14 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
           copyError: _copyError,
           copyResult: _copyResult,
           verificationResult: _verificationResult,
+          dryRunDiagnosticResult: _dryRunDiagnosticResult,
           onCopyConfirmedChanged: _copying
               ? null
               : (bool value) {
                   setState(() {
                     _copyConfirmed = value;
                     _copyError = null;
+                    _dryRunDiagnosticResult = null;
                   });
                 },
           onCopy: _copyConfirmed ? _copyLegacyFallbackItems : null,
@@ -498,6 +547,7 @@ class _AssistitiCopyPanel extends StatelessWidget {
   final Object? copyError;
   final RealAssistitiTargetCopyResult? copyResult;
   final RealAssistitiPostCopyVerificationResult? verificationResult;
+  final RealAssistitiDryRunPreviewResult? dryRunDiagnosticResult;
   final ValueChanged<bool>? onCopyConfirmedChanged;
   final VoidCallback? onCopy;
 
@@ -508,6 +558,7 @@ class _AssistitiCopyPanel extends StatelessWidget {
     required this.copyError,
     required this.copyResult,
     required this.verificationResult,
+    required this.dryRunDiagnosticResult,
     required this.onCopyConfirmedChanged,
     required this.onCopy,
   });
@@ -601,6 +652,10 @@ class _AssistitiCopyPanel extends StatelessWidget {
               ),
             ),
           ],
+          if (dryRunDiagnosticResult != null) ...<Widget>[
+            const SizedBox(height: 10),
+            _DryRunDiagnosticCard(result: dryRunDiagnosticResult!),
+          ],
           if (copyResult != null) ...<Widget>[
             const SizedBox(height: 10),
             Wrap(
@@ -633,6 +688,78 @@ class _AssistitiCopyPanel extends StatelessWidget {
               ],
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DryRunDiagnosticCard extends StatelessWidget {
+  final RealAssistitiDryRunPreviewResult result;
+
+  const _DryRunDiagnosticCard({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    final List<RealAssistitiDryRunPreviewItem> blockedItems = result.items
+        .where((RealAssistitiDryRunPreviewItem item) => item.blocked)
+        .toList(growable: false);
+    if (blockedItems.isEmpty) {
+      return const _DiagnosticBox(
+        title: 'Dry-run diagnostico',
+        message: 'Nessun blocco rilevato nella diagnostica.',
+      );
+    }
+    return _DiagnosticBox(
+      title: 'Copia bloccata dal dry-run',
+      message: blockedItems
+          .map((RealAssistitiDryRunPreviewItem item) {
+            return '${item.cf}: ${item.blockingReasons.join(', ')}';
+          })
+          .join('\n'),
+    );
+  }
+}
+
+class _DiagnosticBox extends StatelessWidget {
+  final String title;
+  final String message;
+
+  const _DiagnosticBox({
+    required this.title,
+    required this.message,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.panel,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.expiry),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            title,
+            style: const TextStyle(
+              color: AppColors.expiry,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            message,
+            style: const TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ],
       ),
     );
