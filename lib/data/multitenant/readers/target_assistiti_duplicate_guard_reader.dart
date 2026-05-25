@@ -96,17 +96,29 @@ class TargetAssistitiDuplicateGuardResult {
   int get requestedCount => requestedFiscalCodes.length;
 
   bool get hasDuplicates {
-    return checks.any((TargetAssistitiDuplicateGuardCheck check) => check.duplicateFound);
+    for (final TargetAssistitiDuplicateGuardCheck check in checks) {
+      if (check.duplicateFound) {
+        return true;
+      }
+    }
+    return false;
   }
 
   List<String> get duplicateFiscalCodes {
-    return checks
-        .where((TargetAssistitiDuplicateGuardCheck check) => check.duplicateFound)
-        .map((TargetAssistitiDuplicateGuardCheck check) => check.cf)
-        .toList(growable: false);
+    final List<String> duplicateCodes = <String>[];
+    for (final TargetAssistitiDuplicateGuardCheck check in checks) {
+      if (check.duplicateFound) {
+        duplicateCodes.add(check.cf);
+      }
+    }
+    return List<String>.unmodifiable(duplicateCodes);
   }
 
   Map<String, dynamic> toMap() {
+    final List<Map<String, dynamic>> mappedChecks = <Map<String, dynamic>>[];
+    for (final TargetAssistitiDuplicateGuardCheck check in checks) {
+      mappedChecks.add(check.toMap());
+    }
     return <String, dynamic>{
       'tenantId': tenantId,
       'collectionPath': collectionPath,
@@ -116,9 +128,7 @@ class TargetAssistitiDuplicateGuardResult {
       'attemptedQueries': attemptedQueries,
       'hasDuplicates': hasDuplicates,
       'duplicateFiscalCodes': duplicateFiscalCodes,
-      'checks': checks
-          .map((TargetAssistitiDuplicateGuardCheck check) => check.toMap())
-          .toList(growable: false),
+      'checks': mappedChecks,
     };
   }
 }
