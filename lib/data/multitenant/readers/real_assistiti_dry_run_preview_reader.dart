@@ -114,7 +114,7 @@ class RealAssistitiDryRunPreviewResult {
 
 class RealAssistitiDryRunPreviewReader {
   static const int maxFiscalCodes = LegacyRealAssistitiBoundedReader.maxFiscalCodes;
-  static const int sourceVersion = 1;
+  static const int sourceVersion = 2;
 
   final FirebaseFirestore firestore;
 
@@ -190,8 +190,8 @@ class RealAssistitiDryRunPreviewReader {
     }
 
     final _ResolvedIdentity identity = _resolveIdentity(bundle);
-    if (!identity.validForTargetPreview) {
-      blockingReasons.add('target_identity_missing_or_placeholder');
+    if (!identity.hasAnyAcceptedIdentityAnchor) {
+      blockingReasons.add('target_identity_absent');
     }
 
     final DateTime createdAt = _resolveTimestamp(
@@ -211,7 +211,7 @@ class RealAssistitiDryRunPreviewReader {
       'cognome': identity.cognome,
       'fullName': identity.fullName,
       'nameSplitConfidence': identity.nameSplitConfidence,
-      'searchPrefixes': identity.validForTargetPreview
+      'searchPrefixes': identity.hasSearchableFullName
           ? _buildSearchPrefixes(identity.fullName)
           : const <String>[],
       'doctor': _buildDoctorPreview(bundle),
@@ -228,6 +228,7 @@ class RealAssistitiDryRunPreviewReader {
         'doctorManualExists': bundle.doctorManual.exists,
         'doctorPrimaryExists': bundle.doctorPrimary.exists,
         'existingSourceCount': bundle.existingSourceCount,
+        'identityContract': 'cf_or_name_anchor_required',
       },
     };
 
@@ -276,7 +277,10 @@ class RealAssistitiDryRunPreviewReader {
         rawFullName: rawFullName,
       );
       if (normalized.hasValidName) {
-        return _ResolvedIdentity.fromNormalized(normalized);
+        return _ResolvedIdentity.fromNormalized(
+          cf: bundle.cf,
+          normalized: normalized,
+        );
       }
     }
 
@@ -285,7 +289,10 @@ class RealAssistitiDryRunPreviewReader {
       rawNome: rawNome,
       rawCognome: rawCognome,
     );
-    return _ResolvedIdentity.fromNormalized(fallback);
+    return _ResolvedIdentity.fromNormalized(
+      cf: bundle.cf,
+      normalized: fallback,
+    );
   }
 
   static Map<String, dynamic> _buildDoctorPreview(LegacyRealAssistitoReadBundle bundle) {
@@ -463,20 +470,26 @@ class RealAssistitiDryRunPreviewReader {
 }
 
 class _ResolvedIdentity {
+  final String cf;
   final String nome;
   final String cognome;
   final String fullName;
   final String nameSplitConfidence;
 
   const _ResolvedIdentity({
+    required this.cf,
     required this.nome,
     required this.cognome,
     required this.fullName,
     required this.nameSplitConfidence,
   });
 
-  factory _ResolvedIdentity.fromNormalized(TargetAssistitoIdentityNormalizationResult normalized) {
+  factory _ResolvedIdentity.fromNormalized({
+    required String cf,
+    required TargetAssistitoIdentityNormalizationResult normalized,
+  }) {
     return _ResolvedIdentity(
+      cf: TargetAssistitoIdentityNormalizer.normalizeCf(cf),
       nome: normalized.nome,
       cognome: normalized.cognome,
       fullName: normalized.fullName,
@@ -484,10 +497,15 @@ class _ResolvedIdentity {
     );
   }
 
-  bool get validForTargetPreview {
-    return nome.trim().isNotEmpty &&
-        cognome.trim().isNotEmpty &&
-        fullName.trim().isNotEmpty &&
+  bool get hasAnyAcceptedIdentityAnchor {
+    return cf.trim().isNotEmpty ||
+        nome.trim().isNotEmpty ||
+        cognome.trim().isNotEmpty ||
+        hasSearchableFullName;
+  }
+
+  bool get hasSearchableFullName {
+    return fullName.trim().isNotEmpty &&
         !TargetAssistitoIdentityNormalizer.isPlaceholderName(fullName) &&
         !TargetAssistitoIdentityNormalizer.isFiscalCodeLike(fullName) &&
         !TargetAssistitoIdentityNormalizer.containsFiscalCodeLikeToken(fullName);
