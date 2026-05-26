@@ -78,6 +78,45 @@ new_nocf|<tenantId>|<createdAtMillis>|<nome>|<cognome>|<nonce>
 
 Il `nonce` deve essere stabile e serve a distinguere omonimi reali.
 
+## Promozione NOCF → CF reale
+
+Il frontend deve poter richiedere la promozione di uno pseudo-CF canonico a CF reale, ma non deve modificare direttamente il campo `cf`.
+
+La promozione è una transizione identitaria atomica futura:
+
+```text
+prima:
+cf = NOCF_<hash>
+identityType = nocf
+identityAnchor = NOCF_<hash>
+
+dopo:
+cf = CF reale
+identityType = cf
+identityAnchor = CF reale
+previousIdentityAnchors contiene NOCF_<hash>
+legacyNoCfCode resta preservato se presente
+```
+
+La promozione deve essere consentita solo se:
+
+- il documento sorgente ha `identityType = nocf`;
+- il `cf` sorgente è un NOCF canonico;
+- `identityAnchor` sorgente coincide con il NOCF corrente;
+- il nuovo CF è un codice fiscale reale canonico;
+- il CF reale non è già presente nel target;
+- il lock del CF reale non esiste già;
+- il lock NOCF sorgente è coerente.
+
+La promozione deve essere rifiutata se:
+
+- la sorgente è già `identityType = cf`;
+- il NOCF sorgente non è canonico;
+- `identityAnchor` non coincide con il NOCF corrente;
+- il nuovo CF non è canonico;
+- un `previousIdentityAnchors` contiene slash o path separator;
+- la transizione non può essere eseguita atomicamente.
+
 ## Invarianti
 
 - Nessun NOCF deve sembrare un CF reale.
@@ -88,6 +127,9 @@ Il `nonce` deve essere stabile e serve a distinguere omonimi reali.
 - Cambiare nome/cognome dopo la creazione non deve cambiare `identityAnchor`.
 - Due assistiti NOCF diversi devono poter ricevere anchor diversi anche se omonimi.
 - Codici vuoti, con slash o non canonici sono vietati.
+- La promozione NOCF → CF reale non deve perdere l’anchor NOCF precedente.
+- `previousIdentityAnchors` serve per tracciabilità, audit e prevenzione collisioni future.
+- Il frontend non deve mai fare edit diretto di `cf`, `identityType` o `identityAnchor`.
 
 ## Scope Fix #293
 
@@ -104,8 +146,24 @@ Non introduce:
 - modifica backend_gas;
 - modifica Gmail/Drive/PDF lifecycle.
 
+## Scope Fix #295
+
+Fix #295 aggiunge solo contratto/helper/test per la promozione NOCF → CF reale.
+
+Non introduce:
+
+- UI di promozione;
+- write Firestore;
+- transazione di promozione reale;
+- modifica writer;
+- modifica duplicate guard;
+- modifica audit;
+- modifica backend_gas;
+- modifica Gmail/Drive/PDF lifecycle.
+
 ## Step successivi
 
-- Fix successivo: audit NOCF read-only.
-- Poi duplicate guard basato su `identityAnchor`.
-- Poi copy NOCF small batch.
+- Audit NOCF read-only.
+- Duplicate guard basato su `identityAnchor`.
+- Copy NOCF small batch.
+- Promozione operativa NOCF → CF reale con transazione dedicata.

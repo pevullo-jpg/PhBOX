@@ -152,4 +152,151 @@ void main() {
       );
     });
   });
+
+  group('TargetAssistitoNoCfIdentityAnchorNormalizer NOCF promotion', () {
+    test('builds valid NOCF to real CF promotion contract', () {
+      final TargetAssistitoIdentityAnchorResult source =
+          TargetAssistitoNoCfIdentityAnchorNormalizer.fromLegacyCode(
+        'TMP_SOFIA_CASTELLI_1778262346407000',
+      );
+
+      final TargetAssistitoNoCfToRealCfPromotionResult result =
+          TargetAssistitoNoCfIdentityAnchorNormalizer.buildNoCfToRealCfPromotion(
+        currentCf: source.cf,
+        currentIdentityType: source.identityType,
+        currentIdentityAnchor: source.identityAnchor,
+        newRawCf: ' crpgnn48b19d514z ',
+        legacyNoCfCode: source.legacyNoCfCode,
+        generatedNoCf: source.generatedNoCf,
+      );
+
+      expect(result.promotedCf, 'CRPGNN48B19D514Z');
+      expect(result.identityType, 'cf');
+      expect(result.identityAnchor, 'CRPGNN48B19D514Z');
+      expect(result.previousIdentityAnchors, <String>[source.cf]);
+      expect(result.legacyNoCfCode, 'TMP_SOFIA_CASTELLI_1778262346407000');
+      expect(result.generatedNoCf, isFalse);
+      expect(result.toMap()['cf'], 'CRPGNN48B19D514Z');
+    });
+
+    test('preserves previous identity anchors without duplicates', () {
+      final TargetAssistitoIdentityAnchorResult source =
+          TargetAssistitoNoCfIdentityAnchorNormalizer.fromLegacyCode('manuale sofia castelli');
+      final TargetAssistitoIdentityAnchorResult older =
+          TargetAssistitoNoCfIdentityAnchorNormalizer.fromLegacyCode('manuale sofia castelli old');
+
+      final TargetAssistitoNoCfToRealCfPromotionResult result =
+          TargetAssistitoNoCfIdentityAnchorNormalizer.buildNoCfToRealCfPromotion(
+        currentCf: source.cf,
+        currentIdentityType: source.identityType,
+        currentIdentityAnchor: source.identityAnchor,
+        newRawCf: 'CRPGNN48B19D514Z',
+        previousIdentityAnchors: <String>[older.cf, source.cf, older.cf],
+      );
+
+      expect(result.previousIdentityAnchors, <String>[older.cf, source.cf]);
+    });
+
+    test('rejects promotion when source is already a real CF', () {
+      expect(
+        () => TargetAssistitoNoCfIdentityAnchorNormalizer.buildNoCfToRealCfPromotion(
+          currentCf: 'CRPGNN48B19D514Z',
+          currentIdentityType: 'cf',
+          currentIdentityAnchor: 'CRPGNN48B19D514Z',
+          newRawCf: 'VLLGPP84H27A089I',
+        ),
+        throwsA(
+          isA<TargetAssistitoNoCfIdentityAnchorRejectedException>().having(
+            (TargetAssistitoNoCfIdentityAnchorRejectedException error) => error.code,
+            'code',
+            'source_identity_type_not_nocf',
+          ),
+        ),
+      );
+    });
+
+    test('rejects promotion from non-canonical NOCF source', () {
+      expect(
+        () => TargetAssistitoNoCfIdentityAnchorNormalizer.buildNoCfToRealCfPromotion(
+          currentCf: 'TMP_SOFIA_CASTELLI_1778262346407000',
+          currentIdentityType: 'nocf',
+          currentIdentityAnchor: 'TMP_SOFIA_CASTELLI_1778262346407000',
+          newRawCf: 'CRPGNN48B19D514Z',
+        ),
+        throwsA(
+          isA<TargetAssistitoNoCfIdentityAnchorRejectedException>().having(
+            (TargetAssistitoNoCfIdentityAnchorRejectedException error) => error.code,
+            'code',
+            'source_nocf_not_canonical',
+          ),
+        ),
+      );
+    });
+
+    test('rejects promotion when source identityAnchor does not match current cf', () {
+      final TargetAssistitoIdentityAnchorResult source =
+          TargetAssistitoNoCfIdentityAnchorNormalizer.fromLegacyCode('manuale sofia castelli');
+      final TargetAssistitoIdentityAnchorResult other =
+          TargetAssistitoNoCfIdentityAnchorNormalizer.fromLegacyCode('manuale altro assistito');
+
+      expect(
+        () => TargetAssistitoNoCfIdentityAnchorNormalizer.buildNoCfToRealCfPromotion(
+          currentCf: source.cf,
+          currentIdentityType: source.identityType,
+          currentIdentityAnchor: other.cf,
+          newRawCf: 'CRPGNN48B19D514Z',
+        ),
+        throwsA(
+          isA<TargetAssistitoNoCfIdentityAnchorRejectedException>().having(
+            (TargetAssistitoNoCfIdentityAnchorRejectedException error) => error.code,
+            'code',
+            'source_identity_anchor_mismatch',
+          ),
+        ),
+      );
+    });
+
+    test('rejects promotion to invalid target CF', () {
+      final TargetAssistitoIdentityAnchorResult source =
+          TargetAssistitoNoCfIdentityAnchorNormalizer.fromLegacyCode('manuale sofia castelli');
+
+      expect(
+        () => TargetAssistitoNoCfIdentityAnchorNormalizer.buildNoCfToRealCfPromotion(
+          currentCf: source.cf,
+          currentIdentityType: source.identityType,
+          currentIdentityAnchor: source.identityAnchor,
+          newRawCf: 'not-a-real-cf',
+        ),
+        throwsA(
+          isA<TargetAssistitoNoCfIdentityAnchorRejectedException>().having(
+            (TargetAssistitoNoCfIdentityAnchorRejectedException error) => error.code,
+            'code',
+            'target_cf_not_canonical',
+          ),
+        ),
+      );
+    });
+
+    test('rejects previous identity anchors with slash', () {
+      final TargetAssistitoIdentityAnchorResult source =
+          TargetAssistitoNoCfIdentityAnchorNormalizer.fromLegacyCode('manuale sofia castelli');
+
+      expect(
+        () => TargetAssistitoNoCfIdentityAnchorNormalizer.buildNoCfToRealCfPromotion(
+          currentCf: source.cf,
+          currentIdentityType: source.identityType,
+          currentIdentityAnchor: source.identityAnchor,
+          newRawCf: 'CRPGNN48B19D514Z',
+          previousIdentityAnchors: const <String>['NOCF/UNSAFE'],
+        ),
+        throwsA(
+          isA<TargetAssistitoNoCfIdentityAnchorRejectedException>().having(
+            (TargetAssistitoNoCfIdentityAnchorRejectedException error) => error.code,
+            'code',
+            'previous_identity_anchor_not_canonical',
+          ),
+        ),
+      );
+    });
+  });
 }

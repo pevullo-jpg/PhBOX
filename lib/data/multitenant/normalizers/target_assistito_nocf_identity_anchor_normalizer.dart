@@ -45,6 +45,35 @@ class TargetAssistitoIdentityAnchorResult {
   }
 }
 
+class TargetAssistitoNoCfToRealCfPromotionResult {
+  final String promotedCf;
+  final String identityType;
+  final String identityAnchor;
+  final List<String> previousIdentityAnchors;
+  final String legacyNoCfCode;
+  final bool generatedNoCf;
+
+  const TargetAssistitoNoCfToRealCfPromotionResult({
+    required this.promotedCf,
+    required this.identityType,
+    required this.identityAnchor,
+    required this.previousIdentityAnchors,
+    required this.legacyNoCfCode,
+    required this.generatedNoCf,
+  });
+
+  Map<String, dynamic> toMap() {
+    return <String, dynamic>{
+      'cf': promotedCf,
+      'identityType': identityType,
+      'identityAnchor': identityAnchor,
+      'previousIdentityAnchors': previousIdentityAnchors,
+      if (legacyNoCfCode.isNotEmpty) 'legacyNoCfCode': legacyNoCfCode,
+      'generatedNoCf': generatedNoCf,
+    };
+  }
+}
+
 class TargetAssistitoNoCfIdentityAnchorNormalizer {
   static const String identityTypeCf = 'cf';
   static const String identityTypeNoCf = 'nocf';
@@ -149,6 +178,62 @@ class TargetAssistitoNoCfIdentityAnchorNormalizer {
     );
   }
 
+  static TargetAssistitoNoCfToRealCfPromotionResult buildNoCfToRealCfPromotion({
+    required String currentCf,
+    required String currentIdentityType,
+    required String currentIdentityAnchor,
+    required String newRawCf,
+    String legacyNoCfCode = '',
+    bool generatedNoCf = false,
+    Iterable<String> previousIdentityAnchors = const <String>[],
+  }) {
+    final String normalizedCurrentCf = _normalizeCode(currentCf);
+    final String normalizedCurrentIdentityType = currentIdentityType.trim().toLowerCase();
+    final String normalizedCurrentIdentityAnchor = _normalizeCode(currentIdentityAnchor);
+    final String promotedCf = TargetAssistitoIdentityNormalizer.normalizeCf(newRawCf);
+
+    if (normalizedCurrentIdentityType != identityTypeNoCf) {
+      throw const TargetAssistitoNoCfIdentityAnchorRejectedException(
+        code: 'source_identity_type_not_nocf',
+        message: 'La promozione a CF reale è consentita solo da identityType nocf.',
+      );
+    }
+    if (!isCanonicalNoCf(normalizedCurrentCf)) {
+      throw const TargetAssistitoNoCfIdentityAnchorRejectedException(
+        code: 'source_nocf_not_canonical',
+        message: 'Sorgente NOCF non canonica: promozione bloccata.',
+      );
+    }
+    if (normalizedCurrentIdentityAnchor != normalizedCurrentCf) {
+      throw const TargetAssistitoNoCfIdentityAnchorRejectedException(
+        code: 'source_identity_anchor_mismatch',
+        message: 'identityAnchor sorgente non coerente con cf NOCF.',
+      );
+    }
+    if (!TargetAssistitoIdentityNormalizer.isFiscalCodeLike(promotedCf)) {
+      throw const TargetAssistitoNoCfIdentityAnchorRejectedException(
+        code: 'target_cf_not_canonical',
+        message: 'CF reale target non canonico: promozione bloccata.',
+      );
+    }
+
+    final List<String> safePreviousAnchors = _normalizePreviousIdentityAnchors(
+      previousIdentityAnchors,
+    );
+    if (!safePreviousAnchors.contains(normalizedCurrentCf)) {
+      safePreviousAnchors.add(normalizedCurrentCf);
+    }
+
+    return TargetAssistitoNoCfToRealCfPromotionResult(
+      promotedCf: promotedCf,
+      identityType: identityTypeCf,
+      identityAnchor: promotedCf,
+      previousIdentityAnchors: List<String>.unmodifiable(safePreviousAnchors),
+      legacyNoCfCode: legacyNoCfCode.trim(),
+      generatedNoCf: generatedNoCf,
+    );
+  }
+
   static bool isCanonicalNoCf(String value) {
     final String normalized = value.trim().toUpperCase();
     return RegExp(r'^NOCF_[0-9A-F]{16}$').hasMatch(normalized);
@@ -186,6 +271,33 @@ class TargetAssistitoNoCfIdentityAnchorNormalizer {
         message: 'Codice identità troppo lungo per assistito CF/NOCF.',
       );
     }
+  }
+
+  static List<String> _normalizePreviousIdentityAnchors(Iterable<String> values) {
+    final List<String> normalized = <String>[];
+    for (final String value in values) {
+      final String anchor = _normalizeCode(value);
+      if (anchor.isEmpty) {
+        continue;
+      }
+      if (_containsUnsafePathSeparator(value) || _containsUnsafePathSeparator(anchor)) {
+        throw const TargetAssistitoNoCfIdentityAnchorRejectedException(
+          code: 'previous_identity_anchor_not_canonical',
+          message: 'previousIdentityAnchors contiene valori non canonici.',
+        );
+      }
+      if (!isCanonicalNoCf(anchor) &&
+          !TargetAssistitoIdentityNormalizer.isFiscalCodeLike(anchor)) {
+        throw const TargetAssistitoNoCfIdentityAnchorRejectedException(
+          code: 'previous_identity_anchor_invalid',
+          message: 'previousIdentityAnchors contiene anchor non valido.',
+        );
+      }
+      if (!normalized.contains(anchor)) {
+        normalized.add(anchor);
+      }
+    }
+    return normalized;
   }
 
   static String _normalizeCode(String value) {
