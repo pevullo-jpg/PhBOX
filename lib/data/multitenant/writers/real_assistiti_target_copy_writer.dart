@@ -124,7 +124,7 @@ class _PreparedTargetCopyWrite {
 }
 
 class RealAssistitiTargetCopyWriter {
-  static const int maxDocumentsPerRun = ManualFiscalCodeInputValidator.defaultMaxFiscalCodes;
+  static const int maxDocumentsPerRun = 5;
   static const int writesPerDocument = 2;
   static const int maxFirestoreWritesPerRun = maxDocumentsPerRun * writesPerDocument;
   static const String manualConfirmationTokenPrefix = 'COPIA_REALE_ASSISTITI_TARGET';
