@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../mappers/real_assistiti_migration_block_diagnostic_mapper.dart';
 import 'real_assistiti_dry_run_preview_reader.dart';
 
 class RealAssistitiMigrationAuditItem {
@@ -16,6 +17,7 @@ class RealAssistitiMigrationAuditItem {
   final int existingLegacySourceCount;
   final List<String> blockingReasons;
   final List<String> targetPreviewPayloadRootKeys;
+  final List<RealAssistitiMigrationBlockDiagnostic> diagnostics;
 
   const RealAssistitiMigrationAuditItem({
     required this.cf,
@@ -31,11 +33,12 @@ class RealAssistitiMigrationAuditItem {
     required this.existingLegacySourceCount,
     required this.blockingReasons,
     required this.targetPreviewPayloadRootKeys,
+    required this.diagnostics,
   });
 
-  bool get blocked => status == 'blocked';
+  bool get blocked => status == RealAssistitiMigrationBlockDiagnosticMapper.statusBlocked;
 
-  bool get alreadyTarget => status == 'already_target';
+  bool get alreadyTarget => status == RealAssistitiMigrationBlockDiagnosticMapper.statusAlreadyTarget;
 
   bool get hasDoctorData => hasDoctorManual || hasDoctorPrimary;
 
@@ -45,13 +48,19 @@ class RealAssistitiMigrationAuditItem {
     final bool targetDuplicateFound = item.duplicateGuard.duplicateFound;
     final bool copyable = item.canProceedToManualCopyStep;
     final String status = copyable
-        ? 'copyable'
+        ? RealAssistitiMigrationBlockDiagnosticMapper.statusCopyable
         : targetDuplicateFound
-            ? 'already_target'
-            : 'blocked';
+            ? RealAssistitiMigrationBlockDiagnosticMapper.statusAlreadyTarget
+            : RealAssistitiMigrationBlockDiagnosticMapper.statusBlocked;
 
     final List<String> payloadRootKeys =
         item.targetPreviewPayloadWithoutAssistitoId.keys.toList(growable: false)..sort();
+    final List<String> blockingReasons = List<String>.unmodifiable(item.blockingReasons);
+    final List<RealAssistitiMigrationBlockDiagnostic> diagnostics =
+        RealAssistitiMigrationBlockDiagnosticMapper.buildDiagnostics(
+      status: status,
+      blockingReasons: blockingReasons,
+    );
 
     return RealAssistitiMigrationAuditItem(
       cf: item.cf,
@@ -65,8 +74,9 @@ class RealAssistitiMigrationAuditItem {
       hasDoctorManual: item.legacyBundle.doctorManual.exists,
       hasDoctorPrimary: item.legacyBundle.doctorPrimary.exists,
       existingLegacySourceCount: item.legacyBundle.existingSourceCount,
-      blockingReasons: List<String>.unmodifiable(item.blockingReasons),
+      blockingReasons: blockingReasons,
       targetPreviewPayloadRootKeys: List<String>.unmodifiable(payloadRootKeys),
+      diagnostics: List<RealAssistitiMigrationBlockDiagnostic>.unmodifiable(diagnostics),
     );
   }
 
@@ -88,6 +98,9 @@ class RealAssistitiMigrationAuditItem {
       'existingLegacySourceCount': existingLegacySourceCount,
       'blockingReasons': blockingReasons,
       'targetPreviewPayloadRootKeys': targetPreviewPayloadRootKeys,
+      'diagnostics': diagnostics
+          .map((RealAssistitiMigrationBlockDiagnostic diagnostic) => diagnostic.toMap())
+          .toList(growable: false),
     };
   }
 }
@@ -107,6 +120,7 @@ class RealAssistitiMigrationAuditSummary {
   final int doctorPrimaryCount;
   final int doctorAnyCount;
   final Map<String, int> blockingReasonCounts;
+  final Map<String, int> diagnosticCodeCounts;
 
   const RealAssistitiMigrationAuditSummary({
     required this.requestedCount,
@@ -123,11 +137,14 @@ class RealAssistitiMigrationAuditSummary {
     required this.doctorPrimaryCount,
     required this.doctorAnyCount,
     required this.blockingReasonCounts,
+    required this.diagnosticCodeCounts,
   });
 
   bool get hasBlockedItems => blockedCount > 0;
 
   bool get hasCopyableItems => copyableCount > 0;
+
+  bool get hasDiagnostics => diagnosticCodeCounts.isNotEmpty;
 
   Map<String, dynamic> toMap() {
     return <String, dynamic>{
@@ -146,7 +163,9 @@ class RealAssistitiMigrationAuditSummary {
       'doctorAnyCount': doctorAnyCount,
       'hasBlockedItems': hasBlockedItems,
       'hasCopyableItems': hasCopyableItems,
+      'hasDiagnostics': hasDiagnostics,
       'blockingReasonCounts': blockingReasonCounts,
+      'diagnosticCodeCounts': diagnosticCodeCounts,
     };
   }
 }
@@ -233,6 +252,7 @@ class RealAssistitiMigrationAuditResult {
     int doctorPrimaryCount = 0;
     int doctorAnyCount = 0;
     final Map<String, int> blockingReasonCounts = <String, int>{};
+    final Map<String, int> diagnosticCodeCounts = <String, int>{};
 
     for (final RealAssistitiMigrationAuditItem item in items) {
       if (item.copyable) copyableCount++;
@@ -250,6 +270,9 @@ class RealAssistitiMigrationAuditResult {
       if (item.hasDoctorManual) doctorManualCount++;
       if (item.hasDoctorPrimary) doctorPrimaryCount++;
       if (item.hasDoctorData) doctorAnyCount++;
+      for (final RealAssistitiMigrationBlockDiagnostic diagnostic in item.diagnostics) {
+        diagnosticCodeCounts[diagnostic.code] = (diagnosticCodeCounts[diagnostic.code] ?? 0) + 1;
+      }
     }
 
     return RealAssistitiMigrationAuditSummary(
@@ -267,6 +290,7 @@ class RealAssistitiMigrationAuditResult {
       doctorPrimaryCount: doctorPrimaryCount,
       doctorAnyCount: doctorAnyCount,
       blockingReasonCounts: Map<String, int>.unmodifiable(blockingReasonCounts),
+      diagnosticCodeCounts: Map<String, int>.unmodifiable(diagnosticCodeCounts),
     );
   }
 
