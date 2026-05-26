@@ -71,6 +71,8 @@ void main() {
       expect(audit.summary.doctorAnyCount, 1);
       expect(audit.summary.blockingReasonCounts.containsKey('target_cf_duplicate'), isFalse);
       expect(audit.summary.blockingReasonCounts['legacy_source_missing'], 1);
+      expect(audit.summary.diagnosticCodeCounts['already_target'], 1);
+      expect(audit.summary.diagnosticCodeCounts['legacy_source_missing'], 1);
       expect(audit.attemptedReadOperations, 18);
       expect(audit.copyableFiscalCodes, const <String>['CRPGNN48B19D514Z']);
       expect(audit.blockedFiscalCodes, const <String>['RSSMRA80A01H501U']);
@@ -138,6 +140,39 @@ void main() {
       expect(item.blocked, isFalse);
       expect(item.alreadyTarget, isTrue);
       expect(item.targetDuplicateFound, isTrue);
+      expect(item.diagnostics.single.code, 'already_target');
+    });
+
+    test('includes readable diagnostics in mapped audit items without raw payload', () {
+      final DateTime now = DateTime.utc(2026, 5, 26, 9, 0, 0);
+      final RealAssistitiMigrationAuditResult audit =
+          RealAssistitiMigrationAuditResult.fromDryRunPreview(
+        RealAssistitiDryRunPreviewResult(
+          tenantId: 'tenant_a',
+          requestedFiscalCodes: const <String>['RSSMRA80A01H501U'],
+          maxFiscalCodes: 20,
+          legacyAttemptedDocumentReads: 5,
+          targetAttemptedQueries: 1,
+          items: <RealAssistitiDryRunPreviewItem>[
+            _previewItem(
+              cf: 'RSSMRA80A01H501U',
+              bundle: _bundle(cf: 'RSSMRA80A01H501U'),
+              duplicateFound: false,
+              blockingReasons: const <String>['legacy_source_missing'],
+              now: now,
+            ),
+          ],
+        ),
+      );
+
+      final Map<String, dynamic> mappedItem =
+          ((audit.toMap()['items'] as List<dynamic>).single as Map<String, dynamic>);
+      final List<dynamic> diagnostics = mappedItem['diagnostics'] as List<dynamic>;
+
+      expect(diagnostics.length, 1);
+      expect((diagnostics.single as Map<String, dynamic>)['code'], 'legacy_source_missing');
+      expect(mappedItem.containsKey('legacyBundle'), isFalse);
+      expect(mappedItem.containsKey('targetPreviewPayloadWithoutAssistitoId'), isFalse);
     });
   });
 }
