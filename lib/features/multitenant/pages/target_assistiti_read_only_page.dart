@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../../data/multitenant/readers/assistiti_target_with_legacy_fallback_reader.dart';
 import '../../../data/multitenant/readers/real_assistiti_dry_run_preview_reader.dart';
 import '../../../data/multitenant/verifiers/real_assistiti_post_copy_verifier.dart';
+import '../../../data/multitenant/writers/real_assistiti_nocf_target_copy_writer.dart';
 import '../../../data/multitenant/writers/real_assistiti_target_copy_writer.dart';
 import '../../../theme/app_theme.dart';
 import '../../auth/models/tenant_session.dart';
@@ -17,27 +18,35 @@ class TargetAssistitiReadOnlyPage extends StatefulWidget {
 
 class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPage> {
   final TextEditingController _cfController = TextEditingController();
+  final TextEditingController _nocfController = TextEditingController();
 
   AssistitiTargetWithLegacyFallbackResult? _result;
   RealAssistitiTargetCopyResult? _copyResult;
   RealAssistitiPostCopyVerificationResult? _verificationResult;
   RealAssistitiDryRunPreviewResult? _dryRunDiagnosticResult;
+  RealAssistitiNoCfTargetCopyResult? _nocfCopyResult;
+
   Object? _error;
   Object? _copyError;
+  Object? _nocfCopyError;
+
   bool _loading = false;
   bool _copying = false;
+  bool _nocfCopying = false;
   bool _requested = false;
   bool _enableLegacyFallback = true;
   bool _copyConfirmed = false;
+  bool _nocfCopyConfirmed = false;
 
   @override
   void dispose() {
     _cfController.dispose();
+    _nocfController.dispose();
     super.dispose();
   }
 
   Future<void> _loadAssistitiByManualCf() async {
-    if (_loading || _copying) {
+    if (_loading || _copying || _nocfCopying) {
       return;
     }
 
@@ -84,7 +93,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   }
 
   Future<void> _copyLegacyFallbackItems() async {
-    if (_loading || _copying) {
+    if (_loading || _copying || _nocfCopying) {
       return;
     }
 
@@ -172,14 +181,82 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
         return;
       }
       setState(() {
-        _copyError = diagnosticResult == null ? error : _FrontendCopyRejectedException(
-          code: 'dry_run_preview_blocked',
-          message: _formatDryRunBlockingReasons(diagnosticResult),
-        );
+        _copyError = diagnosticResult == null
+            ? error
+            : _FrontendCopyRejectedException(
+                code: 'dry_run_preview_blocked',
+                message: _formatDryRunBlockingReasons(diagnosticResult),
+              );
         _dryRunDiagnosticResult = diagnosticResult;
         _copyResult = null;
         _verificationResult = null;
         _copying = false;
+      });
+    }
+  }
+
+  Future<void> _copyNoCfItems() async {
+    if (_loading || _copying || _nocfCopying) {
+      return;
+    }
+
+    final List<String> identityCodes = _parseManualIdentityCodes(_nocfController.text);
+    if (identityCodes.isEmpty) {
+      setState(() {
+        _nocfCopyError = const _FrontendCopyRejectedException(
+          code: 'nocf_identity_codes_empty',
+          message: 'Inserire almeno un codice NOCF legacy TMP/manuale.',
+        );
+      });
+      return;
+    }
+    if (!_nocfCopyConfirmed) {
+      setState(() {
+        _nocfCopyError = const _FrontendCopyRejectedException(
+          code: 'nocf_manual_copy_confirmation_missing',
+          message: 'Spuntare la conferma manuale prima della copia NOCF.',
+        );
+      });
+      return;
+    }
+
+    final TenantSession session = TenantSessionScope.of(context);
+    final RealAssistitiNoCfTargetCopyWriter writer = RealAssistitiNoCfTargetCopyWriter(
+      firestore: FirebaseFirestore.instance,
+    );
+
+    setState(() {
+      _nocfCopying = true;
+      _nocfCopyError = null;
+      _nocfCopyResult = null;
+    });
+
+    try {
+      final String technicalToken = RealAssistitiNoCfTargetCopyWriter.buildRequiredManualConfirmationToken(
+        tenantId: session.tenantId,
+        identityCodes: identityCodes,
+      );
+      final RealAssistitiNoCfTargetCopyResult copyResult = await writer.copyByManualIdentityCodes(
+        tenantId: session.tenantId,
+        identityCodes: identityCodes,
+        manualConfirmationToken: technicalToken,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _nocfCopyResult = copyResult;
+        _nocfCopying = false;
+        _nocfCopyConfirmed = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _nocfCopyError = error;
+        _nocfCopyResult = null;
+        _nocfCopying = false;
       });
     }
   }
@@ -241,6 +318,22 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
     return values;
   }
 
+  static List<String> _parseManualIdentityCodes(String rawInput) {
+    final List<String> values = <String>[];
+    final String normalizedSeparators = rawInput
+        .replaceAll(',', '\n')
+        .replaceAll(';', '\n')
+        .replaceAll('\t', '\n');
+    final List<String> tokens = normalizedSeparators.split('\n');
+    for (final String token in tokens) {
+      final String value = token.trim();
+      if (value.isNotEmpty) {
+        values.add(value);
+      }
+    }
+    return values;
+  }
+
   @override
   Widget build(BuildContext context) {
     final TenantSession session = TenantSessionScope.of(context);
@@ -256,9 +349,9 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
                 tenantId: session.tenantId,
                 tenantName: session.tenantName,
                 controller: _cfController,
-                loading: _loading || _copying,
+                loading: _loading || _copying || _nocfCopying,
                 legacyFallbackEnabled: _enableLegacyFallback,
-                onLegacyFallbackChanged: (_loading || _copying)
+                onLegacyFallbackChanged: (_loading || _copying || _nocfCopying)
                     ? null
                     : (bool value) {
                         setState(() {
@@ -277,17 +370,50 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   }
 
   Widget _buildBody() {
+    final AssistitiTargetWithLegacyFallbackResult? result = _result;
+    final List<String> copyCandidateFiscalCodes = result == null
+        ? const <String>[]
+        : _copyCandidateFiscalCodes(result);
+
+    return ListView(
+      children: <Widget>[
+        _NoCfCopyPanel(
+          controller: _nocfController,
+          copyConfirmed: _nocfCopyConfirmed,
+          copying: _nocfCopying,
+          copyError: _nocfCopyError,
+          copyResult: _nocfCopyResult,
+          onCopyConfirmedChanged: (_loading || _copying || _nocfCopying)
+              ? null
+              : (bool value) {
+                  setState(() {
+                    _nocfCopyConfirmed = value;
+                    _nocfCopyError = null;
+                  });
+                },
+          onCopy: _nocfCopyConfirmed ? _copyNoCfItems : null,
+        ),
+        const SizedBox(height: 16),
+        _buildCfBody(copyCandidateFiscalCodes),
+      ],
+    );
+  }
+
+  Widget _buildCfBody(List<String> copyCandidateFiscalCodes) {
     if (!_requested) {
       return const _AssistitiInfoCard(
         icon: Icons.touch_app_rounded,
-        title: 'Lettura non avviata',
+        title: 'Lettura CF non avviata',
         message:
             'Inserisci massimo 3 CF manuali. Il modulo legge prima tenants/{tenantId}/assistiti e usa il legacy solo come fallback controllato.',
       );
     }
 
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const SizedBox(
+        height: 160,
+        child: Center(child: CircularProgressIndicator()),
+      );
     }
 
     final Object? error = _error;
@@ -304,12 +430,10 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
     if (result == null || result.items.isEmpty) {
       return const _AssistitiInfoCard(
         icon: Icons.inventory_2_outlined,
-        title: 'Nessun risultato disponibile',
+        title: 'Nessun risultato CF disponibile',
         message: 'La lettura è bounded e manuale: nessun documento viene creato o modificato.',
       );
     }
-
-    final List<String> copyCandidateFiscalCodes = _copyCandidateFiscalCodes(result);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -336,15 +460,10 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
           onCopy: _copyConfirmed ? _copyLegacyFallbackItems : null,
         ),
         const SizedBox(height: 12),
-        Expanded(
-          child: ListView.separated(
-            itemCount: result.items.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (BuildContext context, int index) {
-              return _AssistitoFallbackCard(item: result.items[index]);
-            },
-          ),
-        ),
+        for (final AssistitiTargetWithLegacyFallbackItem item in result.items) ...<Widget>[
+          _AssistitoFallbackCard(item: item),
+          const SizedBox(height: 10),
+        ],
       ],
     );
   }
@@ -407,7 +526,7 @@ class _AssistitiFallbackHeader extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     const Text(
-                      'Assistiti target + fallback legacy',
+                      'Assistiti target + migrazione NOCF',
                       style: TextStyle(
                         color: AppColors.textPrimary,
                         fontSize: 24,
@@ -425,7 +544,7 @@ class _AssistitiFallbackHeader extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     const Text(
-                      'Nessun listener, nessuno switch dashboard. Lettura manuale max 3 CF; copia target solo da LEGACY con conferma esplicita.',
+                      'Nessun listener, nessuno switch dashboard. CF e NOCF restano due flussi separati e bounded.',
                       style: TextStyle(
                         color: AppColors.textMuted,
                         fontSize: 12,
@@ -504,6 +623,174 @@ class _AssistitiFallbackHeader extends StatelessWidget {
               ),
             ],
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NoCfCopyPanel extends StatelessWidget {
+  final TextEditingController controller;
+  final bool copyConfirmed;
+  final bool copying;
+  final Object? copyError;
+  final RealAssistitiNoCfTargetCopyResult? copyResult;
+  final ValueChanged<bool>? onCopyConfirmedChanged;
+  final VoidCallback? onCopy;
+
+  const _NoCfCopyPanel({
+    required this.controller,
+    required this.copyConfirmed,
+    required this.copying,
+    required this.copyError,
+    required this.copyResult,
+    required this.onCopyConfirmedChanged,
+    required this.onCopy,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.panelSoft,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.dpc),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Icon(Icons.badge_outlined, color: AppColors.dpc, size: 24),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Copia NOCF legacy → TARGET',
+                  style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Inserisci codici TMP/manuali legacy NOCF. Non inserire CF reali e non inserire NOCF_<hash>: lo pseudo-CF canonico viene calcolato dal sistema.',
+            style: TextStyle(
+              color: AppColors.textMuted,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: controller,
+            enabled: !copying,
+            maxLines: 3,
+            textCapitalization: TextCapitalization.characters,
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+            decoration: InputDecoration(
+              labelText: 'Codici NOCF legacy, massimo 5',
+              hintText: 'TMP_SOFIA_CASTELLI_1778262346407000\nCODICE_MANUALE_STABILE',
+              labelStyle: const TextStyle(color: AppColors.textSecondary),
+              hintStyle: const TextStyle(color: AppColors.textMuted),
+              filled: true,
+              fillColor: AppColors.panel,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: const BorderSide(color: AppColors.outlineSoft),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: const BorderSide(color: AppColors.outlineSoft),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: const BorderSide(color: AppColors.dpc, width: 1.4),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Checkbox(
+                value: copyConfirmed,
+                onChanged: onCopyConfirmedChanged == null
+                    ? null
+                    : (bool? value) {
+                        onCopyConfirmedChanged!(value ?? false);
+                      },
+              ),
+              const Expanded(
+                child: Text(
+                  'Confermo la copia reale NOCF verso TARGET. Verranno scritti assistito, identity lock e CF lock compatibile. Nessuna sorgente legacy viene modificata.',
+                  style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton.icon(
+              onPressed: copying || !copyConfirmed ? null : onCopy,
+              icon: copying
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.verified_user_rounded),
+              label: Text(copying ? 'Copia NOCF...' : 'Conferma e copia NOCF → TARGET'),
+            ),
+          ),
+          if (copyError != null) ...<Widget>[
+            const SizedBox(height: 10),
+            Text(
+              copyError.toString(),
+              style: const TextStyle(
+                color: AppColors.expiry,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          if (copyResult != null) ...<Widget>[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 14,
+              runSpacing: 8,
+              children: <Widget>[
+                _SummaryChip(label: 'NOCF copiati', value: '${copyResult!.writtenCount}'),
+                _SummaryChip(label: 'Write assistiti', value: '${copyResult!.attemptedAssistitiWrites}'),
+                _SummaryChip(label: 'Write identity lock', value: '${copyResult!.attemptedIdentityLockWrites}'),
+                _SummaryChip(label: 'Write CF lock', value: '${copyResult!.attemptedCfLockWrites}'),
+                _SummaryChip(label: 'Totale write', value: '${copyResult!.attemptedWrites}'),
+                _SummaryChip(label: 'Read legacy', value: '${copyResult!.attemptedLegacyDocumentReads}'),
+                _SummaryChip(label: 'Lookup duplicate', value: '${copyResult!.attemptedDuplicateGuardLookups}'),
+              ],
+            ),
+            const SizedBox(height: 8),
+            for (final RealAssistitiNoCfTargetCopyWrittenDocument document
+                in copyResult!.writtenDocuments) ...<Widget>[
+              _MetaLine(label: 'NOCF', value: document.identityAnchor),
+              _MetaLine(label: 'assistitoPath', value: document.documentPath),
+            ],
+          ],
         ],
       ),
     );
