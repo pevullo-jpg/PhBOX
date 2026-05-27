@@ -76,6 +76,10 @@ class RealAssistitiNoCfIdentityResolutionPendingResult {
 class RealAssistitiNoCfIdentityResolutionReader {
   static const int defaultMaxPendingItems = 20;
   static const String pendingStatus = 'pending_manual';
+  static const List<String> pendingStatusFields = <String>[
+    'identityResolutionStatus',
+    'identityResolution.status',
+  ];
 
   final FirebaseFirestore firestore;
 
@@ -94,15 +98,34 @@ class RealAssistitiNoCfIdentityResolutionReader {
       collectionId: TargetMultitenantCollections.assistiti,
     );
 
-    final QuerySnapshot<Map<String, dynamic>> snapshot = await firestore
-        .collection(assistitiCollectionPath)
-        .where('identityResolutionStatus', isEqualTo: pendingStatus)
-        .limit(safeLimit)
-        .get(const GetOptions(source: Source.serverAndCache));
+    final CollectionReference<Map<String, dynamic>> collection =
+        firestore.collection(assistitiCollectionPath);
+    final Map<String, QueryDocumentSnapshot<Map<String, dynamic>>> documentsById =
+        <String, QueryDocumentSnapshot<Map<String, dynamic>>>{};
+    int attemptedReads = 0;
+
+    for (final String statusField in pendingStatusFields) {
+      if (documentsById.length >= safeLimit) {
+        break;
+      }
+
+      final QuerySnapshot<Map<String, dynamic>> snapshot = await collection
+          .where(statusField, isEqualTo: pendingStatus)
+          .limit(safeLimit)
+          .get(const GetOptions(source: Source.serverAndCache));
+
+      attemptedReads += snapshot.docs.length;
+      for (final QueryDocumentSnapshot<Map<String, dynamic>> document in snapshot.docs) {
+        if (documentsById.length >= safeLimit) {
+          break;
+        }
+        documentsById.putIfAbsent(document.id, () => document);
+      }
+    }
 
     final List<RealAssistitiNoCfIdentityResolutionPendingItem> items =
         <RealAssistitiNoCfIdentityResolutionPendingItem>[];
-    for (final QueryDocumentSnapshot<Map<String, dynamic>> document in snapshot.docs) {
+    for (final QueryDocumentSnapshot<Map<String, dynamic>> document in documentsById.values) {
       items.add(fromDocumentSnapshot(
         tenantId: normalizedTenantId,
         document: document,
@@ -114,7 +137,7 @@ class RealAssistitiNoCfIdentityResolutionReader {
       assistitiCollectionPath: assistitiCollectionPath,
       items: List<RealAssistitiNoCfIdentityResolutionPendingItem>.unmodifiable(items),
       maxPendingItems: safeLimit,
-      attemptedReads: snapshot.docs.length,
+      attemptedReads: attemptedReads,
     );
   }
 
