@@ -88,6 +88,277 @@ void main() {
     });
   });
 
+  group('RealAssistitiNoCfTargetCopyWriter NOCF identity resolution', () {
+    test('derives nome and cognome from TMP code without CF scoring', () {
+      final TargetAssistitoIdentityAnchorResult anchor =
+          TargetAssistitoNoCfIdentityAnchorNormalizer.fromLegacyCode(
+        'TMP_SOFIA_CASTELLI_1778262346407000',
+      );
+
+      final identity = RealAssistitiNoCfTargetCopyWriter.resolveNoCfIdentityForMigration(
+        requestedCode: 'TMP_SOFIA_CASTELLI_1778262346407000',
+        identityAnchor: anchor.identityAnchor,
+        patientData: const <String, dynamic>{},
+        dashboardIndexData: const <String, dynamic>{},
+        therapeuticAdviceData: const <String, dynamic>{},
+      );
+
+      expect(identity.nome, 'Sofia');
+      expect(identity.cognome, 'Castelli');
+      expect(identity.fullName, 'Sofia Castelli');
+      expect(identity.nameSplitConfidence, RealAssistitiNoCfTargetCopyWriter.nameSplitConfidenceNoCfCode);
+      expect(
+        RealAssistitiNoCfTargetCopyWriter.identityResolutionStatusForIdentity(identity),
+        RealAssistitiNoCfTargetCopyWriter.identityResolutionStatusResolvedAuto,
+      );
+    });
+
+    test('handles surname particles in TMP code', () {
+      final TargetAssistitoIdentityAnchorResult anchor =
+          TargetAssistitoNoCfIdentityAnchorNormalizer.fromLegacyCode(
+        'TMP_MARIA_DE_LUCA_1778262346407000',
+      );
+
+      final identity = RealAssistitiNoCfTargetCopyWriter.resolveNoCfIdentityForMigration(
+        requestedCode: 'TMP_MARIA_DE_LUCA_1778262346407000',
+        identityAnchor: anchor.identityAnchor,
+        patientData: const <String, dynamic>{},
+        dashboardIndexData: const <String, dynamic>{},
+        therapeuticAdviceData: const <String, dynamic>{},
+      );
+
+      expect(identity.nome, 'Maria');
+      expect(identity.cognome, 'De Luca');
+      expect(identity.fullName, 'Maria De Luca');
+    });
+
+    test('explicit legacy fields win over NOCF code parsing', () {
+      final TargetAssistitoIdentityAnchorResult anchor =
+          TargetAssistitoNoCfIdentityAnchorNormalizer.fromLegacyCode(
+        'TMP_ERRATO_ERRATA_1778262346407000',
+      );
+
+      final identity = RealAssistitiNoCfTargetCopyWriter.resolveNoCfIdentityForMigration(
+        requestedCode: 'TMP_ERRATO_ERRATA_1778262346407000',
+        identityAnchor: anchor.identityAnchor,
+        patientData: const <String, dynamic>{
+          'nome': 'Sofia',
+          'cognome': 'Castelli',
+        },
+        dashboardIndexData: const <String, dynamic>{},
+        therapeuticAdviceData: const <String, dynamic>{},
+      );
+
+      expect(identity.nome, 'Sofia');
+      expect(identity.cognome, 'Castelli');
+      expect(identity.nameSplitConfidence, RealAssistitiNoCfTargetCopyWriter.nameSplitConfidenceExplicitNoCfFields);
+    });
+
+    test('ambiguous fullName is copied but marked pending manual', () {
+      const String identityAnchor = 'NOCF_0123456789ABCDEF';
+
+      final identity = RealAssistitiNoCfTargetCopyWriter.resolveNoCfIdentityForMigration(
+        requestedCode: identityAnchor,
+        identityAnchor: identityAnchor,
+        patientData: const <String, dynamic>{
+          'fullName': 'Andrea Franco',
+        },
+        dashboardIndexData: const <String, dynamic>{},
+        therapeuticAdviceData: const <String, dynamic>{},
+      );
+      final Map<String, dynamic> resolution =
+          RealAssistitiNoCfTargetCopyWriter.identityResolutionForIdentity(
+        requestedCode: identityAnchor,
+        identity: identity,
+      );
+
+      expect(identity.nome, '');
+      expect(identity.cognome, '');
+      expect(identity.fullName, 'Andrea Franco');
+      expect(identity.nameSplitConfidence, RealAssistitiNoCfTargetCopyWriter.nameSplitConfidencePendingManualNoCf);
+      expect(resolution['status'], RealAssistitiNoCfTargetCopyWriter.identityResolutionStatusPendingManual);
+      expect(resolution['reason'], 'ambiguous_nocf_name_split');
+      expect((resolution['candidateSplits'] as List<dynamic>).length, 2);
+    });
+
+    test('does not derive names from a technical NOCF hash code', () {
+      const String identityAnchor = 'NOCF_A1B2C3D4E5F6ABCD';
+
+      final identity = RealAssistitiNoCfTargetCopyWriter.resolveNoCfIdentityForMigration(
+        requestedCode: identityAnchor,
+        identityAnchor: identityAnchor,
+        patientData: const <String, dynamic>{},
+        dashboardIndexData: const <String, dynamic>{},
+        therapeuticAdviceData: const <String, dynamic>{},
+      );
+
+      expect(identity.nome, '');
+      expect(identity.cognome, '');
+      expect(identity.fullName, '');
+      expect(
+        identity.nameSplitConfidence,
+        RealAssistitiNoCfTargetCopyWriter.nameSplitConfidencePendingManualNoCf,
+      );
+      expect(
+        RealAssistitiNoCfTargetCopyWriter.identityResolutionStatusForIdentity(identity),
+        RealAssistitiNoCfTargetCopyWriter.identityResolutionStatusPendingManual,
+      );
+    });
+
+    test('preserves valid fullName before deriving identity from a parseable TMP code', () {
+      final TargetAssistitoIdentityAnchorResult anchor =
+          TargetAssistitoNoCfIdentityAnchorNormalizer.fromLegacyCode(
+        'TMP_ERRATO_ERRATA_1778262346407000',
+      );
+
+      final identity = RealAssistitiNoCfTargetCopyWriter.resolveNoCfIdentityForMigration(
+        requestedCode: 'TMP_ERRATO_ERRATA_1778262346407000',
+        identityAnchor: anchor.identityAnchor,
+        patientData: const <String, dynamic>{},
+        dashboardIndexData: const <String, dynamic>{
+          'fullName': 'Sofia Castelli',
+        },
+        therapeuticAdviceData: const <String, dynamic>{},
+      );
+
+      expect(identity.nome, '');
+      expect(identity.cognome, '');
+      expect(identity.fullName, 'Sofia Castelli');
+      expect(
+        identity.nameSplitConfidence,
+        RealAssistitiNoCfTargetCopyWriter.nameSplitConfidencePendingManualNoCf,
+      );
+      expect(
+        RealAssistitiNoCfTargetCopyWriter.identityResolutionStatusForIdentity(identity),
+        RealAssistitiNoCfTargetCopyWriter.identityResolutionStatusPendingManual,
+      );
+    });
+
+    test('skips invalid patient fullName before preserving a later valid source', () {
+      const String identityAnchor = 'NOCF_A1B2C3D4E5F6ABCD';
+
+      final identity = RealAssistitiNoCfTargetCopyWriter.resolveNoCfIdentityForMigration(
+        requestedCode: identityAnchor,
+        identityAnchor: identityAnchor,
+        patientData: const <String, dynamic>{
+          'fullName': 'NOCF_A1B2C3D4E5F6ABCD',
+        },
+        dashboardIndexData: const <String, dynamic>{
+          'fullName': 'Andrea Franco',
+        },
+        therapeuticAdviceData: const <String, dynamic>{},
+      );
+
+      expect(identity.nome, '');
+      expect(identity.cognome, '');
+      expect(identity.fullName, 'Andrea Franco');
+      expect(
+        identity.nameSplitConfidence,
+        RealAssistitiNoCfTargetCopyWriter.nameSplitConfidencePendingManualNoCf,
+      );
+      expect(
+        RealAssistitiNoCfTargetCopyWriter.identityResolutionStatusForIdentity(identity),
+        RealAssistitiNoCfTargetCopyWriter.identityResolutionStatusPendingManual,
+      );
+    });
+
+    test('skips placeholder patient fullName before preserving therapeuticAdvice fullName', () {
+      const String identityAnchor = 'NOCF_A1B2C3D4E5F6ABCD';
+
+      final identity = RealAssistitiNoCfTargetCopyWriter.resolveNoCfIdentityForMigration(
+        requestedCode: identityAnchor,
+        identityAnchor: identityAnchor,
+        patientData: const <String, dynamic>{
+          'fullName': 'Assistito senza nome',
+        },
+        dashboardIndexData: const <String, dynamic>{},
+        therapeuticAdviceData: const <String, dynamic>{
+          'fullName': 'Maria De Luca',
+        },
+      );
+
+      expect(identity.fullName, 'Maria De Luca');
+      expect(
+        identity.nameSplitConfidence,
+        RealAssistitiNoCfTargetCopyWriter.nameSplitConfidencePendingManualNoCf,
+      );
+    });
+
+
+    test('keeps fullName pending when only nome is explicit', () {
+      final dynamic identity = RealAssistitiNoCfTargetCopyWriter.resolveNoCfIdentityForMigration(
+        requestedCode: 'TMP_ANDREA_FRANCO_1778262346407000',
+        identityAnchor: 'NOCF_0123456789ABCDEF',
+        patientData: const <String, dynamic>{
+          'nome': 'Andrea',
+          'fullName': 'Andrea Franco',
+        },
+        dashboardIndexData: const <String, dynamic>{},
+        therapeuticAdviceData: const <String, dynamic>{},
+      );
+
+      expect(identity.nome, 'Andrea');
+      expect(identity.cognome, '');
+      expect(identity.fullName, 'Andrea Franco');
+      expect(
+        identity.nameSplitConfidence,
+        RealAssistitiNoCfTargetCopyWriter.nameSplitConfidencePendingManualNoCf,
+      );
+      expect(
+        RealAssistitiNoCfTargetCopyWriter.identityResolutionStatusForIdentity(identity),
+        RealAssistitiNoCfTargetCopyWriter.identityResolutionStatusPendingManual,
+      );
+    });
+
+    test('keeps fullName pending when only cognome is explicit', () {
+      final dynamic identity = RealAssistitiNoCfTargetCopyWriter.resolveNoCfIdentityForMigration(
+        requestedCode: 'TMP_ANDREA_FRANCO_1778262346407000',
+        identityAnchor: 'NOCF_0123456789ABCDEF',
+        patientData: const <String, dynamic>{
+          'cognome': 'Franco',
+          'fullName': 'Andrea Franco',
+        },
+        dashboardIndexData: const <String, dynamic>{},
+        therapeuticAdviceData: const <String, dynamic>{},
+      );
+
+      expect(identity.nome, '');
+      expect(identity.cognome, 'Franco');
+      expect(identity.fullName, 'Andrea Franco');
+      expect(
+        identity.nameSplitConfidence,
+        RealAssistitiNoCfTargetCopyWriter.nameSplitConfidencePendingManualNoCf,
+      );
+    });
+
+    test('resolves automatically only when both explicit identity fields exist', () {
+      final dynamic identity = RealAssistitiNoCfTargetCopyWriter.resolveNoCfIdentityForMigration(
+        requestedCode: 'TMP_ANDREA_FRANCO_1778262346407000',
+        identityAnchor: 'NOCF_0123456789ABCDEF',
+        patientData: const <String, dynamic>{
+          'nome': 'Andrea',
+          'cognome': 'Franco',
+          'fullName': 'Andrea Franco',
+        },
+        dashboardIndexData: const <String, dynamic>{},
+        therapeuticAdviceData: const <String, dynamic>{},
+      );
+
+      expect(identity.nome, 'Andrea');
+      expect(identity.cognome, 'Franco');
+      expect(identity.fullName, 'Andrea Franco');
+      expect(
+        identity.nameSplitConfidence,
+        RealAssistitiNoCfTargetCopyWriter.nameSplitConfidenceExplicitNoCfFields,
+      );
+      expect(
+        RealAssistitiNoCfTargetCopyWriter.identityResolutionStatusForIdentity(identity),
+        RealAssistitiNoCfTargetCopyWriter.identityResolutionStatusResolvedAuto,
+      );
+    });
+
+  });
+
   group('RealAssistitiNoCfTargetCopyWrittenDocument', () {
     test('redacts payloads to root keys only', () {
       const RealAssistitiNoCfTargetCopyWrittenDocument written =
