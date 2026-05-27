@@ -3,9 +3,16 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('RealAssistitiNoCfIdentityResolutionReader', () {
-    test('uses bounded default max pending items', () {
+    test('uses bounded default max pending items and compatible status fields', () {
       expect(RealAssistitiNoCfIdentityResolutionReader.defaultMaxPendingItems, 20);
       expect(RealAssistitiNoCfIdentityResolutionReader.pendingStatus, 'pending_manual');
+      expect(
+        RealAssistitiNoCfIdentityResolutionReader.pendingStatusFields,
+        const <String>[
+          'identityResolutionStatus',
+          'identityResolution.status',
+        ],
+      );
     });
 
     test('sanitizes candidate splits without leaking malformed entries', () {
@@ -43,6 +50,30 @@ void main() {
       final Map<String, dynamic> mapped = item.toMap();
       expect(mapped['assistitoId'], 'real-document-id');
       expect(mapped['payloadAssistitoId'], 'stale-payload-id');
+    });
+
+    test('keeps nested pending status visible in root keys metadata', () {
+      final RealAssistitiNoCfIdentityResolutionPendingItem item =
+          RealAssistitiNoCfIdentityResolutionReader.fromRawData(
+        tenantId: 'tenant_a',
+        documentId: 'pending-document-id',
+        rawData: const <String, dynamic>{
+          'identityAnchor': 'NOCF_0123456789ABCDEF',
+          'fullName': 'Andrea Franco',
+          'identityResolution': <String, dynamic>{
+            'status': 'pending_manual',
+            'candidateSplits': <Map<String, String>>[
+              <String, String>{'nome': 'Andrea', 'cognome': 'Franco'},
+            ],
+          },
+        },
+      );
+
+      expect(item.assistitoId, 'pending-document-id');
+      expect(item.candidateSplits, <Map<String, String>>[
+        <String, String>{'nome': 'Andrea', 'cognome': 'Franco'},
+      ]);
+      expect(item.rawDataRootKeys.contains('identityResolution'), isTrue);
     });
 
     test('pending item map is redacted to root keys and candidate splits', () {
