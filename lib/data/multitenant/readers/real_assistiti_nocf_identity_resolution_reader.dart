@@ -76,9 +76,13 @@ class RealAssistitiNoCfIdentityResolutionPendingResult {
 class RealAssistitiNoCfIdentityResolutionReader {
   static const int defaultMaxPendingItems = 20;
   static const String pendingStatus = 'pending_manual';
+  static const String pendingConfidence = 'pending_manual_nocf_identity_resolution';
   static const List<String> pendingStatusFields = <String>[
     'identityResolutionStatus',
     'identityResolution.status',
+  ];
+  static const List<String> pendingConfidenceFields = <String>[
+    'nameSplitConfidence',
   ];
 
   final FirebaseFirestore firestore;
@@ -104,13 +108,20 @@ class RealAssistitiNoCfIdentityResolutionReader {
         <String, QueryDocumentSnapshot<Map<String, dynamic>>>{};
     int attemptedReads = 0;
 
-    for (final String statusField in pendingStatusFields) {
+    final List<MapEntry<String, String>> pendingQueries = <MapEntry<String, String>>[
+      for (final String statusField in pendingStatusFields)
+        MapEntry<String, String>(statusField, pendingStatus),
+      for (final String confidenceField in pendingConfidenceFields)
+        MapEntry<String, String>(confidenceField, pendingConfidence),
+    ];
+
+    for (final MapEntry<String, String> pendingQuery in pendingQueries) {
       if (documentsById.length >= safeLimit) {
         break;
       }
 
       final QuerySnapshot<Map<String, dynamic>> snapshot = await collection
-          .where(statusField, isEqualTo: pendingStatus)
+          .where(pendingQuery.key, isEqualTo: pendingQuery.value)
           .limit(safeLimit)
           .get(const GetOptions(source: Source.serverAndCache));
 

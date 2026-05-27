@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('RealAssistitiNoCfIdentityResolutionReader', () {
-    test('uses bounded default max pending items and compatible status fields', () {
+    test('uses bounded default max pending items and compatible pending signals', () {
       expect(RealAssistitiNoCfIdentityResolutionReader.defaultMaxPendingItems, 20);
       expect(RealAssistitiNoCfIdentityResolutionReader.pendingStatus, 'pending_manual');
       expect(
@@ -12,6 +12,16 @@ void main() {
           'identityResolutionStatus',
           'identityResolution.status',
         ],
+      );
+      expect(
+        RealAssistitiNoCfIdentityResolutionReader.pendingConfidenceFields,
+        const <String>[
+          'nameSplitConfidence',
+        ],
+      );
+      expect(
+        RealAssistitiNoCfIdentityResolutionReader.pendingConfidence,
+        'pending_manual_nocf_identity_resolution',
       );
     });
 
@@ -74,6 +84,27 @@ void main() {
         <String, String>{'nome': 'Andrea', 'cognome': 'Franco'},
       ]);
       expect(item.rawDataRootKeys.contains('identityResolution'), isTrue);
+    });
+
+    test('keeps confidence-only pending signal visible in root keys metadata', () {
+      final RealAssistitiNoCfIdentityResolutionPendingItem item =
+          RealAssistitiNoCfIdentityResolutionReader.fromRawData(
+        tenantId: 'tenant_a',
+        documentId: 'confidence-only-document-id',
+        rawData: const <String, dynamic>{
+          'identityAnchor': 'NOCF_0123456789ABCDEF',
+          'fullName': 'Andrea Franco',
+          'nome': '',
+          'cognome': '',
+          'nameSplitConfidence': 'pending_manual_nocf_identity_resolution',
+        },
+      );
+
+      expect(item.assistitoId, 'confidence-only-document-id');
+      expect(item.nome, '');
+      expect(item.cognome, '');
+      expect(item.fullName, 'Andrea Franco');
+      expect(item.rawDataRootKeys.contains('nameSplitConfidence'), isTrue);
     });
 
     test('pending item map is redacted to root keys and candidate splits', () {

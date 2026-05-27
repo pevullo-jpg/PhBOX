@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 
 import '../../../data/multitenant/readers/assistiti_target_with_legacy_fallback_reader.dart';
 import '../../../data/multitenant/readers/real_assistiti_dry_run_preview_reader.dart';
+import '../../../data/multitenant/readers/real_assistiti_nocf_identity_resolution_reader.dart';
 import '../../../data/multitenant/verifiers/real_assistiti_post_copy_verifier.dart';
+import '../../../data/multitenant/writers/real_assistiti_nocf_identity_resolution_writer.dart';
 import '../../../data/multitenant/writers/real_assistiti_nocf_target_copy_writer.dart';
 import '../../../data/multitenant/writers/real_assistiti_target_copy_writer.dart';
 import '../../../theme/app_theme.dart';
@@ -25,10 +27,12 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   RealAssistitiPostCopyVerificationResult? _verificationResult;
   RealAssistitiDryRunPreviewResult? _dryRunDiagnosticResult;
   RealAssistitiNoCfTargetCopyResult? _nocfCopyResult;
+  RealAssistitiNoCfIdentityResolutionPendingResult? _identityResolutionPendingResult;
 
   Object? _error;
   Object? _copyError;
   Object? _nocfCopyError;
+  Object? _identityResolutionError;
 
   bool _loading = false;
   bool _copying = false;
@@ -37,12 +41,287 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   bool _enableLegacyFallback = true;
   bool _copyConfirmed = false;
   bool _nocfCopyConfirmed = false;
+  bool _identityResolutionLoading = false;
+  bool _identityResolutionDialogOpen = false;
+  bool _identityResolutionBootstrapped = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _identityResolutionBootstrapped) {
+        return;
+      }
+      _identityResolutionBootstrapped = true;
+      _loadPendingIdentityResolutionsAndShowModal();
+    });
+  }
 
   @override
   void dispose() {
     _cfController.dispose();
     _nocfController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadPendingIdentityResolutionsAndShowModal() async {
+    if (_identityResolutionLoading || _identityResolutionDialogOpen || !mounted) {
+      return;
+    }
+
+    final TenantSession session = TenantSessionScope.of(context);
+    final RealAssistitiNoCfIdentityResolutionReader reader =
+        RealAssistitiNoCfIdentityResolutionReader(
+      firestore: FirebaseFirestore.instance,
+    );
+
+    setState(() {
+      _identityResolutionLoading = true;
+      _identityResolutionError = null;
+    });
+
+    try {
+      final RealAssistitiNoCfIdentityResolutionPendingResult result =
+          await reader.readPendingManual(tenantId: session.tenantId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _identityResolutionPendingResult = result;
+        _identityResolutionLoading = false;
+      });
+      if (result.items.isNotEmpty) {
+        await _showPendingIdentityResolutionQueue(result.items);
+        if (mounted) {
+          await _refreshPendingIdentityResolutionSummary();
+        }
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _identityResolutionError = error;
+        _identityResolutionPendingResult = null;
+        _identityResolutionLoading = false;
+      });
+    }
+  }
+
+  Future<void> _refreshPendingIdentityResolutionSummary() async {
+    if (!mounted) {
+      return;
+    }
+    final TenantSession session = TenantSessionScope.of(context);
+    final RealAssistitiNoCfIdentityResolutionReader reader =
+        RealAssistitiNoCfIdentityResolutionReader(
+      firestore: FirebaseFirestore.instance,
+    );
+    try {
+      final RealAssistitiNoCfIdentityResolutionPendingResult result =
+          await reader.readPendingManual(tenantId: session.tenantId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _identityResolutionPendingResult = result;
+        _identityResolutionError = null;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _identityResolutionError = error;
+      });
+    }
+  }
+
+  Future<void> _showPendingIdentityResolutionQueue(
+    List<RealAssistitiNoCfIdentityResolutionPendingItem> items,
+  ) async {
+    if (_identityResolutionDialogOpen || !mounted) {
+      return;
+    }
+    _identityResolutionDialogOpen = true;
+    try {
+      for (final RealAssistitiNoCfIdentityResolutionPendingItem item in items) {
+        if (!mounted) {
+          return;
+        }
+        await _showOneIdentityResolutionDialog(item);
+      }
+    } finally {
+      _identityResolutionDialogOpen = false;
+    }
+  }
+
+  Future<void> _showOneIdentityResolutionDialog(
+    RealAssistitiNoCfIdentityResolutionPendingItem item,
+  ) async {
+    final TextEditingController nomeController = TextEditingController(text: item.nome);
+    final TextEditingController cognomeController = TextEditingController(text: item.cognome);
+    Object? localError;
+    bool saving = false;
+
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext dialogContext) {
+          return StatefulBuilder(
+            builder: (BuildContext dialogContext, StateSetter setDialogState) {
+              Future<void> resolveWith({
+                required String nome,
+                required String cognome,
+              }) async {
+                if (saving) {
+                  return;
+                }
+                setDialogState(() {
+                  saving = true;
+                  localError = null;
+                });
+                try {
+                  final TenantSession session = TenantSessionScope.of(context);
+                  final RealAssistitiNoCfIdentityResolutionWriter writer =
+                      RealAssistitiNoCfIdentityResolutionWriter(
+                    firestore: FirebaseFirestore.instance,
+                  );
+                  await writer.resolvePendingManual(
+                    tenantId: session.tenantId,
+                    assistitoId: item.assistitoId,
+                    nome: nome,
+                    cognome: cognome,
+                  );
+                  if (dialogContext.mounted) {
+                    Navigator.of(dialogContext).pop();
+                  }
+                } catch (error) {
+                  if (!dialogContext.mounted) {
+                    return;
+                  }
+                  setDialogState(() {
+                    localError = error;
+                    saving = false;
+                  });
+                }
+              }
+
+              return AlertDialog(
+                backgroundColor: AppColors.panel,
+                title: const Text(
+                  'Risoluzione identità NOCF',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                content: SizedBox(
+                  width: 560,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        const Text(
+                          'Questo assistito è stato copiato, ma nome/cognome sono ambigui. Seleziona la combinazione corretta o inseriscila manualmente.',
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _MetaLine(label: 'assistitoId', value: item.assistitoId),
+                        _MetaLine(label: 'identityAnchor', value: item.identityAnchor),
+                        _MetaLine(label: 'fullName', value: item.fullName.isEmpty ? '-' : item.fullName),
+                        const SizedBox(height: 12),
+                        if (item.candidateSplits.isNotEmpty) ...<Widget>[
+                          const Text(
+                            'Scelte rapide',
+                            style: TextStyle(
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          for (final Map<String, String> candidate in item.candidateSplits) ...<Widget>[
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton(
+                                onPressed: saving
+                                    ? null
+                                    : () => resolveWith(
+                                          nome: candidate['nome'] ?? '',
+                                          cognome: candidate['cognome'] ?? '',
+                                        ),
+                                child: Text(
+                                  'Nome: ${candidate['nome']} · Cognome: ${candidate['cognome']}',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                          ],
+                          const SizedBox(height: 12),
+                        ],
+                        const Text(
+                          'Modifica manuale',
+                          style: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: nomeController,
+                          enabled: !saving,
+                          decoration: const InputDecoration(labelText: 'Nome'),
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: cognomeController,
+                          enabled: !saving,
+                          decoration: const InputDecoration(labelText: 'Cognome'),
+                        ),
+                        if (localError != null) ...<Widget>[
+                          const SizedBox(height: 12),
+                          Text(
+                            localError.toString(),
+                            style: const TextStyle(
+                              color: AppColors.expiry,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                actions: <Widget>[
+                  TextButton(
+                    onPressed: saving ? null : () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Rimanda'),
+                  ),
+                  FilledButton(
+                    onPressed: saving
+                        ? null
+                        : () => resolveWith(
+                              nome: nomeController.text,
+                              cognome: cognomeController.text,
+                            ),
+                    child: Text(saving ? 'Salvataggio...' : 'Salva identità'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      nomeController.dispose();
+      cognomeController.dispose();
+    }
   }
 
   Future<void> _loadAssistitiByManualCf() async {
@@ -249,6 +528,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
         _nocfCopying = false;
         _nocfCopyConfirmed = false;
       });
+      await _loadPendingIdentityResolutionsAndShowModal();
     } catch (error) {
       if (!mounted) {
         return;
@@ -377,6 +657,13 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
 
     return ListView(
       children: <Widget>[
+        _IdentityResolutionSummaryPanel(
+          loading: _identityResolutionLoading,
+          result: _identityResolutionPendingResult,
+          error: _identityResolutionError,
+          onRefresh: _loadPendingIdentityResolutionsAndShowModal,
+        ),
+        const SizedBox(height: 16),
         _NoCfCopyPanel(
           controller: _nocfController,
           copyConfirmed: _nocfCopyConfirmed,
@@ -544,7 +831,7 @@ class _AssistitiFallbackHeader extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     const Text(
-                      'Nessun listener, nessuno switch dashboard. CF e NOCF restano due flussi separati e bounded.',
+                      'Nessun listener, nessuno switch dashboard. CF, NOCF e risoluzione identità restano flussi separati e bounded.',
                       style: TextStyle(
                         color: AppColors.textMuted,
                         fontSize: 12,
@@ -622,6 +909,66 @@ class _AssistitiFallbackHeader extends StatelessWidget {
                 label: Text(loading ? 'Operazione...' : 'Leggi CF'),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _IdentityResolutionSummaryPanel extends StatelessWidget {
+  final bool loading;
+  final RealAssistitiNoCfIdentityResolutionPendingResult? result;
+  final Object? error;
+  final VoidCallback onRefresh;
+
+  const _IdentityResolutionSummaryPanel({
+    required this.loading,
+    required this.result,
+    required this.error,
+    required this.onRefresh,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final int pendingCount = result?.pendingCount ?? 0;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.panelSoft,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: pendingCount > 0 ? AppColors.expiry : AppColors.outlineSoft),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(
+            pendingCount > 0 ? Icons.assignment_late_outlined : Icons.check_circle_outline,
+            color: pendingCount > 0 ? AppColors.expiry : AppColors.dpc,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              error != null
+                  ? 'Risoluzione identità NOCF non caricata: $error'
+                  : loading
+                      ? 'Controllo assistiti NOCF ambigui...'
+                      : pendingCount > 0
+                          ? 'Assistiti NOCF con identità da risolvere: $pendingCount/${result?.maxPendingItems ?? RealAssistitiNoCfIdentityResolutionReader.defaultMaxPendingItems}'
+                          : 'Nessuna identità NOCF ambigua da risolvere. Usa il pulsante per ricontrollare manualmente.',
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          OutlinedButton.icon(
+            onPressed: loading ? null : onRefresh,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Controlla ambiguità NOCF'),
           ),
         ],
       ),
