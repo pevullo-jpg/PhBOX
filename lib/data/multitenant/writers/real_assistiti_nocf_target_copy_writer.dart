@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../mappers/real_assistiti_target_preview_mapper.dart';
 import '../models/target_multitenant_collections.dart';
+import '../normalizers/target_assistito_identity_normalizer.dart';
 import '../normalizers/target_assistito_nocf_identity_anchor_normalizer.dart';
 import '../readers/real_assistiti_nocf_migration_audit_reader.dart';
 import '../readers/target_assistiti_identity_duplicate_guard_reader.dart';
@@ -202,12 +203,32 @@ class RealAssistitiNoCfTargetCopyWriter {
   static const String identityLocksCollectionId = 'assistiti_identity_locks';
   static const String cfLocksCollectionId = 'assistiti_cf_locks';
 
+  static const String identityResolutionStatusResolvedAuto = 'resolved_auto';
+  static const String identityResolutionStatusPendingManual = 'pending_manual';
+  static const String identityResolutionSourceNoCfCopyWriter = 'real_assistiti_nocf_target_copy_writer';
+  static const String nameSplitConfidenceExplicitNoCfFields = 'explicit_fields_nocf';
+  static const String nameSplitConfidenceNoCfCode = 'derived_from_nocf_code';
+  static const String nameSplitConfidencePendingManualNoCf = 'pending_manual_nocf_identity_resolution';
+
   static const String patientsCollection = 'patients';
   static const String dashboardIndexCollection = 'patient_dashboard_index';
   static const String therapeuticAdviceCollection = 'patient_therapeutic_advice';
   static const String doctorPatientLinksCollection = 'doctor_patient_links';
   static const String manualDoctorLinkSuffix = '__manual';
   static const String primaryDoctorLinkSuffix = '__primary';
+
+  static const Set<String> _surnameParticles = <String>{
+    'DA',
+    'DE',
+    'DEL',
+    'DELLA',
+    'DI',
+    'LA',
+    'LE',
+    'LO',
+    'VAN',
+    'VON',
+  };
 
   final FirebaseFirestore firestore;
 
@@ -343,6 +364,109 @@ class RealAssistitiNoCfTargetCopyWriter {
     _assertRequestSize(requestedCodes);
     final List<String> anchors = _normalizeAndValidateNoCfIdentityAnchors(requestedCodes);
     return '$manualConfirmationTokenPrefix:$normalizedTenantId:${anchors.join(',')}';
+  }
+
+  static RealAssistitiResolvedIdentity resolveNoCfIdentityForMigration({
+    required String requestedCode,
+    required String identityAnchor,
+    required Map<String, dynamic> patientData,
+    required Map<String, dynamic> dashboardIndexData,
+    required Map<String, dynamic> therapeuticAdviceData,
+  }) {
+    final String safeIdentityAnchor = identityAnchor.trim();
+    final String explicitNome = TargetAssistitoIdentityNormalizer.normalizeNamePart(
+      _readFirstString(patientData, const <String>['nome', 'firstName', 'givenName']),
+    );
+    final String explicitCognome = TargetAssistitoIdentityNormalizer.normalizeNamePart(
+      _readFirstString(patientData, const <String>['cognome', 'lastName', 'surname', 'familyName']),
+    );
+    final String rawFullName = _firstAvailableFullName(
+      patientData: patientData,
+      dashboardIndexData: dashboardIndexData,
+      therapeuticAdviceData: therapeuticAdviceData,
+    );
+
+    if (explicitNome.isNotEmpty && explicitCognome.isNotEmpty) {
+      return RealAssistitiResolvedIdentity(
+        cf: safeIdentityAnchor,
+        nome: explicitNome,
+        cognome: explicitCognome,
+        fullName: _joinNameFirstFullName(
+          nome: explicitNome,
+          cognome: explicitCognome,
+          fallbackFullName: rawFullName,
+        ),
+        nameSplitConfidence: nameSplitConfidenceExplicitNoCfFields,
+      );
+    }
+
+    if (explicitNome.isNotEmpty || explicitCognome.isNotEmpty) {
+      final String normalizedFullName = TargetAssistitoIdentityNormalizer.normalizeFullName(rawFullName);
+      return RealAssistitiResolvedIdentity(
+        cf: safeIdentityAnchor,
+        nome: explicitNome,
+        cognome: explicitCognome,
+        fullName: normalizedFullName.isNotEmpty
+            ? normalizedFullName
+            : _joinNameFirstFullName(
+                nome: explicitNome,
+                cognome: explicitCognome,
+                fallbackFullName: rawFullName,
+              ),
+        nameSplitConfidence: nameSplitConfidencePendingManualNoCf,
+      );
+    }
+
+    final RealAssistitiResolvedIdentity? codeIdentity = _resolveIdentityFromNoCfCode(
+      requestedCode: requestedCode,
+      identityAnchor: safeIdentityAnchor,
+    );
+    if (codeIdentity != null) {
+      return codeIdentity;
+    }
+
+    final String normalizedFullName = TargetAssistitoIdentityNormalizer.normalizeFullName(rawFullName);
+    return RealAssistitiResolvedIdentity(
+      cf: safeIdentityAnchor,
+      nome: '',
+      cognome: '',
+      fullName: normalizedFullName,
+      nameSplitConfidence: nameSplitConfidencePendingManualNoCf,
+    );
+  }
+
+  static String identityResolutionStatusForIdentity(RealAssistitiResolvedIdentity identity) {
+    if (identity.nameSplitConfidence == nameSplitConfidencePendingManualNoCf) {
+      return identityResolutionStatusPendingManual;
+    }
+    return identityResolutionStatusResolvedAuto;
+  }
+
+  static Map<String, dynamic> identityResolutionForIdentity({
+    required String requestedCode,
+    required RealAssistitiResolvedIdentity identity,
+  }) {
+    final String status = identityResolutionStatusForIdentity(identity);
+    final Map<String, dynamic> resolution = <String, dynamic>{
+      'status': status,
+      'source': identityResolutionSourceNoCfCopyWriter,
+      'nameSplitConfidence': identity.nameSplitConfidence,
+    };
+    if (status == identityResolutionStatusPendingManual) {
+      final List<String> tokens = identity.fullName
+          .split(' ')
+          .map((String item) => item.trim())
+          .where((String item) => item.isNotEmpty)
+          .toList(growable: false);
+      resolution.addAll(<String, dynamic>{
+        'reason': 'ambiguous_nocf_name_split',
+        'requestedCode': requestedCode.trim(),
+        'rawFullName': identity.fullName,
+        'tokens': List<String>.unmodifiable(tokens),
+        'candidateSplits': _buildCandidateSplits(tokens),
+      });
+    }
+    return Map<String, dynamic>.unmodifiable(resolution);
   }
 
   Future<_NoCfLegacyBundle> _readOneLegacyNoCfCode(String requestedCode) async {
@@ -499,18 +623,17 @@ class RealAssistitiNoCfTargetCopyWriter {
     }
 
     final DateTime fallbackTimestamp = DateTime.now().toUtc();
-    final RealAssistitiResolvedIdentity identity = RealAssistitiTargetPreviewMapper.resolveIdentity(
-      cf: check.identityAnchor,
+    final RealAssistitiResolvedIdentity identity = resolveNoCfIdentityForMigration(
+      requestedCode: check.requestedCode,
+      identityAnchor: check.identityAnchor,
       patientData: legacyBundle.patient.rawData,
       dashboardIndexData: legacyBundle.dashboardIndex.rawData,
       therapeuticAdviceData: legacyBundle.therapeuticAdvice.rawData,
     );
-    if (!identity.hasAnyAcceptedIdentityAnchor) {
-      throw RealAssistitiNoCfTargetCopyRejectedException(
-        code: 'target_nocf_identity_absent',
-        message: 'Payload NOCF senza anchor identità accettabile per ${check.requestedCode}.',
-      );
-    }
+    final Map<String, dynamic> identityResolution = identityResolutionForIdentity(
+      requestedCode: check.requestedCode,
+      identity: identity,
+    );
 
     final Map<String, dynamic> payload = <String, dynamic>{
       'assistitoId': safeAssistitoId,
@@ -523,6 +646,8 @@ class RealAssistitiNoCfTargetCopyWriter {
       'cognome': identity.cognome,
       'fullName': identity.fullName,
       'nameSplitConfidence': identity.nameSplitConfidence,
+      'identityResolutionStatus': identityResolution['status'],
+      'identityResolution': identityResolution,
       'searchPrefixes': identity.fullName.trim().isEmpty
           ? const <String>[]
           : RealAssistitiTargetPreviewMapper.buildSearchPrefixes(identity.fullName),
@@ -620,12 +745,178 @@ class RealAssistitiNoCfTargetCopyWriter {
         message: 'identityAnchor NOCF non canonico per ${check.requestedCode}.',
       );
     }
+    if (_readString(payload['identityResolutionStatus']).isEmpty) {
+      throw RealAssistitiNoCfTargetCopyRejectedException(
+        code: 'target_payload_identity_resolution_status_missing',
+        message: 'Payload target NOCF senza stato risoluzione identità per ${check.identityAnchor}.',
+      );
+    }
     if (!_hasNonNullTimestamp(payload['createdAt']) || !_hasNonNullTimestamp(payload['updatedAt'])) {
       throw RealAssistitiNoCfTargetCopyRejectedException(
         code: 'target_payload_timestamp_missing',
         message: 'Payload target NOCF senza createdAt/updatedAt validi per ${check.identityAnchor}.',
       );
     }
+  }
+
+  static RealAssistitiResolvedIdentity? _resolveIdentityFromNoCfCode({
+    required String requestedCode,
+    required String identityAnchor,
+  }) {
+    if (_isTechnicalNoCfHashCode(requestedCode)) {
+      return null;
+    }
+
+    final List<String> parts = _humanTokensFromNoCfCode(requestedCode);
+    if (parts.length < 2) {
+      return null;
+    }
+    final int surnameStart = _surnameStartIndex(parts);
+    if (surnameStart <= 0 || surnameStart >= parts.length) {
+      return null;
+    }
+    final String nome = parts.take(surnameStart).map(_titleCaseToken).join(' ').trim();
+    final String cognome = parts.skip(surnameStart).map(_titleCaseToken).join(' ').trim();
+    if (nome.isEmpty || cognome.isEmpty) {
+      return null;
+    }
+    return RealAssistitiResolvedIdentity(
+      cf: identityAnchor,
+      nome: TargetAssistitoIdentityNormalizer.normalizeNamePart(nome),
+      cognome: TargetAssistitoIdentityNormalizer.normalizeNamePart(cognome),
+      fullName: _joinNameFirstFullName(nome: nome, cognome: cognome, fallbackFullName: ''),
+      nameSplitConfidence: nameSplitConfidenceNoCfCode,
+    );
+  }
+
+  static bool _isTechnicalNoCfHashCode(String requestedCode) {
+    final String normalized = requestedCode.trim().toUpperCase();
+    return TargetAssistitoNoCfIdentityAnchorNormalizer.isCanonicalNoCf(normalized) ||
+        RegExp(r'^NOCF_[0-9A-F]{8,}$').hasMatch(normalized);
+  }
+
+  static List<String> _humanTokensFromNoCfCode(String requestedCode) {
+    final String normalized = requestedCode.trim().replaceAll(RegExp(r'[^A-Za-zÀ-ÖØ-öø-ÿ]+'), ' ');
+    final List<String> tokens = normalized
+        .split(' ')
+        .map((String item) => item.trim())
+        .where((String item) => item.isNotEmpty)
+        .toList(growable: false);
+    if (tokens.isEmpty) {
+      return const <String>[];
+    }
+    final List<String> filtered = <String>[];
+    for (final String token in tokens) {
+      final String upper = token.toUpperCase();
+      if (upper == 'TMP' || upper == 'NOCF' || upper == 'MANUALE' || upper == 'MANUAL') {
+        continue;
+      }
+      filtered.add(upper);
+    }
+    return List<String>.unmodifiable(filtered);
+  }
+
+  static int _surnameStartIndex(List<String> parts) {
+    if (parts.length < 2) {
+      return -1;
+    }
+    final int lastIndex = parts.length - 1;
+    final String previous = parts[lastIndex - 1].toUpperCase();
+    if (parts.length >= 3 && _surnameParticles.contains(previous)) {
+      return lastIndex - 1;
+    }
+    return lastIndex;
+  }
+
+  static List<Map<String, String>> _buildCandidateSplits(List<String> tokens) {
+    if (tokens.length < 2) {
+      return const <Map<String, String>>[];
+    }
+    final String firstAsName = tokens.first;
+    final String restAsSurname = tokens.skip(1).join(' ');
+    final String lastAsSurname = tokens.last;
+    final String restAsName = tokens.take(tokens.length - 1).join(' ');
+    return List<Map<String, String>>.unmodifiable(<Map<String, String>>[
+      <String, String>{'nome': firstAsName, 'cognome': restAsSurname},
+      <String, String>{'nome': restAsName, 'cognome': lastAsSurname},
+    ]);
+  }
+
+  static String _firstAvailableFullName({
+    required Map<String, dynamic> patientData,
+    required Map<String, dynamic> dashboardIndexData,
+    required Map<String, dynamic> therapeuticAdviceData,
+  }) {
+    return TargetAssistitoIdentityNormalizer.normalizeFullName(
+      _readFirstString(patientData, const <String>[
+        'fullName',
+        'displayName',
+        'patientName',
+        'assistitoName',
+        'name',
+      ]).isNotEmpty
+          ? _readFirstString(patientData, const <String>[
+              'fullName',
+              'displayName',
+              'patientName',
+              'assistitoName',
+              'name',
+            ])
+          : _readFirstString(dashboardIndexData, const <String>[
+              'fullName',
+              'displayName',
+              'patientName',
+              'assistitoName',
+              'name',
+            ]).isNotEmpty
+              ? _readFirstString(dashboardIndexData, const <String>[
+                  'fullName',
+                  'displayName',
+                  'patientName',
+                  'assistitoName',
+                  'name',
+                ])
+              : _readFirstString(therapeuticAdviceData, const <String>[
+                  'fullName',
+                  'displayName',
+                  'patientName',
+                  'assistitoName',
+                  'name',
+                ]),
+    );
+  }
+
+  static String _joinNameFirstFullName({
+    required String nome,
+    required String cognome,
+    required String fallbackFullName,
+  }) {
+    final String joined = <String>[nome, cognome]
+        .where((String item) => item.trim().isNotEmpty)
+        .join(' ')
+        .trim();
+    if (joined.isNotEmpty) {
+      return TargetAssistitoIdentityNormalizer.normalizeFullName(joined);
+    }
+    return TargetAssistitoIdentityNormalizer.normalizeFullName(fallbackFullName);
+  }
+
+  static String _titleCaseToken(String value) {
+    final String normalized = value.trim().toLowerCase();
+    if (normalized.isEmpty) {
+      return '';
+    }
+    return '${normalized.substring(0, 1).toUpperCase()}${normalized.substring(1)}';
+  }
+
+  static String _readFirstString(Map<String, dynamic> map, List<String> keys) {
+    for (final String key in keys) {
+      final String value = map[key]?.toString().trim() ?? '';
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+    return '';
   }
 
   static void _assertDuplicateGuardAllowsNoCfCopy(
