@@ -763,6 +763,10 @@ class RealAssistitiNoCfTargetCopyWriter {
     required String requestedCode,
     required String identityAnchor,
   }) {
+    if (_isTechnicalNoCfHashCode(requestedCode)) {
+      return null;
+    }
+
     final List<String> parts = _humanTokensFromNoCfCode(requestedCode);
     if (parts.length < 2) {
       return null;
@@ -783,6 +787,12 @@ class RealAssistitiNoCfTargetCopyWriter {
       fullName: _joinNameFirstFullName(nome: nome, cognome: cognome, fallbackFullName: ''),
       nameSplitConfidence: nameSplitConfidenceNoCfCode,
     );
+  }
+
+  static bool _isTechnicalNoCfHashCode(String requestedCode) {
+    final String normalized = requestedCode.trim().toUpperCase();
+    return TargetAssistitoNoCfIdentityAnchorNormalizer.isCanonicalNoCf(normalized) ||
+        RegExp(r'^NOCF_[0-9A-F]{8,}$').hasMatch(normalized);
   }
 
   static List<String> _humanTokensFromNoCfCode(String requestedCode) {

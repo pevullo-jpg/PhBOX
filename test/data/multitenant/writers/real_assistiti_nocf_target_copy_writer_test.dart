@@ -181,6 +181,30 @@ void main() {
       expect((resolution['candidateSplits'] as List<dynamic>).length, 2);
     });
 
+    test('does not derive names from a technical NOCF hash code', () {
+      const String identityAnchor = 'NOCF_A1B2C3D4E5F6ABCD';
+
+      final identity = RealAssistitiNoCfTargetCopyWriter.resolveNoCfIdentityForMigration(
+        requestedCode: identityAnchor,
+        identityAnchor: identityAnchor,
+        patientData: const <String, dynamic>{},
+        dashboardIndexData: const <String, dynamic>{},
+        therapeuticAdviceData: const <String, dynamic>{},
+      );
+
+      expect(identity.nome, '');
+      expect(identity.cognome, '');
+      expect(identity.fullName, '');
+      expect(
+        identity.nameSplitConfidence,
+        RealAssistitiNoCfTargetCopyWriter.nameSplitConfidencePendingManualNoCf,
+      );
+      expect(
+        RealAssistitiNoCfTargetCopyWriter.identityResolutionStatusForIdentity(identity),
+        RealAssistitiNoCfTargetCopyWriter.identityResolutionStatusPendingManual,
+      );
+    });
+
 
     test('keeps fullName pending when only nome is explicit', () {
       final dynamic identity = RealAssistitiNoCfTargetCopyWriter.resolveNoCfIdentityForMigration(
