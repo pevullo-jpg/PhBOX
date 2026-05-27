@@ -6,6 +6,21 @@ void main() {
     test('uses bounded default max pending items', () {
       expect(RealAssistitiNoCfIdentityResolutionReader.defaultMaxPendingItems, 20);
       expect(RealAssistitiNoCfIdentityResolutionReader.pendingStatus, 'pending_manual');
+      expect(
+        RealAssistitiNoCfIdentityResolutionReader.pendingConfidence,
+        'pending_manual_nocf_identity_resolution',
+      );
+    });
+
+    test('queries every supported pending signal field', () {
+      expect(
+        RealAssistitiNoCfIdentityResolutionReader.pendingSignalFields,
+        <String>[
+          'identityResolutionStatus',
+          'identityResolution.status',
+          'nameSplitConfidence',
+        ],
+      );
     });
 
     test('sanitizes candidate splits without leaking malformed entries', () {
@@ -43,6 +58,27 @@ void main() {
       final Map<String, dynamic> mapped = item.toMap();
       expect(mapped['assistitoId'], 'real-document-id');
       expect(mapped['payloadAssistitoId'], 'stale-payload-id');
+    });
+
+    test('represents confidence-only pending items for modal resolution', () {
+      final RealAssistitiNoCfIdentityResolutionPendingItem item =
+          RealAssistitiNoCfIdentityResolutionReader.fromRawData(
+        tenantId: 'tenant_a',
+        documentId: 'nocf-doc',
+        rawData: const <String, dynamic>{
+          'identityAnchor': 'NOCF_0123456789ABCDEF',
+          'fullName': 'Andrea Franco',
+          'nome': '',
+          'cognome': '',
+          'nameSplitConfidence': 'pending_manual_nocf_identity_resolution',
+        },
+      );
+
+      expect(item.assistitoId, 'nocf-doc');
+      expect(item.fullName, 'Andrea Franco');
+      expect(item.nome, '');
+      expect(item.cognome, '');
+      expect(item.rawDataRootKeys, contains('nameSplitConfidence'));
     });
 
     test('pending item map is redacted to root keys and candidate splits', () {

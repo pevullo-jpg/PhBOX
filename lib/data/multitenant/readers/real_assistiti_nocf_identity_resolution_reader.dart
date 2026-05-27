@@ -76,6 +76,15 @@ class RealAssistitiNoCfIdentityResolutionPendingResult {
 class RealAssistitiNoCfIdentityResolutionReader {
   static const int defaultMaxPendingItems = 20;
   static const String pendingStatus = 'pending_manual';
+  static const String pendingConfidence = 'pending_manual_nocf_identity_resolution';
+  static const List<String> pendingStatusFields = <String>[
+    'identityResolutionStatus',
+    'identityResolution.status',
+  ];
+  static const List<String> pendingSignalFields = <String>[
+    ...pendingStatusFields,
+    'nameSplitConfidence',
+  ];
 
   final FirebaseFirestore firestore;
 
@@ -94,27 +103,46 @@ class RealAssistitiNoCfIdentityResolutionReader {
       collectionId: TargetMultitenantCollections.assistiti,
     );
 
-    final QuerySnapshot<Map<String, dynamic>> snapshot = await firestore
-        .collection(assistitiCollectionPath)
-        .where('identityResolutionStatus', isEqualTo: pendingStatus)
-        .limit(safeLimit)
-        .get(const GetOptions(source: Source.serverAndCache));
+    final Map<String, RealAssistitiNoCfIdentityResolutionPendingItem> itemsByDocumentId =
+        <String, RealAssistitiNoCfIdentityResolutionPendingItem>{};
+    int attemptedReads = 0;
 
-    final List<RealAssistitiNoCfIdentityResolutionPendingItem> items =
-        <RealAssistitiNoCfIdentityResolutionPendingItem>[];
-    for (final QueryDocumentSnapshot<Map<String, dynamic>> document in snapshot.docs) {
-      items.add(fromDocumentSnapshot(
-        tenantId: normalizedTenantId,
-        document: document,
-      ));
+    for (final String pendingField in pendingSignalFields) {
+      if (itemsByDocumentId.length >= safeLimit) {
+        break;
+      }
+      final QuerySnapshot<Map<String, dynamic>> snapshot = await firestore
+          .collection(assistitiCollectionPath)
+          .where(
+            pendingField,
+            isEqualTo: pendingField == 'nameSplitConfidence' ? pendingConfidence : pendingStatus,
+          )
+          .limit(safeLimit)
+          .get(const GetOptions(source: Source.serverAndCache));
+      attemptedReads += snapshot.docs.length;
+
+      for (final QueryDocumentSnapshot<Map<String, dynamic>> document in snapshot.docs) {
+        if (itemsByDocumentId.length >= safeLimit && !itemsByDocumentId.containsKey(document.id)) {
+          continue;
+        }
+        itemsByDocumentId.putIfAbsent(
+          document.id,
+          () => fromDocumentSnapshot(
+            tenantId: normalizedTenantId,
+            document: document,
+          ),
+        );
+      }
     }
 
     return RealAssistitiNoCfIdentityResolutionPendingResult(
       tenantId: normalizedTenantId,
       assistitiCollectionPath: assistitiCollectionPath,
-      items: List<RealAssistitiNoCfIdentityResolutionPendingItem>.unmodifiable(items),
+      items: List<RealAssistitiNoCfIdentityResolutionPendingItem>.unmodifiable(
+        itemsByDocumentId.values.take(safeLimit),
+      ),
       maxPendingItems: safeLimit,
-      attemptedReads: snapshot.docs.length,
+      attemptedReads: attemptedReads,
     );
   }
 
