@@ -296,6 +296,10 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
         _nocfIdentityPendingResult = result;
         _nocfIdentityLoading = false;
       });
+
+      if (result.pendingCount == 1) {
+        await _openNoCfIdentityResolutionDialog(result.items.single);
+      }
     } catch (error) {
       if (!mounted || requestToken != _nocfIdentityRequestSerial) {
         return;
