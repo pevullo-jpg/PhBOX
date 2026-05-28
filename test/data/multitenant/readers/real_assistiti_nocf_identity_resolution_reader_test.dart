@@ -29,9 +29,11 @@ void main() {
       final List<Map<String, String>> splits =
           RealAssistitiNoCfIdentityResolutionReader.sanitizeCandidateSplits(<Object?>[
         <String, dynamic>{'nome': 'Sofia', 'cognome': 'Castelli'},
+        <String, dynamic>{'nome': 'Mario RSSMRA80A01H501U', 'cognome': 'Rossi'},
+        <String, dynamic>{'nome': 'Mario', 'cognome': 'Rossi RSSMRA80A01H501U'},
         <String, dynamic>{'nome': 'Andrea', 'cognome': ''},
         'invalid',
-        <String, dynamic>{'nome': 'Franco', 'cognome': 'Andrea'},
+        <String, dynamic>{'nome': 'franco', 'cognome': 'andrea'},
       ]);
 
       expect(splits, <Map<String, String>>[

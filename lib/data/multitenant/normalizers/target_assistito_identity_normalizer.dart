@@ -133,10 +133,18 @@ class TargetAssistitoIdentityNormalizer {
   }
 
   static bool containsFiscalCodeLikeToken(String value) {
-    return _normalizeWhitespace(value)
-        .split(' ')
-        .map(normalizeCf)
-        .any(isFiscalCodeLike);
+    final String normalized = _normalizeWhitespace(value);
+    if (normalized.isEmpty) {
+      return false;
+    }
+    if (normalized.split(' ').map(normalizeCf).any(isFiscalCodeLike)) {
+      return true;
+    }
+    final String compact = normalized
+        .toUpperCase()
+        .replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    return RegExp(r'[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]')
+        .hasMatch(compact);
   }
 
   static bool isOcrFragment(String value) {
