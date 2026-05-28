@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/target_multitenant_collections.dart';
+import '../normalizers/target_assistito_identity_normalizer.dart';
 
 class RealAssistitiNoCfIdentityResolutionPendingItem {
   final String assistitoId;
@@ -58,6 +59,13 @@ class RealAssistitiNoCfIdentityResolutionPendingResult {
   bool get hasPendingItems => items.isNotEmpty;
 
   int get pendingCount => items.length;
+
+  RealAssistitiNoCfIdentityResolutionPendingItem? get singlePendingItemForAutoDialog {
+    if (items.length != 1) {
+      return null;
+    }
+    return items.single;
+  }
 
   Map<String, dynamic> toMap() {
     return <String, dynamic>{
@@ -196,9 +204,17 @@ class RealAssistitiNoCfIdentityResolutionReader {
       if (item is! Map) {
         continue;
       }
-      final String nome = _readString(item['nome']);
-      final String cognome = _readString(item['cognome']);
+      final String nome = TargetAssistitoIdentityNormalizer.normalizeNamePart(
+        _readString(item['nome']),
+      );
+      final String cognome = TargetAssistitoIdentityNormalizer.normalizeNamePart(
+        _readString(item['cognome']),
+      );
       if (nome.isEmpty || cognome.isEmpty) {
+        continue;
+      }
+      if (TargetAssistitoIdentityNormalizer.containsFiscalCodeLikeToken(nome) ||
+          TargetAssistitoIdentityNormalizer.containsFiscalCodeLikeToken(cognome)) {
         continue;
       }
       result.add(<String, String>{

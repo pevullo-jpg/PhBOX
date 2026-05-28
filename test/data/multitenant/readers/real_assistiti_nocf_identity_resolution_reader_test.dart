@@ -29,15 +29,77 @@ void main() {
       final List<Map<String, String>> splits =
           RealAssistitiNoCfIdentityResolutionReader.sanitizeCandidateSplits(<Object?>[
         <String, dynamic>{'nome': 'Sofia', 'cognome': 'Castelli'},
+        <String, dynamic>{'nome': 'Mario RSSMRA80A01H501U', 'cognome': 'Rossi'},
+        <String, dynamic>{'nome': 'Mario', 'cognome': 'Rossi RSSMRA80A01H501U'},
         <String, dynamic>{'nome': 'Andrea', 'cognome': ''},
         'invalid',
-        <String, dynamic>{'nome': 'Franco', 'cognome': 'Andrea'},
+        <String, dynamic>{'nome': 'franco', 'cognome': 'andrea'},
       ]);
 
       expect(splits, <Map<String, String>>[
         <String, String>{'nome': 'Sofia', 'cognome': 'Castelli'},
         <String, String>{'nome': 'Franco', 'cognome': 'Andrea'},
       ]);
+    });
+
+    test('auto dialog target is exposed only when exactly one pending item exists', () {
+      const RealAssistitiNoCfIdentityResolutionPendingItem firstItem =
+          RealAssistitiNoCfIdentityResolutionPendingItem(
+        assistitoId: 'assistito-1',
+        payloadAssistitoId: '',
+        documentPath: 'tenants/tenant_a/assistiti/assistito-1',
+        identityAnchor: 'NOCF_0123456789ABCDEF',
+        fullName: 'Andrea Franco',
+        nome: '',
+        cognome: '',
+        candidateSplits: <Map<String, String>>[
+          <String, String>{'nome': 'Andrea', 'cognome': 'Franco'},
+        ],
+        rawDataRootKeys: <String>['identityResolutionStatus'],
+      );
+      const RealAssistitiNoCfIdentityResolutionPendingItem secondItem =
+          RealAssistitiNoCfIdentityResolutionPendingItem(
+        assistitoId: 'assistito-2',
+        payloadAssistitoId: '',
+        documentPath: 'tenants/tenant_a/assistiti/assistito-2',
+        identityAnchor: 'NOCF_1111111111111111',
+        fullName: 'Mario Rossi',
+        nome: '',
+        cognome: '',
+        candidateSplits: <Map<String, String>>[
+          <String, String>{'nome': 'Mario', 'cognome': 'Rossi'},
+        ],
+        rawDataRootKeys: <String>['nameSplitConfidence'],
+      );
+
+      const RealAssistitiNoCfIdentityResolutionPendingResult emptyResult =
+          RealAssistitiNoCfIdentityResolutionPendingResult(
+        tenantId: 'tenant_a',
+        assistitiCollectionPath: 'tenants/tenant_a/assistiti',
+        items: <RealAssistitiNoCfIdentityResolutionPendingItem>[],
+        maxPendingItems: 20,
+        attemptedReads: 0,
+      );
+      const RealAssistitiNoCfIdentityResolutionPendingResult singleResult =
+          RealAssistitiNoCfIdentityResolutionPendingResult(
+        tenantId: 'tenant_a',
+        assistitiCollectionPath: 'tenants/tenant_a/assistiti',
+        items: <RealAssistitiNoCfIdentityResolutionPendingItem>[firstItem],
+        maxPendingItems: 20,
+        attemptedReads: 1,
+      );
+      const RealAssistitiNoCfIdentityResolutionPendingResult multiResult =
+          RealAssistitiNoCfIdentityResolutionPendingResult(
+        tenantId: 'tenant_a',
+        assistitiCollectionPath: 'tenants/tenant_a/assistiti',
+        items: <RealAssistitiNoCfIdentityResolutionPendingItem>[firstItem, secondItem],
+        maxPendingItems: 20,
+        attemptedReads: 2,
+      );
+
+      expect(emptyResult.singlePendingItemForAutoDialog, isNull);
+      expect(singleResult.singlePendingItemForAutoDialog, same(firstItem));
+      expect(multiResult.singlePendingItemForAutoDialog, isNull);
     });
 
     test('uses queried document id as operational write id', () {
