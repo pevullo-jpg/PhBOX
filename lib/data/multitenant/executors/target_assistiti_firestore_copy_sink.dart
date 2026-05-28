@@ -218,7 +218,9 @@ class TargetAssistitiFirestoreCopySink implements TargetWriteCommitSink {
     if (normalized.isEmpty) {
       return;
     }
-    if (_isFiscalCodeLike(normalized) || _containsCf(normalized, cf)) {
+    if (_isFiscalCodeLike(normalized) ||
+        _containsCf(normalized, cf) ||
+        _containsFiscalCodeLikeToken(normalized)) {
       throw TargetAssistitiFirestoreCopyRejectedException(
         code: 'cf_contaminates_$field',
         message: 'Il codice fiscale non può contaminare $field.',
@@ -255,7 +257,9 @@ class TargetAssistitiFirestoreCopySink implements TargetWriteCommitSink {
       if (prefix.isEmpty) {
         continue;
       }
-      if (_isFiscalCodeLike(prefix) || _containsCf(prefix, cf)) {
+      if (_isFiscalCodeLike(prefix) ||
+          _containsCf(prefix, cf) ||
+          _containsFiscalCodeLikeToken(prefix)) {
         throw TargetAssistitiFirestoreCopyRejectedException(
           code: 'cf_contaminates_search_prefixes',
           message: 'Il codice fiscale non può contaminare searchPrefixes.',
@@ -387,6 +391,18 @@ class TargetAssistitiFirestoreCopySink implements TargetWriteCommitSink {
   static bool _isFiscalCodeLike(String value) {
     return RegExp(r'^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$')
         .hasMatch(value.replaceAll(RegExp(r'\s+'), '').trim().toUpperCase());
+  }
+
+  static bool _containsFiscalCodeLikeToken(String value) {
+    final Iterable<RegExpMatch> matches = RegExp(r'[A-Z0-9]{16}')
+        .allMatches(value.toUpperCase());
+    for (final RegExpMatch match in matches) {
+      final String token = match.group(0) ?? '';
+      if (_isFiscalCodeLike(token)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   static String _readString(Object? value) {
