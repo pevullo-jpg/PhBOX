@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import '../../../data/multitenant/readers/assistiti_target_with_legacy_fallback_reader.dart';
 import '../../../data/multitenant/readers/real_assistiti_dry_run_preview_reader.dart';
 import '../../../data/multitenant/readers/real_assistiti_nocf_identity_resolution_reader.dart';
+import '../../../data/multitenant/reports/real_assistiti_migration1_data_report_reader.dart';
+import '../../../data/multitenant/reports/real_assistiti_migration1_firestore_report_reader.dart';
 import '../../../data/multitenant/verifiers/real_assistiti_post_copy_verifier.dart';
 import '../../../data/multitenant/writers/real_assistiti_nocf_identity_resolution_writer.dart';
 import '../../../data/multitenant/writers/real_assistiti_nocf_target_copy_writer.dart';
@@ -29,21 +31,25 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   RealAssistitiNoCfTargetCopyResult? _nocfCopyResult;
   RealAssistitiNoCfIdentityResolutionPendingResult? _nocfIdentityPendingResult;
   RealAssistitiNoCfIdentityResolutionWriteResult? _nocfIdentityWriteResult;
+  RealAssistitiMigration1DataReportResult? _migration1ReportResult;
 
   Object? _error;
   Object? _copyError;
   Object? _nocfCopyError;
   Object? _nocfIdentityError;
+  Object? _migration1ReportError;
 
   bool _loading = false;
   bool _copying = false;
   bool _nocfCopying = false;
   bool _nocfIdentityLoading = false;
+  bool _migration1ReportLoading = false;
   bool _requested = false;
   bool _enableLegacyFallback = true;
   bool _copyConfirmed = false;
   bool _nocfCopyConfirmed = false;
   int _nocfIdentityRequestSerial = 0;
+  int _migration1ReportRequestSerial = 0;
 
   @override
   void dispose() {
@@ -53,7 +59,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   }
 
   Future<void> _loadAssistitiByManualCf() async {
-    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading) {
+    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading) {
       return;
     }
 
@@ -100,7 +106,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   }
 
   Future<void> _copyLegacyFallbackItems() async {
-    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading) {
+    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading) {
       return;
     }
 
@@ -203,7 +209,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   }
 
   Future<void> _copyNoCfItems() async {
-    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading) {
+    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading) {
       return;
     }
 
@@ -269,7 +275,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   }
 
   Future<void> _loadNoCfIdentityResolutionPending() async {
-    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading) {
+    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading) {
       return;
     }
 
@@ -315,7 +321,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   Future<void> _openNoCfIdentityResolutionDialog(
     RealAssistitiNoCfIdentityResolutionPendingItem item,
   ) async {
-    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading) {
+    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading) {
       return;
     }
 
@@ -369,6 +375,45 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
         _nocfIdentityError = error;
         _nocfIdentityWriteResult = null;
         _nocfIdentityLoading = false;
+      });
+    }
+  }
+
+  Future<void> _runMigration1FirestoreReport() async {
+    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading) {
+      return;
+    }
+
+    final TenantSession session = TenantSessionScope.of(context);
+    final RealAssistitiMigration1FirestoreReportReader reader =
+        RealAssistitiMigration1FirestoreReportReader(firestore: FirebaseFirestore.instance);
+    final int requestToken = ++_migration1ReportRequestSerial;
+
+    setState(() {
+      _migration1ReportLoading = true;
+      _migration1ReportError = null;
+      _migration1ReportResult = null;
+    });
+
+    try {
+      final RealAssistitiMigration1DataReportResult result = await reader.readReport(
+        tenantId: session.tenantId,
+      );
+      if (!mounted || requestToken != _migration1ReportRequestSerial) {
+        return;
+      }
+      setState(() {
+        _migration1ReportResult = result;
+        _migration1ReportLoading = false;
+      });
+    } catch (error) {
+      if (!mounted || requestToken != _migration1ReportRequestSerial) {
+        return;
+      }
+      setState(() {
+        _migration1ReportError = error;
+        _migration1ReportResult = null;
+        _migration1ReportLoading = false;
       });
     }
   }
@@ -461,9 +506,9 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
                 tenantId: session.tenantId,
                 tenantName: session.tenantName,
                 controller: _cfController,
-                loading: _loading || _copying || _nocfCopying || _nocfIdentityLoading,
+                loading: _loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading,
                 legacyFallbackEnabled: _enableLegacyFallback,
-                onLegacyFallbackChanged: (_loading || _copying || _nocfCopying || _nocfIdentityLoading)
+                onLegacyFallbackChanged: (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading)
                     ? null
                     : (bool value) {
                         setState(() {
@@ -495,7 +540,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
           copying: _nocfCopying,
           copyError: _nocfCopyError,
           copyResult: _nocfCopyResult,
-          onCopyConfirmedChanged: (_loading || _copying || _nocfCopying || _nocfIdentityLoading)
+          onCopyConfirmedChanged: (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading)
               ? null
               : (bool value) {
                   setState(() {
@@ -513,6 +558,13 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
           writeResult: _nocfIdentityWriteResult,
           onLoadPending: _loadNoCfIdentityResolutionPending,
           onResolve: _openNoCfIdentityResolutionDialog,
+        ),
+        const SizedBox(height: 16),
+        _Migration1FirestoreReportPanel(
+          loading: _migration1ReportLoading,
+          error: _migration1ReportError,
+          result: _migration1ReportResult,
+          onRun: _runMigration1FirestoreReport,
         ),
         const SizedBox(height: 16),
         _buildCfBody(copyCandidateFiscalCodes),
@@ -910,6 +962,148 @@ class _NoCfCopyPanel extends StatelessWidget {
                 in copyResult!.writtenDocuments) ...<Widget>[
               _MetaLine(label: 'NOCF', value: document.identityAnchor),
               _MetaLine(label: 'assistitoPath', value: document.documentPath),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+
+class _Migration1FirestoreReportPanel extends StatelessWidget {
+  final bool loading;
+  final Object? error;
+  final RealAssistitiMigration1DataReportResult? result;
+  final VoidCallback onRun;
+
+  const _Migration1FirestoreReportPanel({
+    required this.loading,
+    required this.error,
+    required this.result,
+    required this.onRun,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final RealAssistitiMigration1DataReportResult? report = result;
+    final List<String> failedDocumentIds = report?.failedDocumentIds ?? const <String>[];
+    final List<String> visibleFailedDocumentIds = failedDocumentIds.take(20).toList(growable: false);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.panelSoft,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.outlineSoft),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Icon(Icons.fact_check_rounded, color: AppColors.dpc, size: 24),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      'Report Migration 1 dati target',
+                      style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Esecuzione straordinaria read-only: una query bounded su tenants/{tenantId}/assistiti, massimo 100 read, nessuna write.',
+                      style: TextStyle(
+                        color: AppColors.textMuted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              FilledButton.icon(
+                onPressed: loading ? null : onRun,
+                icon: loading
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.analytics_rounded),
+                label: Text(loading ? 'Report...' : 'Esegui report Migration 1'),
+              ),
+            ],
+          ),
+          if (error != null) ...<Widget>[
+            const SizedBox(height: 10),
+            Text(
+              error.toString(),
+              style: const TextStyle(
+                color: AppColors.expiry,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          if (report != null) ...<Widget>[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 14,
+              runSpacing: 8,
+              children: <Widget>[
+                _SummaryChip(label: 'Scansionati', value: '${report.summary.inputDocumentCount}/${report.maxInputDocuments}'),
+                _SummaryChip(label: 'Verificati', value: '${report.summary.verifiedCount}'),
+                _SummaryChip(label: 'Falliti', value: '${report.summary.failedCount}'),
+                _SummaryChip(label: 'CF', value: '${report.summary.cfCount}'),
+                _SummaryChip(label: 'NOCF', value: '${report.summary.noCfCount}'),
+                _SummaryChip(label: 'Resolved manual', value: '${report.summary.resolvedManualCount}'),
+                _SummaryChip(label: 'Pending manual', value: '${report.summary.pendingManualCount}'),
+                _SummaryChip(label: 'Contaminati', value: '${report.summary.contaminatedIdentityCount}'),
+                _SummaryChip(label: 'Prefix stale', value: '${report.summary.staleSearchPrefixesCount}'),
+                _SummaryChip(label: 'Read Firestore', value: '${report.firestoreReads}'),
+                _SummaryChip(label: 'Write Firestore', value: '${report.firestoreWrites}'),
+              ],
+            ),
+            if (report.summary.mismatchReasonCounts.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 10),
+              const Text(
+                'Mismatch rilevati',
+                style: TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 10,
+                runSpacing: 6,
+                children: <Widget>[
+                  for (final MapEntry<String, int> entry in report.summary.mismatchReasonCounts.entries)
+                    _SummaryChip(label: entry.key, value: '${entry.value}'),
+                ],
+              ),
+            ],
+            if (failedDocumentIds.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 10),
+              _MetaLine(
+                label: 'Documenti falliti',
+                value: visibleFailedDocumentIds.join(', '),
+              ),
+              if (failedDocumentIds.length > visibleFailedDocumentIds.length)
+                _MetaLine(
+                  label: 'Altri documenti falliti',
+                  value: '${failedDocumentIds.length - visibleFailedDocumentIds.length}',
+                ),
             ],
           ],
         ],
