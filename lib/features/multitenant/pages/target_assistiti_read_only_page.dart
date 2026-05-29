@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../data/multitenant/readers/assistiti_target_with_legacy_fallback_reader.dart';
 import '../../../data/multitenant/readers/real_assistiti_dry_run_preview_reader.dart';
@@ -987,8 +988,6 @@ class _Migration1FirestoreReportPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final RealAssistitiMigration1DataReportResult? report = result;
-    final List<String> failedDocumentIds = report?.failedDocumentIds ?? const <String>[];
-    final List<String> visibleFailedDocumentIds = failedDocumentIds.take(20).toList(growable: false);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
@@ -1045,67 +1044,152 @@ class _Migration1FirestoreReportPanel extends StatelessWidget {
           ),
           if (error != null) ...<Widget>[
             const SizedBox(height: 10),
-            Text(
-              error.toString(),
-              style: const TextStyle(
-                color: AppColors.expiry,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
+            _CopyableFeedbackBlock(
+              title: 'Errore report Migration 1',
+              content: _formatMigration1ReportError(error),
+              warning: true,
             ),
           ],
           if (report != null) ...<Widget>[
             const SizedBox(height: 10),
-            Wrap(
-              spacing: 14,
-              runSpacing: 8,
-              children: <Widget>[
-                _SummaryChip(label: 'Scansionati', value: '${report.summary.inputDocumentCount}/${report.maxInputDocuments}'),
-                _SummaryChip(label: 'Verificati', value: '${report.summary.verifiedCount}'),
-                _SummaryChip(label: 'Falliti', value: '${report.summary.failedCount}'),
-                _SummaryChip(label: 'CF', value: '${report.summary.cfCount}'),
-                _SummaryChip(label: 'NOCF', value: '${report.summary.noCfCount}'),
-                _SummaryChip(label: 'Resolved manual', value: '${report.summary.resolvedManualCount}'),
-                _SummaryChip(label: 'Pending manual', value: '${report.summary.pendingManualCount}'),
-                _SummaryChip(label: 'Contaminati', value: '${report.summary.contaminatedIdentityCount}'),
-                _SummaryChip(label: 'Prefix stale', value: '${report.summary.staleSearchPrefixesCount}'),
-                _SummaryChip(label: 'Read Firestore', value: '${report.firestoreReads}'),
-                _SummaryChip(label: 'Write Firestore', value: '${report.firestoreWrites}'),
-              ],
+            _CopyableFeedbackBlock(
+              title: 'Output copiabile report Migration 1',
+              content: _formatMigration1ReportFeedback(report),
+              warning: report.hasFailures,
             ),
-            if (report.summary.mismatchReasonCounts.isNotEmpty) ...<Widget>[
-              const SizedBox(height: 10),
-              const Text(
-                'Mismatch rilevati',
-                style: TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 10,
-                runSpacing: 6,
-                children: <Widget>[
-                  for (final MapEntry<String, int> entry in report.summary.mismatchReasonCounts.entries)
-                    _SummaryChip(label: entry.key, value: '${entry.value}'),
-                ],
-              ),
-            ],
-            if (failedDocumentIds.isNotEmpty) ...<Widget>[
-              const SizedBox(height: 10),
-              _MetaLine(
-                label: 'Documenti falliti',
-                value: visibleFailedDocumentIds.join(', '),
-              ),
-              if (failedDocumentIds.length > visibleFailedDocumentIds.length)
-                _MetaLine(
-                  label: 'Altri documenti falliti',
-                  value: '${failedDocumentIds.length - visibleFailedDocumentIds.length}',
-                ),
-            ],
           ],
+        ],
+      ),
+    );
+  }
+
+  static String _formatMigration1ReportError(Object error) {
+    return <String>[
+      'MIGRATION_1_REPORT_ERROR',
+      'error=${error.toString()}',
+    ].join('\n');
+  }
+
+  static String _formatMigration1ReportFeedback(
+    RealAssistitiMigration1DataReportResult report,
+  ) {
+    final StringBuffer buffer = StringBuffer()
+      ..writeln('MIGRATION_1_REPORT')
+      ..writeln('inputDocumentCount=${report.summary.inputDocumentCount}')
+      ..writeln('maxInputDocuments=${report.maxInputDocuments}')
+      ..writeln('verifiedCount=${report.summary.verifiedCount}')
+      ..writeln('failedCount=${report.summary.failedCount}')
+      ..writeln('cfCount=${report.summary.cfCount}')
+      ..writeln('noCfCount=${report.summary.noCfCount}')
+      ..writeln('resolvedManualCount=${report.summary.resolvedManualCount}')
+      ..writeln('pendingManualCount=${report.summary.pendingManualCount}')
+      ..writeln('contaminatedIdentityCount=${report.summary.contaminatedIdentityCount}')
+      ..writeln('staleSearchPrefixesCount=${report.summary.staleSearchPrefixesCount}')
+      ..writeln('allVerified=${report.allVerified}')
+      ..writeln('hasFailures=${report.hasFailures}')
+      ..writeln('firestoreReads=${report.firestoreReads}')
+      ..writeln('firestoreWrites=${report.firestoreWrites}')
+      ..writeln('mismatchReasonCounts=');
+
+    final List<MapEntry<String, int>> mismatchEntries =
+        report.summary.mismatchReasonCounts.entries.toList(growable: false)
+          ..sort((MapEntry<String, int> a, MapEntry<String, int> b) => a.key.compareTo(b.key));
+    if (mismatchEntries.isEmpty) {
+      buffer.writeln('- none');
+    } else {
+      for (final MapEntry<String, int> entry in mismatchEntries) {
+        buffer.writeln('- ${entry.key}: ${entry.value}');
+      }
+    }
+
+    buffer.writeln('failedDocumentIds=');
+    final List<String> failedDocumentIds = report.failedDocumentIds;
+    if (failedDocumentIds.isEmpty) {
+      buffer.writeln('- none');
+    } else {
+      for (final String documentId in failedDocumentIds) {
+        buffer.writeln('- $documentId');
+      }
+    }
+
+    return buffer.toString().trimRight();
+  }
+}
+
+class _CopyableFeedbackBlock extends StatelessWidget {
+  final String title;
+  final String content;
+  final bool warning;
+
+  const _CopyableFeedbackBlock({
+    required this.title,
+    required this.content,
+    this.warning = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.panel,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: warning ? AppColors.expiry : AppColors.outlineSoft),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: content));
+                  if (!context.mounted) {
+                    return;
+                  }
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Feedback copiato.')),
+                  );
+                },
+                icon: const Icon(Icons.copy_rounded, size: 16),
+                label: const Text('Copia'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.outlineSoft),
+            ),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SelectableText(
+                content,
+                style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 12,
+                  fontFamily: 'monospace',
+                  fontWeight: FontWeight.w600,
+                  height: 1.35,
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
