@@ -7,6 +7,7 @@ import '../../../data/multitenant/readers/real_assistiti_dry_run_preview_reader.
 import '../../../data/multitenant/readers/real_assistiti_nocf_identity_resolution_reader.dart';
 import '../../../data/multitenant/reports/real_assistiti_migration1_data_report_reader.dart';
 import '../../../data/multitenant/reports/real_assistiti_migration1_firestore_report_reader.dart';
+import '../../../data/multitenant/writers/real_assistiti_migration1_search_prefixes_repair_writer.dart';
 import '../../../data/multitenant/verifiers/real_assistiti_post_copy_verifier.dart';
 import '../../../data/multitenant/writers/real_assistiti_nocf_identity_resolution_writer.dart';
 import '../../../data/multitenant/writers/real_assistiti_nocf_target_copy_writer.dart';
@@ -33,24 +34,28 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   RealAssistitiNoCfIdentityResolutionPendingResult? _nocfIdentityPendingResult;
   RealAssistitiNoCfIdentityResolutionWriteResult? _nocfIdentityWriteResult;
   RealAssistitiMigration1DataReportResult? _migration1ReportResult;
+  RealAssistitiMigration1SearchPrefixesRepairResult? _migration1SearchPrefixesRepairResult;
 
   Object? _error;
   Object? _copyError;
   Object? _nocfCopyError;
   Object? _nocfIdentityError;
   Object? _migration1ReportError;
+  Object? _migration1SearchPrefixesRepairError;
 
   bool _loading = false;
   bool _copying = false;
   bool _nocfCopying = false;
   bool _nocfIdentityLoading = false;
   bool _migration1ReportLoading = false;
+  bool _migration1SearchPrefixesRepairLoading = false;
   bool _requested = false;
   bool _enableLegacyFallback = true;
   bool _copyConfirmed = false;
   bool _nocfCopyConfirmed = false;
   int _nocfIdentityRequestSerial = 0;
   int _migration1ReportRequestSerial = 0;
+  int _migration1SearchPrefixesRepairRequestSerial = 0;
 
   @override
   void dispose() {
@@ -60,7 +65,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   }
 
   Future<void> _loadAssistitiByManualCf() async {
-    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading) {
+    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading || _migration1SearchPrefixesRepairLoading) {
       return;
     }
 
@@ -107,7 +112,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   }
 
   Future<void> _copyLegacyFallbackItems() async {
-    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading) {
+    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading || _migration1SearchPrefixesRepairLoading) {
       return;
     }
 
@@ -210,7 +215,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   }
 
   Future<void> _copyNoCfItems() async {
-    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading) {
+    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading || _migration1SearchPrefixesRepairLoading) {
       return;
     }
 
@@ -276,7 +281,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   }
 
   Future<void> _loadNoCfIdentityResolutionPending() async {
-    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading) {
+    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading || _migration1SearchPrefixesRepairLoading) {
       return;
     }
 
@@ -322,7 +327,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   Future<void> _openNoCfIdentityResolutionDialog(
     RealAssistitiNoCfIdentityResolutionPendingItem item,
   ) async {
-    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading) {
+    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading || _migration1SearchPrefixesRepairLoading) {
       return;
     }
 
@@ -381,7 +386,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
   }
 
   Future<void> _runMigration1FirestoreReport() async {
-    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading) {
+    if (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading || _migration1SearchPrefixesRepairLoading) {
       return;
     }
 
@@ -394,6 +399,8 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
       _migration1ReportLoading = true;
       _migration1ReportError = null;
       _migration1ReportResult = null;
+      _migration1SearchPrefixesRepairError = null;
+      _migration1SearchPrefixesRepairResult = null;
     });
 
     try {
@@ -419,6 +426,65 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
     }
   }
 
+  Future<void> _repairMigration1SearchPrefixes() async {
+    if (_loading ||
+        _copying ||
+        _nocfCopying ||
+        _nocfIdentityLoading ||
+        _migration1ReportLoading ||
+        _migration1SearchPrefixesRepairLoading) {
+      return;
+    }
+
+    final RealAssistitiMigration1DataReportResult? report = _migration1ReportResult;
+    final List<String> assistitoIds = _migration1SearchPrefixesRepairCandidateIds(report);
+    if (assistitoIds.isEmpty) {
+      setState(() {
+        _migration1SearchPrefixesRepairError = const _FrontendCopyRejectedException(
+          code: 'migration1_search_prefixes_repair_candidates_empty',
+          message: 'Nessun documento eleggibile per cleanup mirato searchPrefixes.',
+        );
+        _migration1SearchPrefixesRepairResult = null;
+      });
+      return;
+    }
+
+    final TenantSession session = TenantSessionScope.of(context);
+    final RealAssistitiMigration1SearchPrefixesRepairWriter writer =
+        RealAssistitiMigration1SearchPrefixesRepairWriter(firestore: FirebaseFirestore.instance);
+    final int requestToken = ++_migration1SearchPrefixesRepairRequestSerial;
+
+    setState(() {
+      _migration1SearchPrefixesRepairLoading = true;
+      _migration1SearchPrefixesRepairError = null;
+      _migration1SearchPrefixesRepairResult = null;
+    });
+
+    try {
+      final RealAssistitiMigration1SearchPrefixesRepairResult result =
+          await writer.repairByAssistitoIds(
+        tenantId: session.tenantId,
+        assistitoIds: assistitoIds,
+      );
+      if (!mounted || requestToken != _migration1SearchPrefixesRepairRequestSerial) {
+        return;
+      }
+      setState(() {
+        _migration1SearchPrefixesRepairResult = result;
+        _migration1SearchPrefixesRepairLoading = false;
+      });
+    } catch (error) {
+      if (!mounted || requestToken != _migration1SearchPrefixesRepairRequestSerial) {
+        return;
+      }
+      setState(() {
+        _migration1SearchPrefixesRepairError = error;
+        _migration1SearchPrefixesRepairResult = null;
+        _migration1SearchPrefixesRepairLoading = false;
+      });
+    }
+  }
+
   Future<RealAssistitiDryRunPreviewResult?> _loadDryRunDiagnostic({
     required String tenantId,
     required List<String> fiscalCodes,
@@ -434,6 +500,32 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
     } catch (_) {
       return null;
     }
+  }
+
+  static List<String> _migration1SearchPrefixesRepairCandidateIds(
+    RealAssistitiMigration1DataReportResult? report,
+  ) {
+    if (report == null || report.items.isEmpty || !report.hasFailures) {
+      return const <String>[];
+    }
+    final List<String> assistitoIds = <String>[];
+    for (final RealAssistitiMigration1DataReportItem item in report.items) {
+      if (!item.failed) {
+        continue;
+      }
+      final bool eligibleFailure = item.isNoCf &&
+          item.resolvedManual &&
+          item.mismatchReasons.length == 1 &&
+          item.mismatchReasons.contains('target_search_prefixes_mismatch');
+      if (!eligibleFailure) {
+        return const <String>[];
+      }
+      assistitoIds.add(item.documentId);
+      if (assistitoIds.length > RealAssistitiMigration1SearchPrefixesRepairWriter.maxAssistitiPerRun) {
+        return const <String>[];
+      }
+    }
+    return List<String>.unmodifiable(assistitoIds);
   }
 
   static String _formatDryRunBlockingReasons(RealAssistitiDryRunPreviewResult result) {
@@ -509,7 +601,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
                 controller: _cfController,
                 loading: _loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading,
                 legacyFallbackEnabled: _enableLegacyFallback,
-                onLegacyFallbackChanged: (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading)
+                onLegacyFallbackChanged: (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading || _migration1SearchPrefixesRepairLoading)
                     ? null
                     : (bool value) {
                         setState(() {
@@ -541,7 +633,7 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
           copying: _nocfCopying,
           copyError: _nocfCopyError,
           copyResult: _nocfCopyResult,
-          onCopyConfirmedChanged: (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading)
+          onCopyConfirmedChanged: (_loading || _copying || _nocfCopying || _nocfIdentityLoading || _migration1ReportLoading || _migration1SearchPrefixesRepairLoading)
               ? null
               : (bool value) {
                   setState(() {
@@ -563,9 +655,13 @@ class _TargetAssistitiReadOnlyPageState extends State<TargetAssistitiReadOnlyPag
         const SizedBox(height: 16),
         _Migration1FirestoreReportPanel(
           loading: _migration1ReportLoading,
+          repairLoading: _migration1SearchPrefixesRepairLoading,
           error: _migration1ReportError,
+          repairError: _migration1SearchPrefixesRepairError,
           result: _migration1ReportResult,
+          repairResult: _migration1SearchPrefixesRepairResult,
           onRun: _runMigration1FirestoreReport,
+          onRepairSearchPrefixes: _repairMigration1SearchPrefixes,
         ),
         const SizedBox(height: 16),
         _buildCfBody(copyCandidateFiscalCodes),
@@ -974,21 +1070,34 @@ class _NoCfCopyPanel extends StatelessWidget {
 
 class _Migration1FirestoreReportPanel extends StatelessWidget {
   final bool loading;
+  final bool repairLoading;
   final Object? error;
+  final Object? repairError;
   final RealAssistitiMigration1DataReportResult? result;
+  final RealAssistitiMigration1SearchPrefixesRepairResult? repairResult;
   final VoidCallback onRun;
+  final VoidCallback onRepairSearchPrefixes;
 
   const _Migration1FirestoreReportPanel({
     required this.loading,
+    required this.repairLoading,
     required this.error,
+    required this.repairError,
     required this.result,
+    required this.repairResult,
     required this.onRun,
+    required this.onRepairSearchPrefixes,
   });
 
   @override
   Widget build(BuildContext context) {
     final Object? reportError = error;
+    final Object? repairFailure = repairError;
     final RealAssistitiMigration1DataReportResult? report = result;
+    final RealAssistitiMigration1SearchPrefixesRepairResult? repair = repairResult;
+    final List<String> repairCandidateIds =
+        _TargetAssistitiReadOnlyPageState._migration1SearchPrefixesRepairCandidateIds(report);
+    final bool canRepairSearchPrefixes = repairCandidateIds.isNotEmpty && !loading && !repairLoading;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
@@ -1031,7 +1140,7 @@ class _Migration1FirestoreReportPanel extends StatelessWidget {
               ),
               const SizedBox(width: 10),
               FilledButton.icon(
-                onPressed: loading ? null : onRun,
+                onPressed: (loading || repairLoading) ? null : onRun,
                 icon: loading
                     ? const SizedBox(
                         width: 16,
@@ -1040,6 +1149,18 @@ class _Migration1FirestoreReportPanel extends StatelessWidget {
                       )
                     : const Icon(Icons.analytics_rounded),
                 label: Text(loading ? 'Report...' : 'Esegui report Migration 1'),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: canRepairSearchPrefixes ? onRepairSearchPrefixes : null,
+                icon: repairLoading
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.build_rounded),
+                label: Text(repairLoading ? 'Riparo...' : 'Ripara searchPrefixes'),
               ),
             ],
           ),
@@ -1058,10 +1179,81 @@ class _Migration1FirestoreReportPanel extends StatelessWidget {
               content: _formatMigration1ReportFeedback(report),
               warning: report.hasFailures,
             ),
+            if (report.hasFailures) ...<Widget>[
+              const SizedBox(height: 8),
+              Text(
+                repairCandidateIds.isEmpty
+                    ? 'Cleanup automatico non disponibile: errori non limitati al solo target_search_prefixes_mismatch NOCF risolto, oppure oltre hard cap 2.'
+                    : 'Cleanup disponibile: ${repairCandidateIds.length} documento/i NOCF con solo searchPrefixes mismatch.',
+                style: const TextStyle(
+                  color: AppColors.textMuted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ],
+          if (repairFailure != null) ...<Widget>[
+            const SizedBox(height: 10),
+            _CopyableFeedbackBlock(
+              title: 'Errore cleanup searchPrefixes',
+              content: _formatMigration1RepairError(repairFailure),
+              warning: true,
+            ),
+          ],
+          if (repair != null) ...<Widget>[
+            const SizedBox(height: 10),
+            _CopyableFeedbackBlock(
+              title: 'Output copiabile cleanup searchPrefixes',
+              content: _formatMigration1RepairFeedback(repair),
+              warning: repair.skippedCount > 0,
+            ),
           ],
         ],
       ),
     );
+  }
+
+  static String _formatMigration1RepairError(Object error) {
+    return <String>[
+      'MIGRATION_1_SEARCH_PREFIXES_REPAIR_ERROR',
+      'error=${error.toString()}',
+    ].join('\n');
+  }
+
+  static String _formatMigration1RepairFeedback(
+    RealAssistitiMigration1SearchPrefixesRepairResult result,
+  ) {
+    final StringBuffer buffer = StringBuffer()
+      ..writeln('MIGRATION_1_SEARCH_PREFIXES_REPAIR')
+      ..writeln('tenantId=${result.tenantId}')
+      ..writeln('requestedCount=${result.requestedAssistitoIds.length}')
+      ..writeln('maxAssistitiPerRun=${RealAssistitiMigration1SearchPrefixesRepairWriter.maxAssistitiPerRun}')
+      ..writeln('repairedCount=${result.repairedCount}')
+      ..writeln('skippedCount=${result.skippedCount}')
+      ..writeln('attemptedReads=${result.attemptedReads}')
+      ..writeln('attemptedWrites=${result.attemptedWrites}')
+      ..writeln('targetCollection=tenants/{tenantId}/assistiti')
+      ..writeln('updatedFields=searchPrefixes')
+      ..writeln('items=');
+
+    if (result.items.isEmpty) {
+      buffer.writeln('- none');
+    } else {
+      for (final RealAssistitiMigration1SearchPrefixesRepairItem item in result.items) {
+        buffer
+          ..writeln('- assistitoId=${item.assistitoId}')
+          ..writeln('  repaired=${item.repaired}')
+          ..writeln('  skipped=${item.skipped}')
+          ..writeln('  skipReason=${item.skipReason.isEmpty ? 'none' : item.skipReason}')
+          ..writeln('  fullName=${item.fullName}')
+          ..writeln('  expectedSearchPrefixesCount=${item.expectedSearchPrefixesCount}')
+          ..writeln('  attemptedReads=${item.attemptedReads}')
+          ..writeln('  attemptedWrites=${item.attemptedWrites}');
+      }
+    }
+
+    return buffer.toString().trimRight();
   }
 
   static String _formatMigration1ReportError(Object error) {
