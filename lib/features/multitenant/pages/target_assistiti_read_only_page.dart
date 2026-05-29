@@ -987,6 +987,7 @@ class _Migration1FirestoreReportPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final Object? reportError = error;
     final RealAssistitiMigration1DataReportResult? report = result;
     return Container(
       width: double.infinity,
@@ -1042,11 +1043,11 @@ class _Migration1FirestoreReportPanel extends StatelessWidget {
               ),
             ],
           ),
-          if (error != null) ...<Widget>[
+          if (reportError != null) ...<Widget>[
             const SizedBox(height: 10),
             _CopyableFeedbackBlock(
               title: 'Errore report Migration 1',
-              content: _formatMigration1ReportError(error),
+              content: _formatMigration1ReportError(reportError),
               warning: true,
             ),
           ],
