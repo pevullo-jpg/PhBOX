@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../data/multitenant/mappers/real_assistiti_target_preview_mapper.dart';
 import '../../../data/multitenant/readers/assistiti_target_with_legacy_fallback_reader.dart';
 import '../../../data/multitenant/readers/real_assistiti_dry_run_preview_reader.dart';
 import '../../../data/multitenant/readers/real_assistiti_nocf_identity_resolution_reader.dart';
@@ -1305,7 +1306,76 @@ class _Migration1FirestoreReportPanel extends StatelessWidget {
       }
     }
 
+    _appendMigration1SearchPrefixesDiff(buffer, report);
+
     return buffer.toString().trimRight();
+  }
+
+  static void _appendMigration1SearchPrefixesDiff(
+    StringBuffer buffer,
+    RealAssistitiMigration1DataReportResult report,
+  ) {
+    final List<RealAssistitiMigration1DataReportItem> staleItems = report.items
+        .where(
+          (RealAssistitiMigration1DataReportItem item) =>
+              item.mismatchReasons.contains('target_search_prefixes_mismatch'),
+        )
+        .toList(growable: false);
+
+    if (staleItems.isEmpty) {
+      return;
+    }
+
+    buffer.writeln('searchPrefixesDiff=');
+    for (final RealAssistitiMigration1DataReportItem item in staleItems) {
+      final List<String> expectedSearchPrefixes =
+          RealAssistitiTargetPreviewMapper.buildSearchPrefixes(item.fullName);
+      final int firstMismatchIndex = _firstMismatchIndex(
+        actual: item.searchPrefixes,
+        expected: expectedSearchPrefixes,
+      );
+      buffer
+        ..writeln('- assistitoId=${item.assistitoId}')
+        ..writeln('  documentId=${item.documentId}')
+        ..writeln('  fullName=${item.fullName}')
+        ..writeln('  actualSearchPrefixesCount=${item.searchPrefixes.length}')
+        ..writeln('  expectedSearchPrefixesCount=${expectedSearchPrefixes.length}')
+        ..writeln('  firstMismatchIndex=$firstMismatchIndex')
+        ..writeln('  actualSearchPrefixes=');
+      _appendIndentedStringList(buffer, item.searchPrefixes, indent: '  ');
+      buffer.writeln('  expectedSearchPrefixes=');
+      _appendIndentedStringList(buffer, expectedSearchPrefixes, indent: '  ');
+    }
+  }
+
+  static int _firstMismatchIndex({
+    required List<String> actual,
+    required List<String> expected,
+  }) {
+    final int shortestLength = actual.length < expected.length ? actual.length : expected.length;
+    for (int index = 0; index < shortestLength; index++) {
+      if (actual[index] != expected[index]) {
+        return index;
+      }
+    }
+    if (actual.length != expected.length) {
+      return shortestLength;
+    }
+    return -1;
+  }
+
+  static void _appendIndentedStringList(
+    StringBuffer buffer,
+    List<String> values, {
+    required String indent,
+  }) {
+    if (values.isEmpty) {
+      buffer.writeln('$indent- none');
+      return;
+    }
+    for (final String value in values) {
+      buffer.writeln('$indent- $value');
+    }
   }
 }
 
