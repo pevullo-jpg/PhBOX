@@ -163,6 +163,34 @@
         <label class="check"><input id="acceptRecipesWithoutCity" type="checkbox"> Accettare sempre ricette senza città</label>
       </section>
 
+
+      <section class="card" style="margin-top:16px;">
+        <h2>M1-SHADOW TEST BACKEND</h2>
+        <div class="hint">Controlli temporanei Migration 1. Default sicuro: shadow OFF. Nessuna pubblicazione da target.</div>
+
+        <label class="check"><input id="migration1ShadowTargetEnabled" type="checkbox"> Abilita shadow target read-only</label>
+
+        <label for="migration1ShadowTenantId">PHBOX_TENANT_ID</label>
+        <input id="migration1ShadowTenantId" type="text" autocomplete="off" placeholder="farmacia-santa-venera-8xnoc">
+        <div class="hint">Lascia vuoto per il test tenant mancante. Non usare slash salvo test specifico.</div>
+
+        <label for="migration1ShadowExpectedCanonicalTenantId">PHBOX_EXPECTED_CANONICAL_TENANT_ID</label>
+        <input id="migration1ShadowExpectedCanonicalTenantId" type="text" autocomplete="off" placeholder="farmacia-santa-venera-8xnoc">
+
+        <label for="migration1ShadowMaxAssistitiScan">PHBOX_M1_SHADOW_MAX_ASSISTITI_SCAN</label>
+        <input id="migration1ShadowMaxAssistitiScan" type="text" autocomplete="off" placeholder="25">
+        <div class="hint">Valore consigliato per test: 25. Hard cap backend: 100.</div>
+
+        <div class="actions" style="margin:14px 0 0;">
+          <button class="secondary" type="button" onclick="applyM1ShadowPreset('off')">Test 1 OFF</button>
+          <button class="secondary" type="button" onclick="applyM1ShadowPreset('missing')">Test 2 tenant mancante</button>
+          <button class="secondary" type="button" onclick="applyM1ShadowPreset('slash')">Test 3 slash</button>
+          <button class="secondary" type="button" onclick="applyM1ShadowPreset('mismatch')">Test 4 mismatch</button>
+          <button class="secondary" type="button" onclick="applyM1ShadowPreset('valid')">Test 5 tenant corretto</button>
+        </div>
+        <div class="hint">Dopo aver scelto un preset, clicca “Salva impostazioni”, poi esegui runPhboxBackendSimple.</div>
+      </section>
+
       <section class="card" style="margin-top:16px;">
         <h2>FEEDBACK</h2>
         <textarea id="feedback" class="feedback" readonly></textarea>
@@ -197,7 +225,11 @@
           scanSpam: document.getElementById('scanSpam').checked,
           trashValidEmails: document.getElementById('trashValidEmails').checked,
           acceptedCitiesText: document.getElementById('acceptedCities').value,
-          acceptRecipesWithoutCity: document.getElementById('acceptRecipesWithoutCity').checked
+          acceptRecipesWithoutCity: document.getElementById('acceptRecipesWithoutCity').checked,
+          migration1ShadowTargetEnabled: document.getElementById('migration1ShadowTargetEnabled').checked,
+          migration1ShadowTenantId: document.getElementById('migration1ShadowTenantId').value,
+          migration1ShadowExpectedCanonicalTenantId: document.getElementById('migration1ShadowExpectedCanonicalTenantId').value,
+          migration1ShadowMaxAssistitiScan: document.getElementById('migration1ShadowMaxAssistitiScan').value
         };
       }
 
@@ -227,7 +259,53 @@
         document.getElementById('trashValidEmails').checked = !!settings.trashValidEmails;
         document.getElementById('acceptedCities').value = settings.acceptedCitiesText || '';
         document.getElementById('acceptRecipesWithoutCity').checked = !!settings.acceptRecipesWithoutCity;
+        document.getElementById('migration1ShadowTargetEnabled').checked = !!settings.migration1ShadowTargetEnabled;
+        document.getElementById('migration1ShadowTenantId').value = settings.migration1ShadowTenantId || '';
+        document.getElementById('migration1ShadowExpectedCanonicalTenantId').value = settings.migration1ShadowExpectedCanonicalTenantId || '';
+        document.getElementById('migration1ShadowMaxAssistitiScan').value = settings.migration1ShadowMaxAssistitiScan || '';
         document.getElementById('feedback').value = (data && data.feedback) || '';
+      }
+
+
+      function applyM1ShadowPreset(kind) {
+        const canonicalTenant = 'farmacia-santa-venera-8xnoc';
+        const enabled = document.getElementById('migration1ShadowTargetEnabled');
+        const tenantId = document.getElementById('migration1ShadowTenantId');
+        const expectedTenantId = document.getElementById('migration1ShadowExpectedCanonicalTenantId');
+        const maxScan = document.getElementById('migration1ShadowMaxAssistitiScan');
+
+        if (kind === 'off') {
+          enabled.checked = false;
+          tenantId.value = '';
+          expectedTenantId.value = '';
+          maxScan.value = '';
+          setStatus('Preset M1-SHADOW OFF applicato. Ora salva impostazioni.', 'ok');
+          return;
+        }
+
+        enabled.checked = true;
+        expectedTenantId.value = canonicalTenant;
+        maxScan.value = '25';
+
+        if (kind === 'missing') {
+          tenantId.value = '';
+          setStatus('Preset tenant mancante applicato. Ora salva impostazioni.', 'ok');
+          return;
+        }
+        if (kind === 'slash') {
+          tenantId.value = 'farmacia/santa-venera';
+          setStatus('Preset tenant con slash applicato. Ora salva impostazioni.', 'ok');
+          return;
+        }
+        if (kind === 'mismatch') {
+          tenantId.value = 'farmacia-sbagliata';
+          setStatus('Preset tenant mismatch applicato. Ora salva impostazioni.', 'ok');
+          return;
+        }
+        if (kind === 'valid') {
+          tenantId.value = canonicalTenant;
+          setStatus('Preset tenant corretto applicato. Ora salva impostazioni.', 'ok');
+        }
       }
 
       function loadSettings() {
