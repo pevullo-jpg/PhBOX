@@ -9,6 +9,8 @@ async function runPhboxBackendSimple() {
     var rootFolder = DriveApp.getFolderById(cfg.folderId);
     var runtimeIndex = readRuntimeIndex_(rootFolder, cfg);
 
+    var migration1ShadowStage = await runMigration1TargetShadowReadOnlyStage_({ cfg: cfg, budget: budget });
+
     var gmailStage = await runProtectedStage_('gmail_ingest', function () {
       return ingestPrescriptionEmails_({ budget: budget, runtimeIndex: runtimeIndex });
     }, cfg);
@@ -72,6 +74,7 @@ async function runPhboxBackendSimple() {
     var result = {
       ok: true,
       runtimeGate: runtimeGate,
+      migration1Shadow: normalizeStageSummary_(migration1ShadowStage, { skipped: true, reason: 'stage_error', stoppedEarly: true }),
       gmail: normalizeStageSummary_(gmailStage, { skipped: true, reason: 'stage_error', stoppedEarly: true }),
       manifestsSeen: collectRuntimeManifests_(runtimeIndex).length,
       manifests: normalizeStageSummary_(manifestStage, { skipped: true, reason: 'stage_error', stoppedEarly: true }),
