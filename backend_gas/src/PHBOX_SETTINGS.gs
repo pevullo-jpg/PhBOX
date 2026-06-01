@@ -32,8 +32,13 @@ function savePhboxSettings(payload) {
     PHBOX_TRASH_VALID_EMAILS: String(normalized.trashValidEmails),
     PHBOX_ACCEPTED_CITIES: normalized.acceptedCities.join('\n'),
     PHBOX_ACCEPT_RECIPES_WITHOUT_CITY: String(normalized.acceptRecipesWithoutCity),
-    PHBOX_STRICT_ACCEPTED_CITIES_FOR_GMAIL: String(normalized.acceptedCities.length > 0)
+    PHBOX_STRICT_ACCEPTED_CITIES_FOR_GMAIL: String(normalized.acceptedCities.length > 0),
+    PHBOX_M1_SHADOW_TARGET_ENABLED: String(normalized.migration1ShadowTargetEnabled)
   }, false);
+
+  setOrDeletePhboxSettingsProperty_(props, 'PHBOX_TENANT_ID', normalized.migration1ShadowTenantId);
+  setOrDeletePhboxSettingsProperty_(props, 'PHBOX_EXPECTED_CANONICAL_TENANT_ID', normalized.migration1ShadowExpectedCanonicalTenantId);
+  setOrDeletePhboxSettingsProperty_(props, 'PHBOX_M1_SHADOW_MAX_ASSISTITI_SCAN', normalized.migration1ShadowMaxAssistitiScan);
 
   var cfg = getPhboxConfig_();
   writePhboxSettingsFeedback_(buildPhboxSettingsFeedback_({
@@ -73,7 +78,11 @@ function serializePhboxSettingsForUi_(cfg) {
     scanSpam: !!cfg.scanSpam,
     trashValidEmails: !!cfg.trashValidEmails,
     acceptedCitiesText: (cfg.acceptedCities || []).join('\n'),
-    acceptRecipesWithoutCity: !!cfg.acceptRecipesWithoutCity
+    acceptRecipesWithoutCity: !!cfg.acceptRecipesWithoutCity,
+    migration1ShadowTargetEnabled: readPhboxSettingsBoolProperty_('PHBOX_M1_SHADOW_TARGET_ENABLED'),
+    migration1ShadowTenantId: readPhboxSettingsProperty_('PHBOX_TENANT_ID'),
+    migration1ShadowExpectedCanonicalTenantId: readPhboxSettingsProperty_('PHBOX_EXPECTED_CANONICAL_TENANT_ID'),
+    migration1ShadowMaxAssistitiScan: readPhboxSettingsProperty_('PHBOX_M1_SHADOW_MAX_ASSISTITI_SCAN')
   };
 }
 
@@ -98,7 +107,11 @@ function normalizePhboxSettingsPayload_(payload) {
     acceptedCities: parseNormalizedListProperty_(payload.acceptedCitiesText, function (item) {
       return normalizeToken_(item);
     }),
-    acceptRecipesWithoutCity: !!payload.acceptRecipesWithoutCity
+    acceptRecipesWithoutCity: !!payload.acceptRecipesWithoutCity,
+    migration1ShadowTargetEnabled: !!payload.migration1ShadowTargetEnabled,
+    migration1ShadowTenantId: normalizePhboxSingleLineSettingsValue_(payload.migration1ShadowTenantId, 'PHBOX_TENANT_ID', 160),
+    migration1ShadowExpectedCanonicalTenantId: normalizePhboxSingleLineSettingsValue_(payload.migration1ShadowExpectedCanonicalTenantId, 'PHBOX_EXPECTED_CANONICAL_TENANT_ID', 160),
+    migration1ShadowMaxAssistitiScan: normalizePhboxM1ShadowMaxScanForSettings_(payload.migration1ShadowMaxAssistitiScan)
   };
 }
 
@@ -109,6 +122,44 @@ function normalizePhboxOperationalAccountEmailForSettings_(value) {
     throw new Error('Account Gmail operativo backend non valido.');
   }
   return email;
+}
+
+function readPhboxSettingsProperty_(name) {
+  return String(PropertiesService.getScriptProperties().getProperty(name) || '');
+}
+
+function readPhboxSettingsBoolProperty_(name) {
+  return /^true$/i.test(readPhboxSettingsProperty_(name).trim());
+}
+
+function setOrDeletePhboxSettingsProperty_(props, name, value) {
+  var text = String(value || '');
+  if (!text) {
+    props.deleteProperty(name);
+    return;
+  }
+  props.setProperty(name, text);
+}
+
+function normalizePhboxSingleLineSettingsValue_(value, fieldName, maxLength) {
+  var text = String(value || '');
+  if (/\r|\n/.test(text)) {
+    throw new Error(fieldName + ' deve stare su una sola riga.');
+  }
+  if (text.length > Number(maxLength || 160)) {
+    throw new Error(fieldName + ' troppo lungo.');
+  }
+  return text;
+}
+
+function normalizePhboxM1ShadowMaxScanForSettings_(value) {
+  var text = String(value || '').trim();
+  if (!text) return '';
+  var parsed = parseInt(text, 10);
+  if (isNaN(parsed) || parsed <= 0) {
+    throw new Error('PHBOX_M1_SHADOW_MAX_ASSISTITI_SCAN deve essere un numero positivo.');
+  }
+  return String(Math.min(100, parsed));
 }
 
 function getPhboxSettingsFeedback_() {
@@ -139,6 +190,10 @@ function buildPhboxSettingsFeedback_(options) {
   lines.push('EXCLUDED_SENDERS_COUNT: ' + String((cfg.excludedEmailSenders || []).length));
   lines.push('ACCEPTED_CITIES_COUNT: ' + String((cfg.acceptedCities || []).length));
   lines.push('ACCEPT_RECIPES_WITHOUT_CITY: ' + String(!!cfg.acceptRecipesWithoutCity));
+  lines.push('M1_SHADOW_TARGET_ENABLED: ' + String(readPhboxSettingsBoolProperty_('PHBOX_M1_SHADOW_TARGET_ENABLED')));
+  lines.push('M1_SHADOW_TENANT_ID: ' + readPhboxSettingsProperty_('PHBOX_TENANT_ID'));
+  lines.push('M1_SHADOW_EXPECTED_CANONICAL_TENANT_ID: ' + readPhboxSettingsProperty_('PHBOX_EXPECTED_CANONICAL_TENANT_ID'));
+  lines.push('M1_SHADOW_MAX_ASSISTITI_SCAN: ' + readPhboxSettingsProperty_('PHBOX_M1_SHADOW_MAX_ASSISTITI_SCAN'));
   lines.push('GMAIL_QUERY_PREVIEW: ' + buildGmailQuery_(cfg, cfg.gmailProcessedLabel));
 
   if (options.diagnosis) {

@@ -90,3 +90,23 @@ Da eseguire per ogni fix che modifica lo shadow-mode Migration 1.
   - `migration1Shadow.publishFromTarget=false`;
   - `migration1Shadow.lifecycleTouched=false`.
 - Il fallback usato da `normalizeStageSummary_` per M1-SHADOW deve essere `buildMigration1ShadowReadOnlyErrorFallback_()` o equivalente, non un fallback generico privo dei contatori read/write.
+
+## M1-SHADOW — impostazioni da pagina backend
+
+Per i test M1-SHADOW non usare direttamente Script Properties se la UI è disponibile.
+
+1. Aprire la pagina `SETTINGS` del backend.
+2. Usare il pannello `M1-SHADOW TEST BACKEND`.
+3. Scegliere il preset richiesto:
+   - `Test 1 OFF`
+   - `Test 2 tenant mancante`
+   - `Test 3 slash`
+   - `Test 4 mismatch`
+   - `Test 5 tenant corretto`
+4. Cliccare sempre `Salva impostazioni` prima di eseguire `runPhboxBackendSimple`.
+5. Verificare nel feedback che le proprietà siano coerenti:
+   - `M1_SHADOW_TARGET_ENABLED`
+   - `M1_SHADOW_TENANT_ID`
+   - `M1_SHADOW_EXPECTED_CANONICAL_TENANT_ID`
+   - `M1_SHADOW_MAX_ASSISTITI_SCAN`
+6. La UI settings può creare/aggiornare solo Script Properties. Non deve eseguire `runPhboxBackendSimple` automaticamente.
