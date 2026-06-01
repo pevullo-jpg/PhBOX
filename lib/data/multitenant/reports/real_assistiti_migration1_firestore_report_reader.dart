@@ -23,6 +23,7 @@ class RealAssistitiMigration1FirestoreReportReader {
       RealAssistitiMigration1DataReportReader.maxInputDocuments;
   static const int maxFirestoreReadsPerRun = defaultMaxAssistitiScan;
   static const int firestoreWritesPerRun = 0;
+  static const GetOptions migrationReportGetOptions = GetOptions(source: Source.server);
 
   final FirebaseFirestore firestore;
 
@@ -41,7 +42,7 @@ class RealAssistitiMigration1FirestoreReportReader {
     final QuerySnapshot<Map<String, dynamic>> snapshot = await firestore
         .collection(collectionPath)
         .limit(safeMaxAssistitiScan)
-        .get(const GetOptions(source: Source.serverAndCache));
+        .get(migrationReportGetOptions);
 
     final List<RealAssistitiMigration1DataReportRawDocument> rawDocuments =
         <RealAssistitiMigration1DataReportRawDocument>[];
