@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:farmacia_desk_web/data/multitenant/mappers/real_assistiti_target_preview_mapper.dart';
 import 'package:farmacia_desk_web/data/multitenant/reports/real_assistiti_migration1_data_report_reader.dart';
@@ -5,6 +6,13 @@ import 'package:farmacia_desk_web/data/multitenant/reports/real_assistiti_migrat
 
 void main() {
   group('RealAssistitiMigration1FirestoreReportReader', () {
+    test('uses server-only reads for Migration 1 gate reports', () {
+      expect(
+        RealAssistitiMigration1FirestoreReportReader.migrationReportGetOptions.source,
+        Source.server,
+      );
+    });
+
     test('normalizes max assistiti scan within the declared hard cap', () {
       expect(
         RealAssistitiMigration1FirestoreReportReader.normalizeMaxAssistitiScan(-1),
