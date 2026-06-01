@@ -560,11 +560,11 @@ class RealAssistitiMigration1DataReportReader {
           exceeded: true,
         );
       }
-      final String normalized = _readString(item);
-      if (normalized.isEmpty) {
+      final String prefix = _readSearchPrefix(item);
+      if (prefix.trim().isEmpty) {
         continue;
       }
-      result.add(normalized);
+      result.add(prefix);
     }
     return _BoundedStringListRead(
       values: List<String>.unmodifiable(result),
@@ -598,6 +598,10 @@ class RealAssistitiMigration1DataReportReader {
 
   static String _readString(Object? value) {
     return value?.toString().trim() ?? '';
+  }
+
+  static String _readSearchPrefix(Object? value) {
+    return value?.toString() ?? '';
   }
 
   static bool _readBool(Object? value) {
