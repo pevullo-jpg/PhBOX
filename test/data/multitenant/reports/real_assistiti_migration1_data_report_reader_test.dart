@@ -85,6 +85,30 @@ void main() {
       expect(item.resolvedManual, isTrue);
     });
 
+    test('preserves trailing spaces in searchPrefixes before comparison', () {
+      final List<String> expectedSearchPrefixes =
+          RealAssistitiTargetPreviewMapper.buildSearchPrefixes('Fantauzzo Amedeo');
+      expect(expectedSearchPrefixes, contains('fantauzzo '));
+
+      final RealAssistitiMigration1DataReportItem item =
+          RealAssistitiMigration1DataReportReader.verifyRawDocument(
+        documentId: 'assistito-1',
+        rawData: _validNoCfPayload(
+          assistitoId: 'assistito-1',
+          fullName: 'Fantauzzo Amedeo',
+          nome: 'Amedeo',
+          cognome: 'Fantauzzo',
+          rootStatus: 'resolved_manual',
+          nestedStatus: 'resolved_manual',
+          nameSplitConfidence: 'resolved_manual_nocf_identity',
+        ),
+      );
+
+      expect(item.searchPrefixes, contains('fantauzzo '));
+      expect(item.verified, isTrue);
+      expect(item.mismatchReasons, isEmpty);
+    });
+
     test('rejects non-manual root status even when nested status is manual', () {
       final RealAssistitiMigration1DataReportItem item =
           RealAssistitiMigration1DataReportReader.verifyRawDocument(
