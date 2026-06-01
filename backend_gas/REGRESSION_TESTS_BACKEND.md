@@ -29,84 +29,27 @@ Una modifica backend è candidata al rilascio solo se:
 - Il backend GAS è presente in `backend_gas/src` come copia sorgente versionata; la produzione resta Apps Script e l’allineamento con la versione deployata va verificato.
 - Nessun `clasp push`, `clasp deploy` o GitHub Actions verso Apps Script è autorizzato.
 
-## M1-SHADOW — test manuale obbligatorio
+## M1-IDRES — test manuale obbligatorio
 
-Da eseguire per ogni fix che modifica lo shadow-mode Migration 1.
+Da eseguire per ogni fix che modifica il resolver identità Migration 1.
 
-1. `PHBOX_M1_SHADOW_TARGET_ENABLED` assente o diverso da `true`:
-   - `migration1Shadow.enabled=false`
-   - `migration1Shadow.firestoreReads=0`
-   - nessun path `tenants/{tenantId}/assistiti` viene costruito, esposto o letto;
-   - il summary disabled non contiene `targetCollection`.
-2. `PHBOX_M1_SHADOW_TARGET_ENABLED=true` con `PHBOX_TENANT_ID` mancante:
-   - stage `migration1_target_shadow` fallisce in modo diagnostico;
-   - `migration1Shadow.firestoreReads=0`;
-   - `migration1Shadow.firestoreWrites=0`;
-   - `migration1Shadow.publishFromTarget=false`;
-   - nessuna target read viene eseguita;
-   - nessun write diagnostico su `phbox_runtime` o `phbox_signals` viene eseguito.
-3. `PHBOX_M1_SHADOW_TARGET_ENABLED=true` con `PHBOX_TENANT_ID` vuoto:
-   - stage `migration1_target_shadow` fallisce in modo diagnostico;
-   - `migration1Shadow.firestoreReads=0`;
-   - `migration1Shadow.firestoreWrites=0`;
-   - `migration1Shadow.publishFromTarget=false`;
-   - nessuna target read viene eseguita;
-   - nessun write diagnostico su `phbox_runtime` o `phbox_signals` viene eseguito.
-4. `PHBOX_M1_SHADOW_TARGET_ENABLED=true` con `PHBOX_TENANT_ID` contenente `/`:
-   - stage `migration1_target_shadow` fallisce in modo diagnostico;
-   - `migration1Shadow.firestoreReads=0`;
-   - `migration1Shadow.firestoreWrites=0`;
-   - `migration1Shadow.publishFromTarget=false`;
-   - nessuna target read viene eseguita;
-   - nessun write diagnostico su `phbox_runtime` o `phbox_signals` viene eseguito.
-5. `PHBOX_M1_SHADOW_TARGET_ENABLED=true` con `PHBOX_TENANT_ID` diverso da `PHBOX_EXPECTED_CANONICAL_TENANT_ID`:
-   - stage `migration1_target_shadow` fallisce in modo diagnostico;
-   - `migration1Shadow.firestoreReads=0`;
-   - `migration1Shadow.firestoreWrites=0`;
-   - `migration1Shadow.publishFromTarget=false`;
-   - nessuna target read viene eseguita;
-   - nessun write diagnostico su `phbox_runtime` o `phbox_signals` viene eseguito.
-6. `PHBOX_M1_SHADOW_TARGET_ENABLED=true` con tenant canonico validato:
-   - una sola lettura bounded su `tenants/{tenantId}/assistiti`;
-   - `migration1Shadow.firestoreReads <= 100`;
-   - `migration1Shadow.firestoreWrites=0`;
-   - `publishFromTarget=false`;
-   - nessun Gmail/Drive/OCR/parser/merge/rename viene modificato.
-7. Verificare che il backend legacy continui a pubblicare solo sui path legacy finché M1-PUB non è autorizzato.
-
-
-## M1-SHADOW — invariant P2 Codex #346
-
-- Lo stage `migration1_target_shadow` non deve essere eseguito tramite `runProtectedStage_`, perché quella wrapper può pubblicare snapshot autorizzativi su `phbox_runtime/main` in caso di errore authorization.
-- Gli errori shadow devono restare diagnostici/read-only: `firestoreWrites=0`, nessuna modifica a `phbox_runtime`, nessuna modifica a `phbox_signals`.
-- Quando il gate shadow è OFF, il risultato non deve includere `targetCollection` né altri path target materializzati.
-
-
-## M1-SHADOW — invariant P2 Codex #347
-
-- Anche quando `migration1_target_shadow` fallisce, il summary normalizzato deve preservare diagnostica read-only esplicita:
-  - `migration1Shadow.firestoreReads=0`;
-  - `migration1Shadow.firestoreWrites=0`;
-  - `migration1Shadow.publishFromTarget=false`;
-  - `migration1Shadow.lifecycleTouched=false`.
-- Il fallback usato da `normalizeStageSummary_` per M1-SHADOW deve essere `buildMigration1ShadowReadOnlyErrorFallback_()` o equivalente, non un fallback generico privo dei contatori read/write.
-
-## M1-SHADOW — impostazioni da pagina backend
-
-Per i test M1-SHADOW non usare direttamente Script Properties se la UI è disponibile.
-
-1. Aprire la pagina `SETTINGS` del backend.
-2. Usare il pannello `M1-SHADOW TEST BACKEND`.
-3. Scegliere il preset richiesto:
-   - `Test 1 OFF`
-   - `Test 2 tenant mancante`
-   - `Test 3 slash`
-   - `Test 4 mismatch`
-   - `Test 5 tenant corretto`
-4. Cliccare sempre `Salva impostazioni` prima di eseguire `runPhboxBackendSimple`.
-5. Verificare nel feedback che le proprietà siano coerenti:
-   - `M1_SHADOW_TARGET_ENABLED`
-   - `M1_SHADOW_TENANT_ID`
-   - `M1_SHADOW_EXPECTED_CANONICAL_TENANT_ID`
-   - `M1_SHADOW_MAX_ASSISTITI_SCAN`
-6. La UI settings può creare/aggiornare solo Script Properties. Non deve eseguire `runPhboxBackendSimple` automaticamente.
+1. Aprire pagina Settings backend.
+2. Eseguire `Esegui test M1-IDRES`.
+3. Verificare output copiabile `MIGRATION_1_IDRES_TEST`.
+4. Atteso:
+   - `ok=true`;
+   - `failedCount=0`;
+   - `firestoreReads=0`;
+   - `firestoreWrites=0`;
+   - `publishFromTarget=false`.
+5. Verificare casi coperti:
+   - CF valido → `identityType=cf`, `identityAnchor=CF`;
+   - NOCF manuale → `identityType=nocf`, `identityAnchor=NOCF/manual anchor`;
+   - placeholder name → `fullNameSafe=Assistito senza nome`;
+   - CF-like name → non usato come `fullNameSafe`;
+   - OCR/CF fragment → non usato come `fullNameSafe`;
+   - `identityType` non supportato + CF valido → `ok=false`, `identityType=unknown`, motivo `identity_type_unsupported`;
+   - identity mancante → `ok=false`, nessuna write.
+6. Verificare che un `identityType` non supportato venga rigettato prima di qualunque fallback CF.
+7. Verificare che il resolver non venga collegato a publish target prima di M1-PUB.
+8. Verificare che non siano presenti nella Settings UI i preset test M1-SHADOW già chiusi.
