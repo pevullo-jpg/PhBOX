@@ -217,15 +217,44 @@ function markSignalProcessing_(signal) {
 function markSignalDone_(signal, result) {
   var cfg = getPhboxConfig_();
   var nowIso = new Date().toISOString();
-  var data = buildRuntimeSignalWriteData_(signal, {
+  var data = buildRuntimeSignalWriteData_(signal, buildRuntimeSignalDoneWriteOverrides_(signal, result || {}, nowIso));
+  executeFirestoreCommit_(cfg, [buildFirestoreUpdateWrite_(cfg, 'phbox_signals', data.signalId, data)]);
+  return data;
+}
+
+function buildRuntimeSignalDoneWriteOverrides_(signal, result, nowIso) {
+  signal = signal || {};
+  result = result || {};
+  nowIso = nowIso || new Date().toISOString();
+  var sanitizedResult = sanitizeRuntimeSignalResult_(result);
+  var sanitizedIdentityType = String(sanitizedResult.identityType || '').trim().toLowerCase();
+  var existingIdentityType = String(signal.identityType || '').trim().toLowerCase();
+  var doneIdentityType = sanitizedIdentityType || existingIdentityType;
+  var doneTargetFiscalCode = doneIdentityType === 'nocf' ? '' : (sanitizedResult.cf || signal.targetFiscalCode || '');
+  var overrides = {
     status: 'done',
     updatedAt: nowIso,
     processedAt: nowIso,
     lastError: '',
-    result: sanitizeRuntimeSignalResult_(result || {})
-  });
-  executeFirestoreCommit_(cfg, [buildFirestoreUpdateWrite_(cfg, 'phbox_signals', data.signalId, data)]);
-  return data;
+    targetFiscalCode: doneTargetFiscalCode,
+    result: sanitizedResult
+  };
+  if (sanitizedResult.identityType) {
+    overrides.identityType = sanitizedResult.identityType;
+  }
+  if (sanitizedResult.identityAnchor) {
+    overrides.identityAnchor = sanitizedResult.identityAnchor;
+  }
+  if (Object.prototype.hasOwnProperty.call(result, 'identityAnchorCanonical')) {
+    overrides.identityAnchorCanonical = !!result.identityAnchorCanonical;
+  }
+  if (sanitizedResult.legacyNoCfCode) {
+    overrides.legacyNoCfCode = sanitizedResult.legacyNoCfCode;
+  }
+  if ((sanitizedResult.identityResolutionReasons || []).length) {
+    overrides.identityResolutionReasons = sanitizedResult.identityResolutionReasons;
+  }
+  return overrides;
 }
 
 function markSignalError_(signal, error) {
@@ -327,6 +356,7 @@ function processRuntimeAppManagedSignal_(signal, collectionId) {
   }
 
   var cf = normalizeCf_(signal.targetFiscalCode || (target ? resolvePatientDashboardCollectionGroupCf_(target, collectionId) : ''));
+  var identity = resolveMigration1RuntimeSignalIdentity_(signal, { targetFiscalCode: cf });
   if (!cf) throw new Error(targetAlreadyDeleted ? 'TARGET_CF_MISSING_AFTER_DELETE' : 'TARGET_CF_MISSING');
 
   var indexResult = signal.requiresIndexUpdate === false
@@ -342,12 +372,33 @@ function processRuntimeAppManagedSignal_(signal, collectionId) {
     domain: collectionId,
     operation: operation,
     cf: cf,
+    identityType: identity.identityType,
+    identityAnchor: identity.identityAnchor,
+    identityAnchorCanonical: !!identity.identityAnchorCanonical,
+    legacyNoCfCode: identity.legacyNoCfCode,
+    identityResolutionReasons: identity.identityResolutionReasons,
     targetPath: targetPath.join('/'),
     targetAlreadyDeleted: targetAlreadyDeleted,
     reason: targetAlreadyDeleted ? 'DELETE_TARGET_ALREADY_ABSENT' : '',
     index: indexResult,
     totals: totalsResult,
     readsEstimated: signal.requiresTotalsUpdate ? 5 : 4
+  };
+}
+
+
+function buildMigration1DeletePdfRuntimeSignalIdentityOverrides_(signal, target, rawCf) {
+  signal = signal || {};
+  target = target || {};
+  var explicitIdentityType = String(target.identityType || signal.identityType || '').trim().toLowerCase();
+  var isNocfIdentity = explicitIdentityType === 'nocf';
+  return {
+    targetFiscalCode: isNocfIdentity ? '' : normalizeCf_(rawCf),
+    identityType: target.identityType || signal.identityType,
+    identityAnchor: target.identityAnchor || signal.identityAnchor || '',
+    legacyNoCfCode: target.legacyNoCfCode || signal.legacyNoCfCode || '',
+    identityResolutionReasons: Array.isArray(target.identityResolutionReasons) ? target.identityResolutionReasons : (signal.identityResolutionReasons || []),
+    targetFullName: target.patientFullName || target.fullName || signal.targetFullName || ''
   };
 }
 
@@ -364,7 +415,9 @@ function processRuntimeDeletePdfSignal_(signal) {
   if (!driveFileId) throw new Error('DRIVE_FILE_ID_MISSING');
   var driveResult = trashArchivePdfIfPresent_(driveFileId, cfg);
   var nowIso = new Date().toISOString();
-  var cf = normalizeCf_(signal.targetFiscalCode || target.patientFiscalCode || target.fiscalCode || target.patientCf);
+  var rawCf = normalizeCf_(signal.targetFiscalCode || target.patientFiscalCode || target.fiscalCode || target.patientCf);
+  var identity = resolveMigration1RuntimeSignalIdentity_(signal, buildMigration1DeletePdfRuntimeSignalIdentityOverrides_(signal, target, rawCf));
+  var cf = identity.targetFiscalCode;
   var update = cloneRuntimePlainObject_(target);
   delete update.documentId;
   delete update.documentPath;
@@ -393,6 +446,11 @@ function processRuntimeDeletePdfSignal_(signal) {
     ok: true,
     domain: 'deletePdf',
     cf: cf,
+    identityType: identity.identityType,
+    identityAnchor: identity.identityAnchor,
+    identityAnchorCanonical: !!identity.identityAnchorCanonical,
+    legacyNoCfCode: identity.legacyNoCfCode,
+    identityResolutionReasons: identity.identityResolutionReasons,
     driveFileId: driveFileId,
     drive: driveResult,
     firestoreImportUpdated: true,
@@ -630,14 +688,20 @@ function buildRuntimeSignalWriteData_(signal, overrides) {
   overrides = overrides || {};
   var nowIso = new Date().toISOString();
   var signalId = String(overrides.signalId || signal.signalId || signal.documentId || '').trim();
+  var identity = resolveMigration1RuntimeSignalIdentity_(signal, overrides);
   return {
     signalId: signalId,
     status: String(overrides.status || signal.status || 'pending').trim().toLowerCase(),
     domain: String(overrides.domain || signal.domain || '').trim(),
     operation: String(overrides.operation || signal.operation || '').trim(),
     targetPath: String(overrides.targetPath || signal.targetPath || '').trim(),
-    targetFiscalCode: normalizeCf_(overrides.targetFiscalCode || signal.targetFiscalCode || ''),
+    targetFiscalCode: identity.targetFiscalCode,
     targetDocumentId: String(overrides.targetDocumentId || signal.targetDocumentId || '').trim(),
+    identityType: identity.identityType,
+    identityAnchor: identity.identityAnchor,
+    identityAnchorCanonical: !!identity.identityAnchorCanonical,
+    legacyNoCfCode: identity.legacyNoCfCode,
+    identityResolutionReasons: identity.identityResolutionReasons,
     requiresTotalsUpdate: readRuntimeBool_(overrides.requiresTotalsUpdate !== undefined ? overrides.requiresTotalsUpdate : signal.requiresTotalsUpdate),
     requiresIndexUpdate: overrides.requiresIndexUpdate === undefined ? readRuntimeBool_(signal.requiresIndexUpdate !== false) : readRuntimeBool_(overrides.requiresIndexUpdate),
     requiresDriveAction: readRuntimeBool_(overrides.requiresDriveAction !== undefined ? overrides.requiresDriveAction : signal.requiresDriveAction),
@@ -656,7 +720,12 @@ function sanitizeRuntimeSignalResult_(result) {
   return {
     ok: result.ok !== false,
     domain: String(result.domain || '').trim(),
-    cf: normalizeCf_(result.cf || ''),
+    cf: normalizeCf_(result.cf || result.targetFiscalCode || ''),
+    identityType: String(result.identityType || '').trim().toLowerCase(),
+    identityAnchor: String(result.identityAnchor || '').trim(),
+    identityAnchorCanonical: !!result.identityAnchorCanonical,
+    legacyNoCfCode: String(result.legacyNoCfCode || '').trim(),
+    identityResolutionReasons: uniqueNonEmptyStrings_(result.identityResolutionReasons || []),
     reason: String(result.reason || '').trim(),
     readsEstimated: Number(result.readsEstimated || 0),
     updatedAt: new Date().toISOString()
