@@ -151,9 +151,11 @@ function buildPhboxSettingsFeedback_(options) {
   lines.push('EXCLUDED_SENDERS_COUNT: ' + String((cfg.excludedEmailSenders || []).length));
   lines.push('ACCEPTED_CITIES_COUNT: ' + String((cfg.acceptedCities || []).length));
   lines.push('ACCEPT_RECIPES_WITHOUT_CITY: ' + String(!!cfg.acceptRecipesWithoutCity));
-  lines.push('M1_IDRES_TEST_AVAILABLE: true');
-  lines.push('M1_GATE_TEST_AVAILABLE: true');
-  lines.push('M1_TARGET_RUNTIME_GATE_DEFAULT_OFF: true');
+  lines.push('M1_PUB_TEST_AVAILABLE: true');
+  lines.push('M1_PUB_SETTINGS_UI_VERSION: 2026-06-02-m1-pub-v2');
+  lines.push('SETTINGS_TEST_PANEL_ACTIVE: M1-PUB_ONLY');
+  lines.push('M1_IDRES_TEST_SETTINGS_REMOVED: true');
+  lines.push('M1_GATE_TEST_SETTINGS_REMOVED: true');
   lines.push('M1_SHADOW_TEST_SETTINGS_REMOVED: true');
   lines.push('GMAIL_QUERY_PREVIEW: ' + buildGmailQuery_(cfg, cfg.gmailProcessedLabel));
 
@@ -171,9 +173,10 @@ function buildPhboxSettingsFeedback_(options) {
   return lines.join('\n');
 }
 
-function runMigration1IdentityResolverSettingsTest() {
-  var result = runMigration1IdentityResolverSelfTest_();
-  var feedback = formatMigration1IdentityResolverSelfTestFeedback_(result);
+
+function runMigration1TargetPublishSettingsTest() {
+  var result = runMigration1TargetPublishSelfTest_();
+  var feedback = formatMigration1TargetPublishSelfTestFeedback_(result);
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!result.ok,
@@ -182,23 +185,12 @@ function runMigration1IdentityResolverSettingsTest() {
 }
 
 
-function runMigration1TargetRuntimeGateSettingsTest() {
-  var result = runMigration1TargetRuntimeGateSelfTest_();
-  var feedback = formatMigration1TargetRuntimeGateSelfTestFeedback_(result);
+function getMigration1TargetPublishSettingsStatus() {
+  var status = runMigration1TargetPublishRuntimeStatus_();
+  var feedback = formatMigration1TargetPublishRuntimeFeedback_(status);
   writePhboxSettingsFeedback_(feedback);
   return {
-    ok: !!result.ok,
-    feedback: feedback
-  };
-}
-
-
-function getMigration1TargetRuntimeGateSettingsStatus() {
-  var stage = runMigration1TargetRuntimeGateStage_({});
-  var feedback = formatMigration1TargetRuntimeGateRuntimeFeedback_(stage);
-  writePhboxSettingsFeedback_(feedback);
-  return {
-    ok: !!(stage && stage.ok),
+    ok: !!(status && status.ok),
     feedback: feedback
   };
 }

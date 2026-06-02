@@ -165,23 +165,14 @@
 
 
       <section class="card" style="margin-top:16px;">
-        <h2>M1-IDRES TEST BACKEND</h2>
-        <div class="hint">Test diagnostico locale del resolver CF/NOCF/identityAnchor. Non esegue Firestore, Gmail, Drive, OCR, parser, merge, rename o publish.</div>
+        <h2>M1-PUB TEST BACKEND</h2>
+        <div class="hint"><strong>Pannello test attivo: M1-PUB_ONLY — UI v2.</strong></div>
+        <div class="hint">Test diagnostico del publish target multifarmacia. Il self-test non esegue Firestore, Gmail, Drive, OCR, parser, merge, rename o cutover.</div>
         <div class="actions" style="margin:14px 0 0;">
-          <button class="secondary" type="button" onclick="runM1IdentityResolverTests()">Esegui test M1-IDRES</button>
+          <button class="secondary" type="button" onclick="runM1TargetPublishTests()">Esegui test M1-PUB</button>
+          <button class="secondary" type="button" onclick="readM1TargetPublishStatus()">Leggi stato runtime M1-PUB</button>
         </div>
-        <textarea id="migration1IdentityResolverFeedback" class="feedback" readonly></textarea>
-      </section>
-
-
-      <section class="card" style="margin-top:16px;">
-        <h2>M1-GATE TEST BACKEND</h2>
-        <div class="hint">Test diagnostico locale del gate runtime target multifarmacia. Non esegue Firestore, Gmail, Drive, OCR, parser, merge, rename, publish o cutover.</div>
-        <div class="actions" style="margin:14px 0 0;">
-          <button class="secondary" type="button" onclick="runM1TargetRuntimeGateTests()">Esegui test M1-GATE</button>
-          <button class="secondary" type="button" onclick="readM1TargetRuntimeGateStatus()">Leggi stato runtime M1-GATE</button>
-        </div>
-        <textarea id="migration1TargetRuntimeGateFeedback" class="feedback" readonly></textarea>
+        <textarea id="migration1TargetPublishFeedback" class="feedback" readonly></textarea>
       </section>
 
       <section class="card" style="margin-top:16px;">
@@ -252,56 +243,39 @@
       }
 
 
-      function runM1IdentityResolverTests() {
+      function runM1TargetPublishTests() {
         setBusy(true);
-        setStatus('Test M1-IDRES in corso...', '');
+        setStatus('Test M1-PUB in corso...', '');
         google.script.run
           .withSuccessHandler(function(data) {
-            document.getElementById('migration1IdentityResolverFeedback').value = (data && data.feedback) || '';
+            document.getElementById('migration1TargetPublishFeedback').value = (data && data.feedback) || '';
             document.getElementById('feedback').value = (data && data.feedback) || '';
             setBusy(false);
-            setStatus(data && data.ok ? 'Test M1-IDRES superati.' : 'Test M1-IDRES con errori.', data && data.ok ? 'ok' : 'error');
+            setStatus(data && data.ok ? 'Test M1-PUB superati.' : 'Test M1-PUB con errori.', data && data.ok ? 'ok' : 'error');
           })
           .withFailureHandler(function(error) {
             setBusy(false);
             setStatus(error && error.message ? error.message : String(error), 'error');
           })
-          .runMigration1IdentityResolverSettingsTest();
-      }
-
-      function runM1TargetRuntimeGateTests() {
-        setBusy(true);
-        setStatus('Test M1-GATE in corso...', '');
-        google.script.run
-          .withSuccessHandler(function(data) {
-            document.getElementById('migration1TargetRuntimeGateFeedback').value = (data && data.feedback) || '';
-            document.getElementById('feedback').value = (data && data.feedback) || '';
-            setBusy(false);
-            setStatus(data && data.ok ? 'Test M1-GATE superati.' : 'Test M1-GATE con errori.', data && data.ok ? 'ok' : 'error');
-          })
-          .withFailureHandler(function(error) {
-            setBusy(false);
-            setStatus(error && error.message ? error.message : String(error), 'error');
-          })
-          .runMigration1TargetRuntimeGateSettingsTest();
+          .runMigration1TargetPublishSettingsTest();
       }
 
 
-      function readM1TargetRuntimeGateStatus() {
+      function readM1TargetPublishStatus() {
         setBusy(true);
-        setStatus('Lettura stato M1-GATE...', '');
+        setStatus('Lettura stato M1-PUB...', '');
         google.script.run
           .withSuccessHandler(function(data) {
-            document.getElementById('migration1TargetRuntimeGateFeedback').value = (data && data.feedback) || '';
+            document.getElementById('migration1TargetPublishFeedback').value = (data && data.feedback) || '';
             document.getElementById('feedback').value = (data && data.feedback) || '';
             setBusy(false);
-            setStatus(data && data.ok ? 'Stato M1-GATE letto.' : 'Stato M1-GATE non valido.', data && data.ok ? 'ok' : 'error');
+            setStatus(data && data.ok ? 'Stato M1-PUB letto.' : 'Stato M1-PUB non valido.', data && data.ok ? 'ok' : 'error');
           })
           .withFailureHandler(function(error) {
             setBusy(false);
             setStatus(error && error.message ? error.message : String(error), 'error');
           })
-          .getMigration1TargetRuntimeGateSettingsStatus();
+          .getMigration1TargetPublishSettingsStatus();
       }
 
 
