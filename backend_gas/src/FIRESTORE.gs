@@ -254,6 +254,15 @@ function syncRuntimeIndexToFirestore_(options) {
   if (plan.writes.length) {
     executeFirestoreCommit_(cfg, plan.writes);
     stats.writes = plan.writes.length;
+    if (options.allowMigration1TargetPublish === true && typeof maybePublishMigration1TargetFirestorePlan_ === 'function') {
+      var migration1TargetPublish = maybePublishMigration1TargetFirestorePlan_(cfg, plan, {
+        budget: options.budget
+      });
+      if (migration1TargetPublish && migration1TargetPublish.stats && !migration1TargetPublish.stats.skipped) {
+        stats.migration1TargetPublish = migration1TargetPublish.stats;
+        stats.targetWrites = Number(migration1TargetPublish.stats.firestoreWrites || 0);
+      }
+    }
     stats.synced = plan.meta.selectedUnits;
     applyFirestorePublishPlanSuccess_(runtimeIndex, plan);
     if ((plan.selectedCfs || []).length && typeof syncPatientDashboardIndexForFiscalCodes_ === 'function') {
