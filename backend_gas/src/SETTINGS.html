@@ -165,12 +165,13 @@
 
 
       <section class="card" style="margin-top:16px;">
-        <h2>M1-DASH TEST BACKEND</h2>
-        <div class="hint">M1-DASH_ONLY — UI v3. Test diagnostico locale della compatibilità dashboard FE con identità cf/nocf. Non esegue Firestore, Gmail, Drive, OCR, parser, merge, rename, publish target o cutover.</div>
+        <h2>M1-DUAL TEST BACKEND</h2>
+        <div class="hint">M1-DUAL_ONLY — UI v2. Verifier read-only legacy vs target. Il self-test non legge Firestore; lo status runtime legge al massimo i path espliciti configurati in PHBOX_M1_DUAL_SAMPLE_LEGACY_PATHS.</div>
         <div class="actions" style="margin:14px 0 0;">
-          <button class="secondary" type="button" onclick="runM1DashboardCompatTests()">Esegui test M1-DASH</button>
+          <button class="secondary" type="button" onclick="runM1DualVerifierTests()">Esegui test M1-DUAL</button>
+          <button class="secondary" type="button" onclick="readM1DualVerifierStatus()">Leggi stato runtime M1-DUAL</button>
         </div>
-        <textarea id="migration1DashboardCompatFeedback" class="feedback" readonly></textarea>
+        <textarea id="migration1DualVerifierFeedback" class="feedback" readonly></textarea>
       </section>
 
       <section class="card" style="margin-top:16px;">
@@ -241,21 +242,38 @@
       }
 
 
-      function runM1DashboardCompatTests() {
+      function runM1DualVerifierTests() {
         setBusy(true);
-        setStatus('Test M1-DASH in corso...', '');
+        setStatus('Test M1-DUAL in corso...', '');
         google.script.run
           .withSuccessHandler(function(data) {
-            document.getElementById('migration1DashboardCompatFeedback').value = (data && data.feedback) || '';
+            document.getElementById('migration1DualVerifierFeedback').value = (data && data.feedback) || '';
             document.getElementById('feedback').value = (data && data.feedback) || '';
             setBusy(false);
-            setStatus(data && data.ok ? 'Test M1-DASH superati.' : 'Test M1-DASH con errori.', data && data.ok ? 'ok' : 'error');
+            setStatus(data && data.ok ? 'Test M1-DUAL superati.' : 'Test M1-DUAL con errori.', data && data.ok ? 'ok' : 'error');
           })
           .withFailureHandler(function(error) {
             setBusy(false);
             setStatus(error && error.message ? error.message : String(error), 'error');
           })
-          .runMigration1DashboardCompatSettingsTest();
+          .runMigration1DualVerifierSettingsTest();
+      }
+
+      function readM1DualVerifierStatus() {
+        setBusy(true);
+        setStatus('Lettura runtime M1-DUAL in corso...', '');
+        google.script.run
+          .withSuccessHandler(function(data) {
+            document.getElementById('migration1DualVerifierFeedback').value = (data && data.feedback) || '';
+            document.getElementById('feedback').value = (data && data.feedback) || '';
+            setBusy(false);
+            setStatus(data && data.ok ? 'Runtime M1-DUAL letto.' : 'Runtime M1-DUAL con errori.', data && data.ok ? 'ok' : 'error');
+          })
+          .withFailureHandler(function(error) {
+            setBusy(false);
+            setStatus(error && error.message ? error.message : String(error), 'error');
+          })
+          .getMigration1DualVerifierSettingsStatus();
       }
 
 
