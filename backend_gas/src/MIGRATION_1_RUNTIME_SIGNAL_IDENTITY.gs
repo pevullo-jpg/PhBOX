@@ -4,7 +4,8 @@ var PHBOX_M1_SIG_STAGE_ = 'migration1_runtime_signal_identity';
 function resolveMigration1RuntimeSignalIdentity_(signal, overrides) {
   signal = signal || {};
   overrides = overrides || {};
-  var legacyTargetCf = normalizeCf_(overrides.targetFiscalCode || signal.targetFiscalCode || '');
+  var hasTargetFiscalCodeOverride = Object.prototype.hasOwnProperty.call(overrides, 'targetFiscalCode');
+  var legacyTargetCf = normalizeCf_(hasTargetFiscalCodeOverride ? overrides.targetFiscalCode : (signal.targetFiscalCode || ''));
   var identity = resolveMigration1BackendIdentity_({
     identityType: overrides.identityType !== undefined ? overrides.identityType : signal.identityType,
     identityAnchor: overrides.identityAnchor || signal.identityAnchor || signal.targetIdentityAnchor || '',
@@ -18,13 +19,16 @@ function resolveMigration1RuntimeSignalIdentity_(signal, overrides) {
     targetFiscalCode = '';
   }
   var overrideReasons = Array.isArray(overrides.identityResolutionReasons) ? overrides.identityResolutionReasons : null;
+  var signalReasons = Array.isArray(signal.identityResolutionReasons) ? signal.identityResolutionReasons : [];
+  var identityReasons = Array.isArray(identity.reasons) ? identity.reasons : [];
+  var resolvedReasons = overrideReasons !== null ? overrideReasons : (signalReasons.length ? signalReasons : identityReasons);
   return {
     identityType: identityType,
     identityAnchor: String(identity.identityAnchor || '').trim(),
     identityAnchorCanonical: overrides.identityAnchorCanonical === undefined ? !!identity.ok : !!overrides.identityAnchorCanonical,
     targetFiscalCode: targetFiscalCode,
-    legacyNoCfCode: String(overrides.legacyNoCfCode || identity.noCfCode || '').trim(),
-    identityResolutionReasons: uniqueNonEmptyStrings_(overrideReasons || identity.reasons || []),
+    legacyNoCfCode: String(overrides.legacyNoCfCode || signal.legacyNoCfCode || identity.noCfCode || '').trim(),
+    identityResolutionReasons: uniqueNonEmptyStrings_(resolvedReasons),
     firestoreReads: 0,
     firestoreWrites: 0,
     publishFromTarget: false
@@ -150,6 +154,56 @@ function runMigration1RuntimeSignalIdentitySelfTest_() {
         identityAnchor: 'RSSMRA80A01H501U',
         identityAnchorCanonical: true,
         targetFiscalCode: 'RSSMRA80A01H501U'
+      }
+    },
+    {
+      id: 'done_write_explicit_nocf_ignores_stale_signal_cf',
+      input: {
+        domain: 'deletePdf',
+        signalId: 'sig_stale_cf_nocf_done_1',
+        targetFiscalCode: 'RSSMRA80A01H501U',
+        targetPath: 'drive_pdf_imports/file_1'
+      },
+      doneResult: {
+        ok: true,
+        domain: 'deletePdf',
+        identityType: 'nocf',
+        identityAnchor: 'NOCF_MANUAL_001',
+        identityAnchorCanonical: true,
+        legacyNoCfCode: 'MANUAL_001',
+        identityResolutionReasons: ['nocf_manual_anchor']
+      },
+      expectedDoneWriteData: {
+        identityType: 'nocf',
+        identityAnchor: 'NOCF_MANUAL_001',
+        identityAnchorCanonical: true,
+        targetFiscalCode: '',
+        legacyNoCfCode: 'MANUAL_001',
+        reason: 'nocf_manual_anchor'
+      }
+    },
+    {
+      id: 'done_write_preserves_existing_signal_identity_reasons',
+      input: {
+        domain: 'backup',
+        signalId: 'sig_existing_nocf_reason_1',
+        identityType: 'nocf',
+        identityAnchor: 'NOCF_MANUAL_002',
+        legacyNoCfCode: 'MANUAL_002',
+        targetFullName: 'Amedeo Fantauzzo',
+        identityResolutionReasons: ['existing_signal_identity_reason']
+      },
+      doneResult: {
+        ok: true,
+        domain: 'backup'
+      },
+      expectedDoneWriteData: {
+        identityType: 'nocf',
+        identityAnchor: 'NOCF_MANUAL_002',
+        identityAnchorCanonical: true,
+        targetFiscalCode: '',
+        legacyNoCfCode: 'MANUAL_002',
+        reason: 'existing_signal_identity_reason'
       }
     }
   ];

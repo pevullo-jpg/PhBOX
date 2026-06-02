@@ -227,12 +227,14 @@ function buildRuntimeSignalDoneWriteOverrides_(signal, result, nowIso) {
   result = result || {};
   nowIso = nowIso || new Date().toISOString();
   var sanitizedResult = sanitizeRuntimeSignalResult_(result);
+  var sanitizedIdentityType = String(sanitizedResult.identityType || '').trim().toLowerCase();
+  var doneTargetFiscalCode = sanitizedIdentityType === 'nocf' ? '' : (sanitizedResult.cf || signal.targetFiscalCode || '');
   var overrides = {
     status: 'done',
     updatedAt: nowIso,
     processedAt: nowIso,
     lastError: '',
-    targetFiscalCode: sanitizedResult.cf || signal.targetFiscalCode || '',
+    targetFiscalCode: doneTargetFiscalCode,
     result: sanitizedResult
   };
   if (sanitizedResult.identityType) {
