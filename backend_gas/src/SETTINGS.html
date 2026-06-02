@@ -173,6 +173,17 @@
         <textarea id="migration1IdentityResolverFeedback" class="feedback" readonly></textarea>
       </section>
 
+
+      <section class="card" style="margin-top:16px;">
+        <h2>M1-GATE TEST BACKEND</h2>
+        <div class="hint">Test diagnostico locale del gate runtime target multifarmacia. Non esegue Firestore, Gmail, Drive, OCR, parser, merge, rename, publish o cutover.</div>
+        <div class="actions" style="margin:14px 0 0;">
+          <button class="secondary" type="button" onclick="runM1TargetRuntimeGateTests()">Esegui test M1-GATE</button>
+          <button class="secondary" type="button" onclick="readM1TargetRuntimeGateStatus()">Leggi stato runtime M1-GATE</button>
+        </div>
+        <textarea id="migration1TargetRuntimeGateFeedback" class="feedback" readonly></textarea>
+      </section>
+
       <section class="card" style="margin-top:16px;">
         <h2>FEEDBACK</h2>
         <textarea id="feedback" class="feedback" readonly></textarea>
@@ -257,6 +268,42 @@
           })
           .runMigration1IdentityResolverSettingsTest();
       }
+
+      function runM1TargetRuntimeGateTests() {
+        setBusy(true);
+        setStatus('Test M1-GATE in corso...', '');
+        google.script.run
+          .withSuccessHandler(function(data) {
+            document.getElementById('migration1TargetRuntimeGateFeedback').value = (data && data.feedback) || '';
+            document.getElementById('feedback').value = (data && data.feedback) || '';
+            setBusy(false);
+            setStatus(data && data.ok ? 'Test M1-GATE superati.' : 'Test M1-GATE con errori.', data && data.ok ? 'ok' : 'error');
+          })
+          .withFailureHandler(function(error) {
+            setBusy(false);
+            setStatus(error && error.message ? error.message : String(error), 'error');
+          })
+          .runMigration1TargetRuntimeGateSettingsTest();
+      }
+
+
+      function readM1TargetRuntimeGateStatus() {
+        setBusy(true);
+        setStatus('Lettura stato M1-GATE...', '');
+        google.script.run
+          .withSuccessHandler(function(data) {
+            document.getElementById('migration1TargetRuntimeGateFeedback').value = (data && data.feedback) || '';
+            document.getElementById('feedback').value = (data && data.feedback) || '';
+            setBusy(false);
+            setStatus(data && data.ok ? 'Stato M1-GATE letto.' : 'Stato M1-GATE non valido.', data && data.ok ? 'ok' : 'error');
+          })
+          .withFailureHandler(function(error) {
+            setBusy(false);
+            setStatus(error && error.message ? error.message : String(error), 'error');
+          })
+          .getMigration1TargetRuntimeGateSettingsStatus();
+      }
+
 
       function loadSettings() {
         setBusy(true);
