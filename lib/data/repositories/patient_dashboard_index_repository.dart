@@ -153,7 +153,10 @@ class PatientDashboardIndexRepository {
     final DateTime now = DateTime.now();
     final Map<String, dynamic> data = <String, dynamic>{
       'fiscalCode': cf,
-      'fullName': fullName.trim().isEmpty ? cf : fullName.trim(),
+      'fullName': _resolveFrontendManagedFullName(
+        fiscalCode: cf,
+        fullName: fullName,
+      ),
       if (alias != null) 'alias': alias.trim().isEmpty ? null : alias.trim(),
       if (doctorFullName != null) 'doctorFullName': doctorFullName.trim(),
       if (city != null) 'city': city.trim(),
@@ -261,6 +264,17 @@ class PatientDashboardIndexRepository {
       collectionPath: AppCollections.patientDashboardIndex,
       documentId: cf,
     );
+  }
+
+  static String _resolveFrontendManagedFullName({
+    required String fiscalCode,
+    required String fullName,
+  }) {
+    final String normalizedFullName = fullName.trim();
+    if (normalizedFullName.isNotEmpty) return normalizedFullName;
+    final String cf = fiscalCode.trim().toUpperCase();
+    if (cf.startsWith('NOCF_')) return 'Assistito senza nome';
+    return cf;
   }
 
   static String normalizeSearchPrefix(String value) {

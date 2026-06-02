@@ -151,8 +151,9 @@ function buildPhboxSettingsFeedback_(options) {
   lines.push('EXCLUDED_SENDERS_COUNT: ' + String((cfg.excludedEmailSenders || []).length));
   lines.push('ACCEPTED_CITIES_COUNT: ' + String((cfg.acceptedCities || []).length));
   lines.push('ACCEPT_RECIPES_WITHOUT_CITY: ' + String(!!cfg.acceptRecipesWithoutCity));
-  lines.push('M1_SIG_TEST_AVAILABLE: true');
-  lines.push('SETTINGS_UI_BUILD: M1_SIG_ONLY_UI_v9_1');
+  lines.push('M1_DASH_TEST_AVAILABLE: true');
+  lines.push('SETTINGS_UI_BUILD: M1_DASH_ONLY_UI_v3');
+  lines.push('M1_SIG_TEST_SETTINGS_REMOVED: true');
   lines.push('M1_PUB_TEST_SETTINGS_REMOVED: true');
   lines.push('M1_IDRES_TEST_SETTINGS_REMOVED: true');
   lines.push('M1_GATE_TEST_SETTINGS_REMOVED: true');
@@ -173,9 +174,9 @@ function buildPhboxSettingsFeedback_(options) {
   return lines.join('\n');
 }
 
-function runMigration1RuntimeSignalIdentitySettingsTest() {
-  var result = runMigration1RuntimeSignalIdentitySelfTest_();
-  var feedback = formatMigration1RuntimeSignalIdentitySelfTestFeedback_(result);
+function runMigration1DashboardCompatSettingsTest() {
+  var result = runMigration1DashboardCompatSelfTest_();
+  var feedback = formatMigration1DashboardCompatSelfTestFeedback_(result);
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!result.ok,
