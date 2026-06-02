@@ -26,6 +26,11 @@ class PatientDashboardIndex {
   final bool hasBooking;
   final bool hasExpiry;
   final List<String> searchPrefixes;
+  final String identityType;
+  final String identityAnchor;
+  final bool identityAnchorCanonical;
+  final String legacyNoCfCode;
+  final List<String> identityResolutionReasons;
   final DateTime updatedAt;
 
   const PatientDashboardIndex({
@@ -54,14 +59,32 @@ class PatientDashboardIndex {
     required this.hasBooking,
     required this.hasExpiry,
     required this.searchPrefixes,
+    this.identityType = '',
+    this.identityAnchor = '',
+    this.identityAnchorCanonical = false,
+    this.legacyNoCfCode = '',
+    this.identityResolutionReasons = const <String>[],
     required this.updatedAt,
   });
 
+  bool get isNoCfIdentity => identityType.trim().toLowerCase() == 'nocf';
+
+  String get dashboardIdentityKey {
+    final String anchor = identityAnchor.trim().toUpperCase();
+    if (anchor.isNotEmpty) return anchor;
+    return fiscalCode.trim().toUpperCase();
+  }
+
+  String get copyableFiscalCode => isNoCfIdentity ? '' : fiscalCode.trim().toUpperCase();
+
   Patient toPatient() {
     final DateTime now = DateTime.now();
+    final String resolvedFullName = fullName.trim().isEmpty
+        ? (isNoCfIdentity ? 'Assistito senza nome' : fiscalCode)
+        : fullName.trim();
     return Patient(
-      fiscalCode: fiscalCode,
-      fullName: fullName.trim().isEmpty ? fiscalCode : fullName.trim(),
+      fiscalCode: dashboardIdentityKey.isEmpty ? fiscalCode : dashboardIdentityKey,
+      fullName: resolvedFullName,
       alias: alias,
       city: city.trim().isEmpty ? null : city.trim(),
       exemptionCode: exemptionCode.trim().isEmpty ? null : exemptionCode.trim(),
@@ -110,12 +133,31 @@ class PatientDashboardIndex {
       'hasBooking': hasBooking,
       'hasExpiry': hasExpiry,
       'searchPrefixes': searchPrefixes,
+      if (identityType.trim().isNotEmpty) 'identityType': identityType.trim().toLowerCase(),
+      if (identityAnchor.trim().isNotEmpty) 'identityAnchor': identityAnchor.trim().toUpperCase(),
+      'identityAnchorCanonical': identityAnchorCanonical,
+      if (legacyNoCfCode.trim().isNotEmpty) 'legacyNoCfCode': legacyNoCfCode.trim(),
+      if (identityResolutionReasons.isNotEmpty) 'identityResolutionReasons': identityResolutionReasons,
       'updatedAt': updatedAt.toIso8601String(),
     };
   }
 
   factory PatientDashboardIndex.fromMap(Map<String, dynamic> map) {
-    final String cf = _readString(map['fiscalCode'] ?? map['patientFiscalCode'] ?? map['id']).toUpperCase();
+    final String cf = _readString(
+      map['cf'] ?? map['fiscalCode'] ?? map['patientFiscalCode'] ?? map['id'],
+    ).toUpperCase();
+    final String identityType = _normalizeIdentityType(_readString(map['identityType']));
+    final String rawIdentityAnchor = _readString(map['identityAnchor']).toUpperCase();
+    final String identityAnchor = rawIdentityAnchor.isNotEmpty
+        ? rawIdentityAnchor
+        : ((identityType == 'cf' || identityType == 'nocf') ? cf : '');
+    final bool identityAnchorCanonical = map.containsKey('identityAnchorCanonical')
+        ? _readBool(map['identityAnchorCanonical'])
+        : _inferIdentityAnchorCanonical(
+            identityType: identityType,
+            identityAnchor: identityAnchor,
+            fiscalCode: cf,
+          );
     final int recipeCount = _readInt(map['recipeCount']);
     final int dpcCount = _readInt(map['dpcCount']);
     final double debtAmount = _readDouble(map['debtAmount'] ?? map['debtTotal'] ?? map['debtsTotal']);
@@ -123,8 +165,8 @@ class PatientDashboardIndex {
     final int advanceCount = _readInt(map['advanceCount'] ?? map['advancesCount']);
     final int bookingCount = _readInt(map['bookingCount'] ?? map['bookingsCount']);
     return PatientDashboardIndex(
-      id: _readString(map['id']).isEmpty ? cf : _readString(map['id']),
-      fiscalCode: cf,
+      id: _readString(map['id']).isEmpty ? (identityAnchor.isNotEmpty ? identityAnchor : cf) : _readString(map['id']),
+      fiscalCode: cf.isEmpty && identityType == 'cf' ? identityAnchor : cf,
       fullName: _readString(map['fullName'] ?? map['patientFullName']),
       alias: _readNullableString(map['alias']),
       doctorFullName: _readString(map['doctorFullName'] ?? map['doctorName']),
@@ -148,8 +190,36 @@ class PatientDashboardIndex {
       hasBooking: _readBool(map['hasBooking']) || bookingCount > 0,
       hasExpiry: _readBool(map['hasExpiry']),
       searchPrefixes: _readStringList(map['searchPrefixes']),
+      identityType: identityType,
+      identityAnchor: identityAnchor,
+      identityAnchorCanonical: identityAnchorCanonical,
+      legacyNoCfCode: _readString(map['legacyNoCfCode']),
+      identityResolutionReasons: _readStringList(map['identityResolutionReasons']),
       updatedAt: _readDate(map['updatedAt']) ?? DateTime.now(),
     );
+  }
+
+
+  static String _normalizeIdentityType(String value) {
+    final String normalized = value.trim().toLowerCase();
+    if (normalized == 'cf' || normalized == 'nocf') return normalized;
+    return '';
+  }
+
+  static bool _inferIdentityAnchorCanonical({
+    required String identityType,
+    required String identityAnchor,
+    required String fiscalCode,
+  }) {
+    final String anchor = identityAnchor.trim().toUpperCase();
+    final String cf = fiscalCode.trim().toUpperCase();
+    if (identityType == 'cf') {
+      return anchor.isNotEmpty && anchor == cf;
+    }
+    if (identityType == 'nocf') {
+      return anchor.startsWith('NOCF_') && !anchor.contains('/');
+    }
+    return false;
   }
 
   static String _readString(dynamic value) => value == null ? '' : value.toString().trim();
