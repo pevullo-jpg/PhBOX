@@ -327,6 +327,7 @@ function processRuntimeAppManagedSignal_(signal, collectionId) {
   }
 
   var cf = normalizeCf_(signal.targetFiscalCode || (target ? resolvePatientDashboardCollectionGroupCf_(target, collectionId) : ''));
+  var identity = resolveMigration1RuntimeSignalIdentity_(signal, { targetFiscalCode: cf });
   if (!cf) throw new Error(targetAlreadyDeleted ? 'TARGET_CF_MISSING_AFTER_DELETE' : 'TARGET_CF_MISSING');
 
   var indexResult = signal.requiresIndexUpdate === false
@@ -342,6 +343,9 @@ function processRuntimeAppManagedSignal_(signal, collectionId) {
     domain: collectionId,
     operation: operation,
     cf: cf,
+    identityType: identity.identityType,
+    identityAnchor: identity.identityAnchor,
+    identityAnchorCanonical: !!identity.identityAnchorCanonical,
     targetPath: targetPath.join('/'),
     targetAlreadyDeleted: targetAlreadyDeleted,
     reason: targetAlreadyDeleted ? 'DELETE_TARGET_ALREADY_ABSENT' : '',
@@ -365,6 +369,13 @@ function processRuntimeDeletePdfSignal_(signal) {
   var driveResult = trashArchivePdfIfPresent_(driveFileId, cfg);
   var nowIso = new Date().toISOString();
   var cf = normalizeCf_(signal.targetFiscalCode || target.patientFiscalCode || target.fiscalCode || target.patientCf);
+  var identity = resolveMigration1RuntimeSignalIdentity_(signal, {
+    targetFiscalCode: cf,
+    identityType: target.identityType || signal.identityType,
+    identityAnchor: target.identityAnchor || signal.identityAnchor || '',
+    legacyNoCfCode: target.legacyNoCfCode || signal.legacyNoCfCode || '',
+    targetFullName: target.patientFullName || target.fullName || signal.targetFullName || ''
+  });
   var update = cloneRuntimePlainObject_(target);
   delete update.documentId;
   delete update.documentPath;
@@ -393,6 +404,9 @@ function processRuntimeDeletePdfSignal_(signal) {
     ok: true,
     domain: 'deletePdf',
     cf: cf,
+    identityType: identity.identityType,
+    identityAnchor: identity.identityAnchor,
+    identityAnchorCanonical: !!identity.identityAnchorCanonical,
     driveFileId: driveFileId,
     drive: driveResult,
     firestoreImportUpdated: true,
@@ -630,14 +644,20 @@ function buildRuntimeSignalWriteData_(signal, overrides) {
   overrides = overrides || {};
   var nowIso = new Date().toISOString();
   var signalId = String(overrides.signalId || signal.signalId || signal.documentId || '').trim();
+  var identity = resolveMigration1RuntimeSignalIdentity_(signal, overrides);
   return {
     signalId: signalId,
     status: String(overrides.status || signal.status || 'pending').trim().toLowerCase(),
     domain: String(overrides.domain || signal.domain || '').trim(),
     operation: String(overrides.operation || signal.operation || '').trim(),
     targetPath: String(overrides.targetPath || signal.targetPath || '').trim(),
-    targetFiscalCode: normalizeCf_(overrides.targetFiscalCode || signal.targetFiscalCode || ''),
+    targetFiscalCode: identity.targetFiscalCode,
     targetDocumentId: String(overrides.targetDocumentId || signal.targetDocumentId || '').trim(),
+    identityType: identity.identityType,
+    identityAnchor: identity.identityAnchor,
+    identityAnchorCanonical: !!identity.identityAnchorCanonical,
+    legacyNoCfCode: identity.legacyNoCfCode,
+    identityResolutionReasons: identity.identityResolutionReasons,
     requiresTotalsUpdate: readRuntimeBool_(overrides.requiresTotalsUpdate !== undefined ? overrides.requiresTotalsUpdate : signal.requiresTotalsUpdate),
     requiresIndexUpdate: overrides.requiresIndexUpdate === undefined ? readRuntimeBool_(signal.requiresIndexUpdate !== false) : readRuntimeBool_(overrides.requiresIndexUpdate),
     requiresDriveAction: readRuntimeBool_(overrides.requiresDriveAction !== undefined ? overrides.requiresDriveAction : signal.requiresDriveAction),
@@ -656,7 +676,10 @@ function sanitizeRuntimeSignalResult_(result) {
   return {
     ok: result.ok !== false,
     domain: String(result.domain || '').trim(),
-    cf: normalizeCf_(result.cf || ''),
+    cf: normalizeCf_(result.cf || result.targetFiscalCode || ''),
+    identityType: String(result.identityType || '').trim().toLowerCase(),
+    identityAnchor: String(result.identityAnchor || '').trim(),
+    identityAnchorCanonical: !!result.identityAnchorCanonical,
     reason: String(result.reason || '').trim(),
     readsEstimated: Number(result.readsEstimated || 0),
     updatedAt: new Date().toISOString()
