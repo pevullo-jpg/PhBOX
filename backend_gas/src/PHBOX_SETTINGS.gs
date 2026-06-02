@@ -171,38 +171,6 @@ function buildPhboxSettingsFeedback_(options) {
   return lines.join('\n');
 }
 
-function runMigration1IdentityResolverSettingsTest() {
-  var result = runMigration1IdentityResolverSelfTest_();
-  var feedback = formatMigration1IdentityResolverSelfTestFeedback_(result);
-  writePhboxSettingsFeedback_(feedback);
-  return {
-    ok: !!result.ok,
-    feedback: feedback
-  };
-}
-
-
-function runMigration1TargetRuntimeGateSettingsTest() {
-  var result = runMigration1TargetRuntimeGateSelfTest_();
-  var feedback = formatMigration1TargetRuntimeGateSelfTestFeedback_(result);
-  writePhboxSettingsFeedback_(feedback);
-  return {
-    ok: !!result.ok,
-    feedback: feedback
-  };
-}
-
-
-function getMigration1TargetRuntimeGateSettingsStatus() {
-  var stage = runMigration1TargetRuntimeGateStage_({});
-  var feedback = formatMigration1TargetRuntimeGateRuntimeFeedback_(stage);
-  writePhboxSettingsFeedback_(feedback);
-  return {
-    ok: !!(stage && stage.ok),
-    feedback: feedback
-  };
-}
-
 function runMigration1TargetPublishSettingsTest() {
   var result = runMigration1TargetPublishSelfTest_();
   var feedback = formatMigration1TargetPublishSelfTestFeedback_(result);
