@@ -165,13 +165,12 @@
 
 
       <section class="card" style="margin-top:16px;">
-        <h2>M1-PUB TEST BACKEND</h2>
-        <div class="hint">M1-PUB_ONLY — UI v3. Test diagnostico del publish target multifarmacia. Il self-test non esegue Firestore, Gmail, Drive, OCR, parser, merge, rename o cutover.</div>
+        <h2>M1-SIG TEST BACKEND</h2>
+        <div class="hint">M1-SIG_ONLY — UI v9. Test diagnostico locale dei runtime signals identityAnchor-aware. Non esegue Firestore, Gmail, Drive, OCR, parser, merge, rename, publish target o cutover.</div>
         <div class="actions" style="margin:14px 0 0;">
-          <button class="secondary" type="button" onclick="runM1TargetPublishTests()">Esegui test M1-PUB</button>
-          <button class="secondary" type="button" onclick="readM1TargetPublishStatus()">Leggi stato runtime M1-PUB</button>
+          <button class="secondary" type="button" onclick="runM1RuntimeSignalIdentityTests()">Esegui test M1-SIG</button>
         </div>
-        <textarea id="migration1TargetPublishFeedback" class="feedback" readonly></textarea>
+        <textarea id="migration1RuntimeSignalIdentityFeedback" class="feedback" readonly></textarea>
       </section>
 
       <section class="card" style="margin-top:16px;">
@@ -242,39 +241,21 @@
       }
 
 
-      function runM1TargetPublishTests() {
+      function runM1RuntimeSignalIdentityTests() {
         setBusy(true);
-        setStatus('Test M1-PUB in corso...', '');
+        setStatus('Test M1-SIG in corso...', '');
         google.script.run
           .withSuccessHandler(function(data) {
-            document.getElementById('migration1TargetPublishFeedback').value = (data && data.feedback) || '';
+            document.getElementById('migration1RuntimeSignalIdentityFeedback').value = (data && data.feedback) || '';
             document.getElementById('feedback').value = (data && data.feedback) || '';
             setBusy(false);
-            setStatus(data && data.ok ? 'Test M1-PUB superati.' : 'Test M1-PUB con errori.', data && data.ok ? 'ok' : 'error');
+            setStatus(data && data.ok ? 'Test M1-SIG superati.' : 'Test M1-SIG con errori.', data && data.ok ? 'ok' : 'error');
           })
           .withFailureHandler(function(error) {
             setBusy(false);
             setStatus(error && error.message ? error.message : String(error), 'error');
           })
-          .runMigration1TargetPublishSettingsTest();
-      }
-
-
-      function readM1TargetPublishStatus() {
-        setBusy(true);
-        setStatus('Lettura stato M1-PUB...', '');
-        google.script.run
-          .withSuccessHandler(function(data) {
-            document.getElementById('migration1TargetPublishFeedback').value = (data && data.feedback) || '';
-            document.getElementById('feedback').value = (data && data.feedback) || '';
-            setBusy(false);
-            setStatus(data && data.ok ? 'Stato M1-PUB letto.' : 'Stato M1-PUB non valido.', data && data.ok ? 'ok' : 'error');
-          })
-          .withFailureHandler(function(error) {
-            setBusy(false);
-            setStatus(error && error.message ? error.message : String(error), 'error');
-          })
-          .getMigration1TargetPublishSettingsStatus();
+          .runMigration1RuntimeSignalIdentitySettingsTest();
       }
 
 
