@@ -152,6 +152,7 @@ function buildPhboxSettingsFeedback_(options) {
   lines.push('ACCEPTED_CITIES_COUNT: ' + String((cfg.acceptedCities || []).length));
   lines.push('ACCEPT_RECIPES_WITHOUT_CITY: ' + String(!!cfg.acceptRecipesWithoutCity));
   lines.push('M1_SIG_TEST_AVAILABLE: true');
+  lines.push('SETTINGS_UI_BUILD: M1_SIG_ONLY_UI_v9_1');
   lines.push('M1_PUB_TEST_SETTINGS_REMOVED: true');
   lines.push('M1_IDRES_TEST_SETTINGS_REMOVED: true');
   lines.push('M1_GATE_TEST_SETTINGS_REMOVED: true');
