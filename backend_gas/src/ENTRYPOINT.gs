@@ -62,7 +62,11 @@ async function runPhboxBackendSimple() {
       runtimeIndex = persistRuntimeStageResult_(rootFolder, cfg, runtimeIndex, deleteStage);
 
       firestoreStage = await runProtectedStage_('firestore_publish', function () {
-        return syncRuntimeIndexToFirestore_({ budget: budget, runtimeIndex: runtimeIndex });
+        return syncRuntimeIndexToFirestore_({
+          budget: budget,
+          runtimeIndex: runtimeIndex,
+          allowMigration1TargetPublish: true
+        });
       }, cfg);
       runtimeIndex = persistRuntimeStageResult_(rootFolder, cfg, runtimeIndex, firestoreStage);
     }
