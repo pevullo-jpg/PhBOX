@@ -117,8 +117,6 @@ function clearMigration1ShadowSettingsTestProperties_(props) {
   props = props || PropertiesService.getScriptProperties();
   [
     'PHBOX_M1_SHADOW_TARGET_ENABLED',
-    'PHBOX_TENANT_ID',
-    'PHBOX_EXPECTED_CANONICAL_TENANT_ID',
     'PHBOX_M1_SHADOW_MAX_ASSISTITI_SCAN'
   ].forEach(function (name) {
     props.deleteProperty(name);
@@ -154,6 +152,8 @@ function buildPhboxSettingsFeedback_(options) {
   lines.push('ACCEPTED_CITIES_COUNT: ' + String((cfg.acceptedCities || []).length));
   lines.push('ACCEPT_RECIPES_WITHOUT_CITY: ' + String(!!cfg.acceptRecipesWithoutCity));
   lines.push('M1_IDRES_TEST_AVAILABLE: true');
+  lines.push('M1_GATE_TEST_AVAILABLE: true');
+  lines.push('M1_TARGET_RUNTIME_GATE_DEFAULT_OFF: true');
   lines.push('M1_SHADOW_TEST_SETTINGS_REMOVED: true');
   lines.push('GMAIL_QUERY_PREVIEW: ' + buildGmailQuery_(cfg, cfg.gmailProcessedLabel));
 
@@ -177,6 +177,28 @@ function runMigration1IdentityResolverSettingsTest() {
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!result.ok,
+    feedback: feedback
+  };
+}
+
+
+function runMigration1TargetRuntimeGateSettingsTest() {
+  var result = runMigration1TargetRuntimeGateSelfTest_();
+  var feedback = formatMigration1TargetRuntimeGateSelfTestFeedback_(result);
+  writePhboxSettingsFeedback_(feedback);
+  return {
+    ok: !!result.ok,
+    feedback: feedback
+  };
+}
+
+
+function getMigration1TargetRuntimeGateSettingsStatus() {
+  var stage = runMigration1TargetRuntimeGateStage_({});
+  var feedback = formatMigration1TargetRuntimeGateRuntimeFeedback_(stage);
+  writePhboxSettingsFeedback_(feedback);
+  return {
+    ok: !!(stage && stage.ok),
     feedback: feedback
   };
 }

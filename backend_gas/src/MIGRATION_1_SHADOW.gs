@@ -116,34 +116,19 @@ function isMigration1TargetShadowEnabled_(props) {
 }
 
 function validateMigration1ShadowCanonicalTenantId_(props) {
-  var rawTenantId = String(props.getProperty(PHBOX_M1_SHADOW_TENANT_ID_PROPERTY_) || '');
-  var rawExpectedTenantId = String(props.getProperty(PHBOX_M1_SHADOW_EXPECTED_TENANT_ID_PROPERTY_) || '');
-  var tenantId = normalizeMigration1ShadowTenantSegment_(rawTenantId, PHBOX_M1_SHADOW_TENANT_ID_PROPERTY_);
-  var expectedTenantId = normalizeMigration1ShadowTenantSegment_(rawExpectedTenantId, PHBOX_M1_SHADOW_EXPECTED_TENANT_ID_PROPERTY_);
-
-  if (tenantId !== expectedTenantId) {
-    throw new Error('M1_SHADOW_TENANT_NOT_CANONICAL: PHBOX_TENANT_ID diverso da PHBOX_EXPECTED_CANONICAL_TENANT_ID. Nessuna target read eseguita.');
-  }
-
-  return {
-    tenantId: tenantId,
-    expectedTenantId: expectedTenantId
-  };
+  return validateMigration1CanonicalTenantIdFromProperties_(props, {
+    tenantPropertyName: PHBOX_M1_SHADOW_TENANT_ID_PROPERTY_,
+    expectedTenantPropertyName: PHBOX_M1_SHADOW_EXPECTED_TENANT_ID_PROPERTY_,
+    errorPrefix: 'M1_SHADOW',
+    blockedOperationLabel: 'Nessuna target read eseguita.'
+  });
 }
 
 function normalizeMigration1ShadowTenantSegment_(value, label) {
-  var raw = String(value || '');
-  var normalized = raw.trim();
-  if (!normalized) {
-    throw new Error('M1_SHADOW_TENANT_MISSING: ' + label + ' mancante o vuoto. Nessuna target read eseguita.');
-  }
-  if (normalized !== raw) {
-    throw new Error('M1_SHADOW_TENANT_NOT_CANONICAL: ' + label + ' contiene spazi iniziali/finali. Nessuna target read eseguita.');
-  }
-  if (normalized.indexOf('/') !== -1) {
-    throw new Error('M1_SHADOW_TENANT_NOT_CANONICAL: ' + label + ' contiene slash. Nessuna target read eseguita.');
-  }
-  return normalized;
+  return normalizeMigration1CanonicalTenantSegment_(value, label, {
+    errorPrefix: 'M1_SHADOW',
+    blockedOperationLabel: 'Nessuna target read eseguita.'
+  });
 }
 
 function normalizeMigration1ShadowMaxAssistitiScan_(rawValue) {

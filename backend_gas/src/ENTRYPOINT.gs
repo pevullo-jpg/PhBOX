@@ -9,6 +9,7 @@ async function runPhboxBackendSimple() {
     var rootFolder = DriveApp.getFolderById(cfg.folderId);
     var runtimeIndex = readRuntimeIndex_(rootFolder, cfg);
 
+    var migration1TargetRuntimeGateStage = runMigration1TargetRuntimeGateStage_({ cfg: cfg, budget: budget });
     var migration1ShadowStage = await runMigration1TargetShadowReadOnlyStage_({ cfg: cfg, budget: budget });
 
     var gmailStage = await runProtectedStage_('gmail_ingest', function () {
@@ -74,6 +75,7 @@ async function runPhboxBackendSimple() {
     var result = {
       ok: true,
       runtimeGate: runtimeGate,
+      migration1TargetRuntimeGate: normalizeStageSummary_(migration1TargetRuntimeGateStage, buildMigration1TargetRuntimeGateErrorFallback_()),
       migration1Shadow: normalizeStageSummary_(migration1ShadowStage, buildMigration1ShadowReadOnlyErrorFallback_()),
       gmail: normalizeStageSummary_(gmailStage, { skipped: true, reason: 'stage_error', stoppedEarly: true }),
       manifestsSeen: collectRuntimeManifests_(runtimeIndex).length,
@@ -84,7 +86,7 @@ async function runPhboxBackendSimple() {
       firestore: normalizeStageSummary_(firestoreStage, { skipped: true, reason: 'stage_error', stoppedEarly: true }),
       gmailFinalize: normalizeStageSummary_(gmailFinalizeStage, { skipped: true, reason: 'stage_error', stoppedEarly: true }),
       budget: describeBudgetState_(budget),
-      needsAnotherRun: computeNeedsAnotherRunFromRuntimeIndex_(runtimeIndex, [gmailStage, manifestStage, mergeStage, renameStage, runtimeGateStage, deleteStage, firestoreStage, gmailFinalizeStage])
+      needsAnotherRun: computeNeedsAnotherRunFromRuntimeIndex_(runtimeIndex, [migration1TargetRuntimeGateStage, gmailStage, manifestStage, mergeStage, renameStage, runtimeGateStage, deleteStage, firestoreStage, gmailFinalizeStage])
     };
     if (runtimeGate && runtimeGate.requiresFullPipeline) {
       var runtimeSignalFinalizeStage = await runProtectedStage_('runtime_signal_finalize_full_pipeline', function () {
