@@ -1061,13 +1061,13 @@ class _DashboardPageState extends State<DashboardPage> {
         ...expandedRowsByMemberCode,
       ];
       final Set<String> expandedFamilyCfs = expandedRows
-          .map((PatientDashboardIndex item) => _normalizeFiscalCode(item.fiscalCode))
+          .map(_dashboardIndexIdentityKey)
           .where((String cf) => cf.isNotEmpty)
           .toSet()
         ..addAll(familyExpansion.memberFiscalCodes.map(_normalizeFiscalCode).where((String cf) => cf.isNotEmpty));
       final Map<String, PatientDashboardIndex> mergedByCf = <String, PatientDashboardIndex>{};
       for (final PatientDashboardIndex item in <PatientDashboardIndex>[...directRows, ...expandedRows]) {
-        final String cf = _normalizeFiscalCode(item.fiscalCode);
+        final String cf = _dashboardIndexIdentityKey(item);
         if (cf.isEmpty || mergedByCf.containsKey(cf)) {
           continue;
         }
@@ -1150,11 +1150,11 @@ class _DashboardPageState extends State<DashboardPage> {
 
     final Map<String, PatientDashboardIndex> indexByCf = <String, PatientDashboardIndex>{
       for (final PatientDashboardIndex item in allIndexRows)
-        if (_normalizeFiscalCode(item.fiscalCode).isNotEmpty) _normalizeFiscalCode(item.fiscalCode): item,
+        if (_dashboardIndexIdentityKey(item).isNotEmpty) _dashboardIndexIdentityKey(item): item,
     };
 
     final Set<String> matchedCfs = <String>{
-      for (final PatientDashboardIndex item in baseSearchRows) _normalizeFiscalCode(item.fiscalCode),
+      for (final PatientDashboardIndex item in baseSearchRows) _dashboardIndexIdentityKey(item),
     };
 
     final Map<String, List<DrivePdfImport>> matchedImportsByCf = <String, List<DrivePdfImport>>{};
@@ -1206,7 +1206,10 @@ class _DashboardPageState extends State<DashboardPage> {
     if ('dpc'.contains(query) || query.contains('dpc')) {
       for (final PatientDashboardIndex item in allIndexRows) {
         if (item.hasDpc) {
-          markCf(item.fiscalCode);
+          final String identityKey = _dashboardIndexIdentityKey(item);
+          if (identityKey.isNotEmpty) {
+            matchedCfs.add(identityKey);
+          }
         }
       }
     }
@@ -1428,7 +1431,7 @@ class _DashboardPageState extends State<DashboardPage> {
       ...rowsByFamilyId,
       ...rowsByMemberCode,
     ]) {
-      final String cf = _normalizeFiscalCode(item.fiscalCode);
+      final String cf = _dashboardIndexIdentityKey(item);
       if (cf.isEmpty || mergedByCf.containsKey(cf)) {
         continue;
       }
@@ -1436,7 +1439,7 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     final List<PatientDashboardIndex> rows = mergedByCf.values.toList();
     final Set<String> expandedFamilyCfs = rows
-        .map((PatientDashboardIndex item) => _normalizeFiscalCode(item.fiscalCode))
+        .map(_dashboardIndexIdentityKey)
         .where((String cf) => cf.isNotEmpty)
         .toSet()
       ..addAll(familyExpansion.memberFiscalCodes.map(_normalizeFiscalCode).where((String cf) => cf.isNotEmpty));
@@ -1470,7 +1473,7 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     final List<String> directFiscalCodes = directRows
-        .map((PatientDashboardIndex item) => _normalizeFiscalCode(item.fiscalCode))
+        .map(_dashboardIndexIdentityKey)
         .where((String cf) => cf.isNotEmpty && !coveredFiscalCodes.contains(cf))
         .toSet()
         .toList()
@@ -1551,7 +1554,7 @@ class _DashboardPageState extends State<DashboardPage> {
     if (base.familyId.trim().isNotEmpty && base.familyName.trim().isNotEmpty) {
       return base;
     }
-    final String fiscalCode = _normalizeFiscalCode(item.fiscalCode);
+    final String fiscalCode = _dashboardIndexIdentityKey(item);
     if (fiscalCode.isEmpty) {
       return base;
     }
@@ -1599,6 +1602,12 @@ class _DashboardPageState extends State<DashboardPage> {
       entries.sort((a, b) => b.chronologyDate.compareTo(a.chronologyDate));
     }
     return grouped;
+  }
+
+  String _dashboardIndexIdentityKey(PatientDashboardIndex item) {
+    final String key = item.dashboardIdentityKey.trim().toUpperCase();
+    if (key.isNotEmpty) return key;
+    return _normalizeFiscalCode(item.fiscalCode);
   }
 
   String _normalizeFiscalCode(String value) => value.trim().toUpperCase();
