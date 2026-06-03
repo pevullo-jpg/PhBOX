@@ -151,8 +151,9 @@ function buildPhboxSettingsFeedback_(options) {
   lines.push('EXCLUDED_SENDERS_COUNT: ' + String((cfg.excludedEmailSenders || []).length));
   lines.push('ACCEPTED_CITIES_COUNT: ' + String((cfg.acceptedCities || []).length));
   lines.push('ACCEPT_RECIPES_WITHOUT_CITY: ' + String(!!cfg.acceptRecipesWithoutCity));
-  lines.push('M1_DUAL_TEST_AVAILABLE: true');
-  lines.push('SETTINGS_UI_BUILD: M1_DUAL_ONLY_UI_v3_FORCE');
+  lines.push('M1_CUT_TEST_AVAILABLE: true');
+  lines.push('SETTINGS_UI_BUILD: M1_CUT_ONLY_UI_v2');
+  lines.push('M1_DUAL_TEST_SETTINGS_REMOVED: true');
   lines.push('M1_DASH_TEST_SETTINGS_REMOVED: true');
   lines.push('M1_SIG_TEST_SETTINGS_REMOVED: true');
   lines.push('M1_PUB_TEST_SETTINGS_REMOVED: true');
@@ -175,9 +176,9 @@ function buildPhboxSettingsFeedback_(options) {
   return lines.join('\n');
 }
 
-function runMigration1DualVerifierSettingsTest() {
-  var result = runMigration1DualVerifierSelfTest_();
-  var feedback = formatMigration1DualVerifierSelfTestFeedback_(result);
+function runMigration1CutoverSettingsTest() {
+  var result = runMigration1CutoverSelfTest_();
+  var feedback = formatMigration1CutoverSelfTestFeedback_(result);
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!result.ok,
@@ -185,9 +186,9 @@ function runMigration1DualVerifierSettingsTest() {
   };
 }
 
-function getMigration1DualVerifierSettingsStatus() {
-  var result = runMigration1DualVerifierRuntimeStatus_();
-  var feedback = formatMigration1DualVerifierRuntimeFeedback_(result);
+function getMigration1CutoverSettingsStatus() {
+  var result = runMigration1CutoverRuntimeStatus_();
+  var feedback = formatMigration1CutoverRuntimeFeedback_(result);
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!(result && result.ok),
