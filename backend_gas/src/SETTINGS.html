@@ -163,15 +163,14 @@
         <label class="check"><input id="acceptRecipesWithoutCity" type="checkbox"> Accettare sempre ricette senza città</label>
       </section>
 
-
       <section class="card" style="margin-top:16px;">
-        <h2>M1-CUT TEST BACKEND</h2>
-        <div class="hint">M1-CUT_ONLY — UI v2. Gate di cutover controllato singolo tenant. Il self-test non legge Firestore; lo status runtime legge solo se cutover, gate e DUAL sono configurati.</div>
+        <h2>M1-E2E TEST BACKEND</h2>
+        <div class="hint">M1-E2E_ONLY — UI v1. Validazione controllata gate → publish status → dual → cut. Non esegue Gmail, Drive, OCR, parser, merge, rename, publish target o cutover.</div>
         <div class="actions" style="margin:14px 0 0;">
-          <button class="secondary" type="button" onclick="runM1CutoverTests()">Esegui test M1-CUT</button>
-          <button class="secondary" type="button" onclick="readM1CutoverStatus()">Leggi stato runtime M1-CUT</button>
+          <button class="secondary" type="button" onclick="runM1E2eValidationTests()">Esegui test M1-E2E</button>
+          <button class="secondary" type="button" onclick="readM1E2eValidationStatus()">Leggi stato runtime M1-E2E</button>
         </div>
-        <textarea id="migration1CutoverFeedback" class="feedback" readonly></textarea>
+        <textarea id="migration1E2eValidationFeedback" class="feedback" readonly></textarea>
       </section>
 
       <section class="card" style="margin-top:16px;">
@@ -241,41 +240,39 @@
         document.getElementById('feedback').value = (data && data.feedback) || '';
       }
 
-
-      function runM1CutoverTests() {
+      function runM1E2eValidationTests() {
         setBusy(true);
-        setStatus('Test M1-CUT in corso...', '');
+        setStatus('Test M1-E2E in corso...', '');
         google.script.run
           .withSuccessHandler(function(data) {
-            document.getElementById('migration1CutoverFeedback').value = (data && data.feedback) || '';
+            document.getElementById('migration1E2eValidationFeedback').value = (data && data.feedback) || '';
             document.getElementById('feedback').value = (data && data.feedback) || '';
             setBusy(false);
-            setStatus(data && data.ok ? 'Test M1-CUT superati.' : 'Test M1-CUT con errori.', data && data.ok ? 'ok' : 'error');
+            setStatus(data && data.ok ? 'Test M1-E2E superati.' : 'Test M1-E2E con errori.', data && data.ok ? 'ok' : 'error');
           })
           .withFailureHandler(function(error) {
             setBusy(false);
             setStatus(error && error.message ? error.message : String(error), 'error');
           })
-          .runMigration1CutoverSettingsTest();
+          .runMigration1E2eValidationSettingsTest();
       }
 
-      function readM1CutoverStatus() {
+      function readM1E2eValidationStatus() {
         setBusy(true);
-        setStatus('Lettura runtime M1-CUT in corso...', '');
+        setStatus('Lettura runtime M1-E2E in corso...', '');
         google.script.run
           .withSuccessHandler(function(data) {
-            document.getElementById('migration1CutoverFeedback').value = (data && data.feedback) || '';
+            document.getElementById('migration1E2eValidationFeedback').value = (data && data.feedback) || '';
             document.getElementById('feedback').value = (data && data.feedback) || '';
             setBusy(false);
-            setStatus(data && data.ok ? 'Runtime M1-CUT letto.' : 'Runtime M1-CUT con errori.', data && data.ok ? 'ok' : 'error');
+            setStatus(data && data.ok ? 'Runtime M1-E2E letto.' : 'Runtime M1-E2E con errori.', data && data.ok ? 'ok' : 'error');
           })
           .withFailureHandler(function(error) {
             setBusy(false);
             setStatus(error && error.message ? error.message : String(error), 'error');
           })
-          .getMigration1CutoverSettingsStatus();
+          .getMigration1E2eValidationSettingsStatus();
       }
-
 
       function loadSettings() {
         setBusy(true);
