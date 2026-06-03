@@ -165,13 +165,13 @@
 
 
       <section class="card" style="margin-top:16px;">
-        <h2>M1-DUAL TEST BACKEND</h2>
-        <div class="hint">M1-DUAL_ONLY — UI v2. Verifier read-only legacy vs target. Il self-test non legge Firestore; lo status runtime legge al massimo i path espliciti configurati in PHBOX_M1_DUAL_SAMPLE_LEGACY_PATHS.</div>
+        <h2>M1-CUT TEST BACKEND</h2>
+        <div class="hint">M1-CUT_ONLY — UI v1. Gate di cutover controllato singolo tenant. Il self-test non legge Firestore; lo status runtime legge solo se cutover, gate e DUAL sono configurati.</div>
         <div class="actions" style="margin:14px 0 0;">
-          <button class="secondary" type="button" onclick="runM1DualVerifierTests()">Esegui test M1-DUAL</button>
-          <button class="secondary" type="button" onclick="readM1DualVerifierStatus()">Leggi stato runtime M1-DUAL</button>
+          <button class="secondary" type="button" onclick="runM1CutoverTests()">Esegui test M1-CUT</button>
+          <button class="secondary" type="button" onclick="readM1CutoverStatus()">Leggi stato runtime M1-CUT</button>
         </div>
-        <textarea id="migration1DualVerifierFeedback" class="feedback" readonly></textarea>
+        <textarea id="migration1CutoverFeedback" class="feedback" readonly></textarea>
       </section>
 
       <section class="card" style="margin-top:16px;">
@@ -242,38 +242,38 @@
       }
 
 
-      function runM1DualVerifierTests() {
+      function runM1CutoverTests() {
         setBusy(true);
-        setStatus('Test M1-DUAL in corso...', '');
+        setStatus('Test M1-CUT in corso...', '');
         google.script.run
           .withSuccessHandler(function(data) {
-            document.getElementById('migration1DualVerifierFeedback').value = (data && data.feedback) || '';
+            document.getElementById('migration1CutoverFeedback').value = (data && data.feedback) || '';
             document.getElementById('feedback').value = (data && data.feedback) || '';
             setBusy(false);
-            setStatus(data && data.ok ? 'Test M1-DUAL superati.' : 'Test M1-DUAL con errori.', data && data.ok ? 'ok' : 'error');
+            setStatus(data && data.ok ? 'Test M1-CUT superati.' : 'Test M1-CUT con errori.', data && data.ok ? 'ok' : 'error');
           })
           .withFailureHandler(function(error) {
             setBusy(false);
             setStatus(error && error.message ? error.message : String(error), 'error');
           })
-          .runMigration1DualVerifierSettingsTest();
+          .runMigration1CutoverSettingsTest();
       }
 
-      function readM1DualVerifierStatus() {
+      function readM1CutoverStatus() {
         setBusy(true);
-        setStatus('Lettura runtime M1-DUAL in corso...', '');
+        setStatus('Lettura runtime M1-CUT in corso...', '');
         google.script.run
           .withSuccessHandler(function(data) {
-            document.getElementById('migration1DualVerifierFeedback').value = (data && data.feedback) || '';
+            document.getElementById('migration1CutoverFeedback').value = (data && data.feedback) || '';
             document.getElementById('feedback').value = (data && data.feedback) || '';
             setBusy(false);
-            setStatus(data && data.ok ? 'Runtime M1-DUAL letto.' : 'Runtime M1-DUAL con errori.', data && data.ok ? 'ok' : 'error');
+            setStatus(data && data.ok ? 'Runtime M1-CUT letto.' : 'Runtime M1-CUT con errori.', data && data.ok ? 'ok' : 'error');
           })
           .withFailureHandler(function(error) {
             setBusy(false);
             setStatus(error && error.message ? error.message : String(error), 'error');
           })
-          .getMigration1DualVerifierSettingsStatus();
+          .getMigration1CutoverSettingsStatus();
       }
 
 
