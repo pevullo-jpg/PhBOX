@@ -151,8 +151,9 @@ function buildPhboxSettingsFeedback_(options) {
   lines.push('EXCLUDED_SENDERS_COUNT: ' + String((cfg.excludedEmailSenders || []).length));
   lines.push('ACCEPTED_CITIES_COUNT: ' + String((cfg.acceptedCities || []).length));
   lines.push('ACCEPT_RECIPES_WITHOUT_CITY: ' + String(!!cfg.acceptRecipesWithoutCity));
-  lines.push('M2_CUTON_TEST_AVAILABLE: true');
-  lines.push('SETTINGS_UI_BUILD: M2_CUTON_ONLY_UI_v3');
+  lines.push('M2_ROLLBACK_TEST_AVAILABLE: true');
+  lines.push('SETTINGS_UI_BUILD: M2_ROLLBACK_ONLY_UI_v2');
+  lines.push('M2_CUTON_TEST_SETTINGS_REMOVED: true');
   lines.push('M2_VERIFY_TEST_SETTINGS_REMOVED: true');
   lines.push('M2_DASH_TEST_SETTINGS_REMOVED: true');
   lines.push('M2_SIGNAL_TEST_SETTINGS_REMOVED: true');
@@ -188,9 +189,9 @@ function buildPhboxSettingsFeedback_(options) {
   return lines.join('\n');
 }
 
-function runMigration2CutonSettingsTest() {
-  var result = runMigration2CutonSelfTest_();
-  var feedback = formatMigration2CutonSelfTestFeedback_(result);
+function runMigration2RollbackSettingsTest() {
+  var result = runMigration2RollbackSelfTest_();
+  var feedback = formatMigration2RollbackSelfTestFeedback_(result);
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!result.ok,
@@ -198,9 +199,9 @@ function runMigration2CutonSettingsTest() {
   };
 }
 
-function getMigration2CutonSettingsStatus() {
-  var result = runMigration2CutonRuntimeStatus_();
-  var feedback = formatMigration2CutonRuntimeFeedback_(result);
+function getMigration2RollbackSettingsStatus() {
+  var result = runMigration2RollbackRuntimeStatus_();
+  var feedback = formatMigration2RollbackRuntimeFeedback_(result);
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!(result && result.ok),
