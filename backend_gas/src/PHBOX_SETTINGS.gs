@@ -151,8 +151,9 @@ function buildPhboxSettingsFeedback_(options) {
   lines.push('EXCLUDED_SENDERS_COUNT: ' + String((cfg.excludedEmailSenders || []).length));
   lines.push('ACCEPTED_CITIES_COUNT: ' + String((cfg.acceptedCities || []).length));
   lines.push('ACCEPT_RECIPES_WITHOUT_CITY: ' + String(!!cfg.acceptRecipesWithoutCity));
-  lines.push('M3_AUTH_TEST_AVAILABLE: true');
-  lines.push('SETTINGS_UI_BUILD: M3_AUTH_ONLY_UI_v1');
+  lines.push('M3_FRONT_ROUTE_TEST_AVAILABLE: true');
+  lines.push('SETTINGS_UI_BUILD: M3_FRONT_ROUTE_ONLY_UI_v1');
+  lines.push('M3_AUTH_TEST_SETTINGS_REMOVED: true');
   lines.push('M3_COST_GUARD_TEST_SETTINGS_REMOVED: true');
   lines.push('M3_TENANT_CONFIG_TEST_SETTINGS_REMOVED: true');
   lines.push('M3_TENANT_REGISTRY_TEST_SETTINGS_REMOVED: true');
@@ -199,9 +200,9 @@ function buildPhboxSettingsFeedback_(options) {
   return lines.join('\n');
 }
 
-function runMigration3AuthSettingsTest() {
-  var result = runMigration3AuthSelfTest_();
-  var feedback = formatMigration3AuthSelfTestFeedback_(result);
+function runMigration3FrontRouteSettingsTest() {
+  var result = runMigration3FrontRouteSelfTest_();
+  var feedback = formatMigration3FrontRouteSelfTestFeedback_(result);
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!result.ok,
@@ -209,9 +210,9 @@ function runMigration3AuthSettingsTest() {
   };
 }
 
-function getMigration3AuthSettingsStatus() {
-  var result = runMigration3AuthRuntimeStatus_();
-  var feedback = formatMigration3AuthRuntimeFeedback_(result);
+function getMigration3FrontRouteSettingsStatus() {
+  var result = runMigration3FrontRouteRuntimeStatus_();
+  var feedback = formatMigration3FrontRouteRuntimeFeedback_(result);
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!(result && result.ok),
