@@ -151,8 +151,10 @@ function buildPhboxSettingsFeedback_(options) {
   lines.push('EXCLUDED_SENDERS_COUNT: ' + String((cfg.excludedEmailSenders || []).length));
   lines.push('ACCEPTED_CITIES_COUNT: ' + String((cfg.acceptedCities || []).length));
   lines.push('ACCEPT_RECIPES_WITHOUT_CITY: ' + String(!!cfg.acceptRecipesWithoutCity));
-  lines.push('M3_TENANT_REGISTRY_TEST_AVAILABLE: true');
-  lines.push('SETTINGS_UI_BUILD: M3_TENANT_REGISTRY_ONLY_UI_v1');
+  lines.push('M3_COST_GUARD_TEST_AVAILABLE: true');
+  lines.push('SETTINGS_UI_BUILD: M3_COST_GUARD_ONLY_UI_v1');
+  lines.push('M3_TENANT_CONFIG_TEST_SETTINGS_REMOVED: true');
+  lines.push('M3_TENANT_REGISTRY_TEST_SETTINGS_REMOVED: true');
   lines.push('M3_LOCK_TEST_SETTINGS_REMOVED: true');
   lines.push('M2_FREEZE_TEST_SETTINGS_REMOVED: true');
   lines.push('M2_DOC_TEST_SETTINGS_REMOVED: true');
@@ -196,9 +198,9 @@ function buildPhboxSettingsFeedback_(options) {
   return lines.join('\n');
 }
 
-function runMigration3TenantRegistrySettingsTest() {
-  var result = runMigration3TenantRegistrySelfTest_();
-  var feedback = formatMigration3TenantRegistrySelfTestFeedback_(result);
+function runMigration3CostGuardSettingsTest() {
+  var result = runMigration3CostGuardSelfTest_();
+  var feedback = formatMigration3CostGuardSelfTestFeedback_(result);
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!result.ok,
@@ -206,9 +208,9 @@ function runMigration3TenantRegistrySettingsTest() {
   };
 }
 
-function getMigration3TenantRegistrySettingsStatus() {
-  var result = runMigration3TenantRegistryRuntimeStatus_();
-  var feedback = formatMigration3TenantRegistryRuntimeFeedback_(result);
+function getMigration3CostGuardSettingsStatus() {
+  var result = runMigration3CostGuardRuntimeStatus_();
+  var feedback = formatMigration3CostGuardRuntimeFeedback_(result);
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!(result && result.ok),
