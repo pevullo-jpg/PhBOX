@@ -151,8 +151,9 @@ function buildPhboxSettingsFeedback_(options) {
   lines.push('EXCLUDED_SENDERS_COUNT: ' + String((cfg.excludedEmailSenders || []).length));
   lines.push('ACCEPTED_CITIES_COUNT: ' + String((cfg.acceptedCities || []).length));
   lines.push('ACCEPT_RECIPES_WITHOUT_CITY: ' + String(!!cfg.acceptRecipesWithoutCity));
-  lines.push('M2_FINALCLEAN_TEST_AVAILABLE: true');
-  lines.push('SETTINGS_UI_BUILD: M2_FINALCLEAN_ONLY_UI_v3');
+  lines.push('M2_DOC_TEST_AVAILABLE: true');
+  lines.push('SETTINGS_UI_BUILD: M2_DOC_ONLY_UI_v2');
+  lines.push('M2_FINALCLEAN_TEST_SETTINGS_REMOVED: true');
   lines.push('M2_COST_TEST_SETTINGS_REMOVED: true');
   lines.push('M2_E2E_TEST_SETTINGS_REMOVED: true');
   lines.push('M2_ROLLBACK_TEST_SETTINGS_REMOVED: true');
@@ -192,9 +193,9 @@ function buildPhboxSettingsFeedback_(options) {
   return lines.join('\n');
 }
 
-function runMigration2FinalCleanSettingsTest() {
-  var result = runMigration2FinalCleanSelfTest_();
-  var feedback = formatMigration2FinalCleanSelfTestFeedback_(result);
+function runMigration2DocSettingsTest() {
+  var result = runMigration2DocSelfTest_();
+  var feedback = formatMigration2DocSelfTestFeedback_(result);
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!result.ok,
@@ -202,9 +203,9 @@ function runMigration2FinalCleanSettingsTest() {
   };
 }
 
-function getMigration2FinalCleanSettingsStatus() {
-  var result = runMigration2FinalCleanRuntimeStatus_();
-  var feedback = formatMigration2FinalCleanRuntimeFeedback_(result);
+function getMigration2DocSettingsStatus() {
+  var result = runMigration2DocRuntimeStatus_();
+  var feedback = formatMigration2DocRuntimeFeedback_(result);
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!(result && result.ok),
