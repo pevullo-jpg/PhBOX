@@ -151,8 +151,9 @@ function buildPhboxSettingsFeedback_(options) {
   lines.push('EXCLUDED_SENDERS_COUNT: ' + String((cfg.excludedEmailSenders || []).length));
   lines.push('ACCEPTED_CITIES_COUNT: ' + String((cfg.acceptedCities || []).length));
   lines.push('ACCEPT_RECIPES_WITHOUT_CITY: ' + String(!!cfg.acceptRecipesWithoutCity));
-  lines.push('M3_RECOVERY_TEST_AVAILABLE: true');
-  lines.push('SETTINGS_UI_BUILD: M3_RECOVERY_ONLY_UI_v1');
+  lines.push('M3_E2E_TEST_AVAILABLE: true');
+  lines.push('SETTINGS_UI_BUILD: M3_E2E_ONLY_UI_v1');
+  lines.push('M3_RECOVERY_TEST_SETTINGS_REMOVED: true');
   lines.push('M3_OBSERVABILITY_TEST_SETTINGS_REMOVED: true');
   lines.push('M3_BACKEND_ROUTE_TEST_SETTINGS_REMOVED: true');
   lines.push('M3_FRONT_ROUTE_TEST_SETTINGS_REMOVED: true');
@@ -203,9 +204,9 @@ function buildPhboxSettingsFeedback_(options) {
   return lines.join('\n');
 }
 
-function runMigration3RecoverySettingsTest() {
-  var result = runMigration3RecoverySelfTest_();
-  var feedback = formatMigration3RecoverySelfTestFeedback_(result);
+function runMigration3E2eSettingsTest() {
+  var result = runMigration3E2eSelfTest_();
+  var feedback = formatMigration3E2eSelfTestFeedback_(result);
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!result.ok,
@@ -213,9 +214,9 @@ function runMigration3RecoverySettingsTest() {
   };
 }
 
-function getMigration3RecoverySettingsStatus() {
-  var result = runMigration3RecoveryRuntimeStatus_();
-  var feedback = formatMigration3RecoveryRuntimeFeedback_(result);
+function getMigration3E2eSettingsStatus() {
+  var result = runMigration3E2eRuntimeStatus_();
+  var feedback = formatMigration3E2eRuntimeFeedback_(result);
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!(result && result.ok),
