@@ -7,6 +7,7 @@ var PHBOX_M4_MATERIALIZE_RUNTIME_OWNER_ = 'future_m4_verify_gate';
 var PHBOX_M4_MATERIALIZE_POLICY_ = 'bounded_idempotent_copy_source_to_tenant_target_without_source_delete';
 var PHBOX_M4_MATERIALIZE_MODE_ = 'materialize_with_internal_preflight_and_dryrun';
 var PHBOX_M4_MATERIALIZE_STATE_PATH_ = 'migrations/m4_materialize';
+var PHBOX_M4_MATERIALIZE_TENANTS_COLLECTION_ = 'tenants';
 var PHBOX_M4_MATERIALIZE_DEFAULT_MAX_WRITES_ = 20;
 var PHBOX_M4_MATERIALIZE_DEFAULT_PAGE_SIZE_ = 20;
 var PHBOX_M4_MATERIALIZE_MAX_PAGE_SIZE_ = 50;
@@ -31,9 +32,11 @@ function runMigration4MaterializeRuntimeStatus_() {
   var api = null;
   var lockStatus = null;
   var state = null;
+  var tenant = null;
   var error = '';
   var errorKind = '';
   var firestoreReads = 0;
+  var registryReads = 0;
 
   try {
     if (typeof runMigration4LockRuntimeStatus_ !== 'function') {
@@ -44,6 +47,9 @@ function runMigration4MaterializeRuntimeStatus_() {
     api = buildMigration4MaterializeFirestoreApi_(cfg);
     state = readMigration4MaterializeState_(api);
     firestoreReads++;
+    tenant = resolveMigration4MaterializeTenant_(api, PropertiesService.getScriptProperties());
+    firestoreReads += Math.max(0, Number(tenant.firestoreReads || 0));
+    registryReads += Math.max(0, Number(tenant.registryReads || 0));
   } catch (e) {
     error = normalizeRuntimeErrorMessage_(e);
     errorKind = classifyRuntimeFailureKind_(e);
@@ -55,6 +61,8 @@ function runMigration4MaterializeRuntimeStatus_() {
     executeWrites: false,
     firestoreReads: firestoreReads,
     firestoreWrites: 0,
+    registryReads: registryReads,
+    tenantId: tenant && tenant.tenantId,
     sourceReads: 0,
     targetReads: 0,
     targetWritesExecuted: 0,
@@ -92,7 +100,7 @@ function runMigration4MaterializeBatch_(options) {
   }
 
   try {
-    var tenant = resolveMigration4MaterializeTenant_(options.props || PropertiesService.getScriptProperties());
+    var tenant = resolveMigration4MaterializeTenant_(api, options.props || PropertiesService.getScriptProperties());
     var work = executeMigration4MaterializeWork_(cfg, api, state, {
       tenantId: tenant.tenantId,
       expectedTenantId: tenant.expectedTenantId,
@@ -128,8 +136,10 @@ function runMigration4MaterializeBatch_(options) {
       executeWrites: executeWrites,
       maxWrites: maxWrites,
       pageSize: pageSize,
-      firestoreReads: stats.firestoreReads + work.firestoreReads,
+      firestoreReads: stats.firestoreReads + Math.max(0, Number(tenant.firestoreReads || 0)) + work.firestoreReads,
       firestoreWrites: work.firestoreWrites,
+      registryReads: Math.max(0, Number(tenant.registryReads || 0)),
+      tenantId: tenant.tenantId,
       sourceReads: work.sourceReads,
       targetReads: work.targetReads,
       targetWrites: work.targetWrites,
@@ -484,7 +494,7 @@ function buildMigration4MaterializeResult_(data) {
     status: String(state.status || (materializeComplete ? 'complete' : 'planned')),
     phase: String((state.lastCursor && state.lastCursor.phase) || 'root'),
     migrationId: String(state.migrationId || ''),
-    tenantId: String(state.tenantId || ''),
+    tenantId: String(data.tenantId || state.tenantId || ''),
     executeWrites: executeWrites,
     preflightOk: preflightOk,
     dryRunOk: Object.prototype.hasOwnProperty.call(data, 'dryRunOk') ? !!data.dryRunOk : preflightOk,
@@ -507,7 +517,7 @@ function buildMigration4MaterializeResult_(data) {
     firestoreWrites: Math.max(0, Number(data.firestoreWrites || 0)),
     estimatedReadsPerHour: 0,
     estimatedWritesPerHour: 0,
-    registryReads: 0,
+    registryReads: Math.max(0, Number(data.registryReads || 0)),
     registryWrites: 0,
     configReads: 0,
     configWrites: 0,
@@ -763,15 +773,57 @@ function normalizeMigration4MaterializeCursor_(cursor) {
   };
 }
 
-function resolveMigration4MaterializeTenant_(props) {
+function resolveMigration4MaterializeTenant_(api, props) {
   props = props || PropertiesService.getScriptProperties();
-  var tenantId = String(props.getProperty('PHBOX_TENANT_ID') || '').trim();
+  var explicitTenantId = String(props.getProperty('PHBOX_TENANT_ID') || '').trim();
   var expectedTenantId = String(props.getProperty('PHBOX_EXPECTED_CANONICAL_TENANT_ID') || '').trim();
-  if (!tenantId) throw new Error('M4_MATERIALIZE_TENANT_MISSING: PHBOX_TENANT_ID mancante. Nessuna write target eseguita.');
-  if (!expectedTenantId) throw new Error('M4_MATERIALIZE_EXPECTED_TENANT_MISSING: PHBOX_EXPECTED_CANONICAL_TENANT_ID mancante. Nessuna write target eseguita.');
-  if (tenantId !== expectedTenantId) throw new Error('M4_MATERIALIZE_TENANT_MISMATCH: tenantId non allineato al canonical expected tenant. Nessuna write target eseguita.');
-  if (tenantId.indexOf('/') !== -1 || tenantId !== String(props.getProperty('PHBOX_TENANT_ID') || '')) throw new Error('M4_MATERIALIZE_TENANT_NOT_CANONICAL: tenantId contiene slash o spazi. Nessuna write target eseguita.');
-  return { tenantId: tenantId, expectedTenantId: expectedTenantId };
+  if (explicitTenantId && expectedTenantId && explicitTenantId !== expectedTenantId) {
+    throw new Error('M4_MATERIALIZE_TENANT_MISMATCH: tenantId non allineato al canonical expected tenant. Nessuna write target eseguita.');
+  }
+
+  if (api && typeof api.listDocuments === 'function') {
+    var registry = api.listDocuments(PHBOX_M4_MATERIALIZE_TENANTS_COLLECTION_, '', 2);
+    var docs = (registry && registry.documents) || [];
+    if (docs.length === 1) {
+      var tenantId = extractFirestoreDocumentId_(docs[0].name || '');
+      assertMigration4MaterializeCanonicalTenantId_(tenantId);
+      if (explicitTenantId && explicitTenantId !== tenantId) {
+        throw new Error('M4_MATERIALIZE_TENANT_REGISTRY_MISMATCH: Script Properties tenant diverso dal tenant registry Firestore. Nessuna write target eseguita.');
+      }
+      if (expectedTenantId && expectedTenantId !== tenantId) {
+        throw new Error('M4_MATERIALIZE_EXPECTED_TENANT_REGISTRY_MISMATCH: expected tenant diverso dal tenant registry Firestore. Nessuna write target eseguita.');
+      }
+      return {
+        tenantId: tenantId,
+        expectedTenantId: expectedTenantId || tenantId,
+        tenantSource: 'firestore_tenants_registry',
+        firestoreReads: 1,
+        registryReads: 1
+      };
+    }
+    if (docs.length > 1) {
+      throw new Error('M4_MATERIALIZE_TENANT_REGISTRY_AMBIGUOUS: trovati più tenant nel registry Firestore. Nessuna write target eseguita.');
+    }
+  }
+
+  if (!explicitTenantId) throw new Error('M4_MATERIALIZE_TENANT_MISSING: nessun tenant nel registry Firestore e PHBOX_TENANT_ID mancante. Nessuna write target eseguita.');
+  assertMigration4MaterializeCanonicalTenantId_(explicitTenantId);
+  if (expectedTenantId) assertMigration4MaterializeCanonicalTenantId_(expectedTenantId);
+  return {
+    tenantId: explicitTenantId,
+    expectedTenantId: expectedTenantId || explicitTenantId,
+    tenantSource: 'script_properties_fallback',
+    firestoreReads: 0,
+    registryReads: 0
+  };
+}
+
+function assertMigration4MaterializeCanonicalTenantId_(tenantId) {
+  var value = String(tenantId || '').trim();
+  if (!value) throw new Error('M4_MATERIALIZE_TENANT_EMPTY: tenantId vuoto. Nessuna write target eseguita.');
+  if (value !== String(tenantId || '')) throw new Error('M4_MATERIALIZE_TENANT_NOT_CANONICAL: tenantId contiene spazi iniziali/finali. Nessuna write target eseguita.');
+  if (value.indexOf('/') !== -1) throw new Error('M4_MATERIALIZE_TENANT_NOT_CANONICAL: tenantId contiene slash. Nessuna write target eseguita.');
+  if (value.indexOf(' ') !== -1) throw new Error('M4_MATERIALIZE_TENANT_NOT_CANONICAL: tenantId contiene spazi. Nessuna write target eseguita.');
 }
 
 function assertMigration4MaterializeTargetPath_(tenantId, targetPath) {
@@ -874,6 +926,17 @@ function buildMigration4MaterializeSelfTestCases_(cfg) {
     {
       id: 'blocks_missing_tenant',
       run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({}), props: createMigration4MaterializeTestProperties_({}), executeWrites: true }); },
+      expected: { ok: false, violationContains: 'materialize_error', targetWritesExecuted: 0 }
+    },
+
+    {
+      id: 'resolves_db_owned_tenant_from_tenants_collection',
+      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({ source: { tenants: [{ id: 'farmacia-santa-venera-8xnoc', data: { name: 'Farmacia Santa Venera' } }], patients: [{ id: 'A', data: { id: 'A' } }] } }), props: createMigration4MaterializeTestProperties_({}), executeWrites: true, maxWrites: 5 }); },
+      expected: { ok: true, tenantId: 'farmacia-santa-venera-8xnoc', registryReads: 1, targetWritesExecuted: 1 }
+    },
+    {
+      id: 'blocks_ambiguous_db_owned_tenant_registry',
+      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({ source: { tenants: [{ id: 'tenant-a', data: {} }, { id: 'tenant-b', data: {} }] } }), props: createMigration4MaterializeTestProperties_({}), executeWrites: true }); },
       expected: { ok: false, violationContains: 'materialize_error', targetWritesExecuted: 0 }
     },
     {
