@@ -151,8 +151,9 @@ function buildPhboxSettingsFeedback_(options) {
   lines.push('EXCLUDED_SENDERS_COUNT: ' + String((cfg.excludedEmailSenders || []).length));
   lines.push('ACCEPTED_CITIES_COUNT: ' + String((cfg.acceptedCities || []).length));
   lines.push('ACCEPT_RECIPES_WITHOUT_CITY: ' + String(!!cfg.acceptRecipesWithoutCity));
-  lines.push('M4_LOCK_TEST_AVAILABLE: true');
-  lines.push('SETTINGS_UI_BUILD: M4_LOCK_ONLY_UI_v1');
+  lines.push('M4_MATERIALIZE_TEST_AVAILABLE: true');
+  lines.push('SETTINGS_UI_BUILD: M4_MATERIALIZE_ONLY_UI_v1');
+  lines.push('M4_LOCK_TEST_SETTINGS_REMOVED: true');
   lines.push('M3_FREEZE_TEST_SETTINGS_REMOVED: true');
   lines.push('M3_E2E_TEST_SETTINGS_REMOVED: true');
   lines.push('M3_RECOVERY_TEST_SETTINGS_REMOVED: true');
@@ -206,9 +207,9 @@ function buildPhboxSettingsFeedback_(options) {
   return lines.join('\n');
 }
 
-function runMigration4LockSettingsTest() {
-  var result = runMigration4LockSelfTest_();
-  var feedback = formatMigration4LockSelfTestFeedback_(result);
+function runMigration4MaterializeSettingsTest() {
+  var result = runMigration4MaterializeSelfTest_();
+  var feedback = formatMigration4MaterializeSelfTestFeedback_(result);
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!result.ok,
@@ -216,9 +217,19 @@ function runMigration4LockSettingsTest() {
   };
 }
 
-function getMigration4LockSettingsStatus() {
-  var result = runMigration4LockRuntimeStatus_();
-  var feedback = formatMigration4LockRuntimeFeedback_(result);
+function getMigration4MaterializeSettingsStatus() {
+  var result = runMigration4MaterializeRuntimeStatus_();
+  var feedback = formatMigration4MaterializeRuntimeFeedback_(result);
+  writePhboxSettingsFeedback_(feedback);
+  return {
+    ok: !!(result && result.ok),
+    feedback: feedback
+  };
+}
+
+function runMigration4MaterializeSettingsBatch() {
+  var result = runMigration4MaterializeBatch_({ executeWrites: true });
+  var feedback = formatMigration4MaterializeRuntimeFeedback_(result);
   writePhboxSettingsFeedback_(feedback);
   return {
     ok: !!(result && result.ok),
