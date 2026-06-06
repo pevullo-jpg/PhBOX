@@ -7,19 +7,18 @@ var PHBOX_M4_MATERIALIZE_RUNTIME_OWNER_ = 'future_m4_verify_gate';
 var PHBOX_M4_MATERIALIZE_POLICY_ = 'bounded_idempotent_copy_source_to_tenant_target_without_source_delete';
 var PHBOX_M4_MATERIALIZE_MODE_ = 'materialize_with_internal_preflight_and_dryrun';
 var PHBOX_M4_MATERIALIZE_STATE_PATH_ = 'migrations/m4_materialize';
-var PHBOX_M4_MATERIALIZE_TENANTS_COLLECTION_ = 'tenants';
 var PHBOX_M4_MATERIALIZE_APPROVED_TENANT_ID_ = 'farmacia-santa-venera-8xnoc';
+var PHBOX_M4_MATERIALIZE_TENANT_SOURCE_ = 'approved_frontend_tenant_namespace';
+var PHBOX_M4_MATERIALIZE_TARGET_CONTRACT_ = 'TENANTS_ASSISTITI_v1';
+var PHBOX_M4_MATERIALIZE_TARGET_ASSISTITI_COLLECTION_ = 'assistiti';
+var PHBOX_M4_MATERIALIZE_TARGET_CF_LOCKS_COLLECTION_ = 'assistiti_cf_locks';
+var PHBOX_M4_MATERIALIZE_TARGET_IDENTITY_LOCKS_COLLECTION_ = 'assistiti_identity_locks';
 var PHBOX_M4_MATERIALIZE_DEFAULT_MAX_WRITES_ = 20;
 var PHBOX_M4_MATERIALIZE_DEFAULT_PAGE_SIZE_ = 20;
 var PHBOX_M4_MATERIALIZE_MAX_PAGE_SIZE_ = 50;
 var PHBOX_M4_MATERIALIZE_MAX_READS_PER_RUN_ = 180;
 var PHBOX_M4_MATERIALIZE_ROOT_COLLECTIONS_ = [
-  'patients',
-  'doctor_patient_links',
-  'families',
-  'patient_dashboard_index',
-  'dashboard_totals',
-  'drive_pdf_imports'
+  'patients'
 ];
 var PHBOX_M4_MATERIALIZE_PATIENT_SUBCOLLECTIONS_ = [
   'debts',
@@ -66,6 +65,7 @@ function runMigration4MaterializeRuntimeStatus_() {
     firestoreWrites: 0,
     registryReads: registryReads,
     tenantId: tenant && tenant.tenantId,
+    tenantSource: tenant && tenant.tenantSource,
     sourceReads: 0,
     targetReads: 0,
     targetWritesExecuted: 0,
@@ -150,6 +150,7 @@ function runMigration4MaterializeBatch_(options) {
       firestoreWrites: work.firestoreWrites,
       registryReads: Math.max(0, Number(tenant.registryReads || 0)),
       tenantId: tenant.tenantId,
+      tenantSource: tenant.tenantSource,
       sourceReads: work.sourceReads,
       targetReads: work.targetReads,
       targetWrites: work.targetWrites,
@@ -301,7 +302,7 @@ function processMigration4MaterializeRootPage_(cfg, api, cursor, tenantId, optio
 
   var pageResult = buildMigration4MaterializeWritesForDocs_(cfg, api, tenantId, listed.documents || [], {
     sourceCollectionPath: collection,
-    targetCollectionPath: 'tenants/' + tenantId + '/' + collection,
+    targetCollectionPath: resolveMigration4MaterializeTargetCollectionPath_(tenantId, collection),
     maxWrites: options.maxWrites,
     currentWrites: options.currentWrites,
     executeWrites: options.executeWrites
@@ -367,7 +368,7 @@ function processMigration4MaterializePatientSubcollectionPage_(cfg, api, cursor,
   var patientId = String(cursor.currentPatientId || '').trim();
   var subcollection = PHBOX_M4_MATERIALIZE_PATIENT_SUBCOLLECTIONS_[subcollectionIndex];
   var sourceCollectionPath = 'patients/' + patientId + '/' + subcollection;
-  var targetCollectionPath = 'tenants/' + tenantId + '/patients/' + patientId + '/' + subcollection;
+  var targetCollectionPath = 'tenants/' + tenantId + '/' + PHBOX_M4_MATERIALIZE_TARGET_ASSISTITI_COLLECTION_ + '/' + patientId + '/' + subcollection;
   var listed = api.listDocuments(sourceCollectionPath, cursor.subcollectionPageToken || '', options.pageSize);
   work.firestoreReads += 1;
   work.sourceReads += (listed.documents || []).length;
@@ -512,6 +513,8 @@ function buildMigration4MaterializeResult_(data) {
     phase: String((state.lastCursor && state.lastCursor.phase) || 'root'),
     migrationId: String(state.migrationId || ''),
     tenantId: String(data.tenantId || state.tenantId || ''),
+    tenantSource: String(data.tenantSource || ''),
+    targetContract: PHBOX_M4_MATERIALIZE_TARGET_CONTRACT_,
     executeWrites: executeWrites,
     preflightOk: preflightOk,
     dryRunOk: Object.prototype.hasOwnProperty.call(data, 'dryRunOk') ? !!data.dryRunOk : preflightOk,
@@ -798,50 +801,23 @@ function resolveMigration4MaterializeTenant_(api, props) {
   if (rawExpectedTenantId) assertMigration4MaterializeCanonicalTenantId_(rawExpectedTenantId);
   var explicitTenantId = rawExplicitTenantId.trim();
   var expectedTenantId = rawExpectedTenantId.trim();
-  if (explicitTenantId && expectedTenantId && explicitTenantId !== expectedTenantId) {
-    throw new Error('M4_MATERIALIZE_TENANT_MISMATCH: tenantId non allineato al canonical expected tenant. Nessuna write target eseguita.');
+  var tenantId = PHBOX_M4_MATERIALIZE_APPROVED_TENANT_ID_;
+  assertMigration4MaterializeCanonicalTenantId_(tenantId);
+
+  if (explicitTenantId && explicitTenantId !== tenantId) {
+    throw new Error('M4_MATERIALIZE_TENANT_NAMESPACE_MISMATCH: Script Properties tenant diverso dal tenant namespace frontend approvato. Nessuna write target eseguita.');
   }
-  if (!api || typeof api.listDocuments !== 'function') {
-    throw new Error('M4_MATERIALIZE_TENANT_REGISTRY_UNAVAILABLE: registry Firestore tenants non leggibile. Nessuna write target eseguita.');
+  if (expectedTenantId && expectedTenantId !== tenantId) {
+    throw new Error('M4_MATERIALIZE_EXPECTED_TENANT_NAMESPACE_MISMATCH: expected tenant diverso dal tenant namespace frontend approvato. Nessuna write target eseguita.');
   }
 
-  var registry = null;
-  try {
-    registry = api.listDocuments(PHBOX_M4_MATERIALIZE_TENANTS_COLLECTION_, '', 2);
-  } catch (e) {
-    attachMigration4MaterializeTenantRegistryReadCounts_(e);
-    throw e;
-  }
-  var docs = (registry && registry.documents) || [];
-  if (docs.length === 1) {
-    var tenantId = extractFirestoreDocumentId_(docs[0].name || '');
-    try {
-      assertMigration4MaterializeCanonicalTenantId_(tenantId);
-    } catch (e) {
-      attachMigration4MaterializeTenantRegistryReadCounts_(e);
-      throw e;
-    }
-    if (tenantId !== PHBOX_M4_MATERIALIZE_APPROVED_TENANT_ID_) {
-      throwMigration4MaterializeTenantRegistryError_('M4_MATERIALIZE_TENANT_NOT_APPROVED: tenant registry Firestore diverso dal tenant approvato farmacia-santa-venera-8xnoc. Nessuna write target eseguita.');
-    }
-    if (explicitTenantId && explicitTenantId !== tenantId) {
-      throwMigration4MaterializeTenantRegistryError_('M4_MATERIALIZE_TENANT_REGISTRY_MISMATCH: Script Properties tenant diverso dal tenant registry Firestore. Nessuna write target eseguita.');
-    }
-    if (expectedTenantId && expectedTenantId !== tenantId) {
-      throwMigration4MaterializeTenantRegistryError_('M4_MATERIALIZE_EXPECTED_TENANT_REGISTRY_MISMATCH: expected tenant diverso dal tenant registry Firestore. Nessuna write target eseguita.');
-    }
-    return {
-      tenantId: tenantId,
-      expectedTenantId: expectedTenantId || tenantId,
-      tenantSource: 'firestore_tenants_registry',
-      firestoreReads: 1,
-      registryReads: 1
-    };
-  }
-  if (docs.length > 1) {
-    throwMigration4MaterializeTenantRegistryError_('M4_MATERIALIZE_TENANT_REGISTRY_AMBIGUOUS: trovati più tenant nel registry Firestore. Nessuna write target eseguita.');
-  }
-  throwMigration4MaterializeTenantRegistryError_('M4_MATERIALIZE_TENANT_REGISTRY_EMPTY: nessun tenant nel registry Firestore. Script Properties non autorizzate come fallback. Nessuna write target eseguita.');
+  return {
+    tenantId: tenantId,
+    expectedTenantId: expectedTenantId || tenantId,
+    tenantSource: PHBOX_M4_MATERIALIZE_TENANT_SOURCE_,
+    firestoreReads: 0,
+    registryReads: 0
+  };
 }
 
 function throwMigration4MaterializeTenantRegistryError_(message) {
@@ -864,11 +840,28 @@ function assertMigration4MaterializeCanonicalTenantId_(tenantId) {
   if (value.indexOf(' ') !== -1) throw new Error('M4_MATERIALIZE_TENANT_NOT_CANONICAL: tenantId contiene spazi. Nessuna write target eseguita.');
 }
 
+
+function resolveMigration4MaterializeTargetCollectionPath_(tenantId, sourceCollectionPath) {
+  var sourcePath = String(sourceCollectionPath || '').trim();
+  if (sourcePath === 'patients') {
+    return 'tenants/' + String(tenantId || '').trim() + '/' + PHBOX_M4_MATERIALIZE_TARGET_ASSISTITI_COLLECTION_;
+  }
+  throw new Error('M4_MATERIALIZE_UNSUPPORTED_TARGET_MAPPING: source collection non mappata nel contratto FE assistiti. Nessuna write target eseguita.');
+}
+
 function assertMigration4MaterializeTargetPath_(tenantId, targetPath) {
   var expectedPrefix = 'tenants/' + String(tenantId || '').trim() + '/';
   var path = String(targetPath || '').trim();
   if (path.indexOf(expectedPrefix) !== 0) throw new Error('M4_MATERIALIZE_TARGET_PATH_OUT_OF_TENANT: target path fuori tenant. Nessuna write eseguita.');
   if (path.indexOf('/tenants/') !== -1) throw new Error('M4_MATERIALIZE_DOUBLE_TENANT_PATH: target path contiene tenants annidato. Nessuna write eseguita.');
+  if (path.indexOf(expectedPrefix + 'patients/') === 0) throw new Error('M4_MATERIALIZE_TARGET_PATIENTS_PATH_FORBIDDEN: il target FE è assistiti, non patients. Nessuna write eseguita.');
+  if (
+    path.indexOf(expectedPrefix + PHBOX_M4_MATERIALIZE_TARGET_ASSISTITI_COLLECTION_ + '/') !== 0 &&
+    path.indexOf(expectedPrefix + PHBOX_M4_MATERIALIZE_TARGET_CF_LOCKS_COLLECTION_ + '/') !== 0 &&
+    path.indexOf(expectedPrefix + PHBOX_M4_MATERIALIZE_TARGET_IDENTITY_LOCKS_COLLECTION_ + '/') !== 0
+  ) {
+    throw new Error('M4_MATERIALIZE_TARGET_PATH_NOT_IN_FE_CONTRACT: target path non conforme al contratto FE assistiti/locks. Nessuna write eseguita.');
+  }
 }
 
 function extractMigration4MaterializeDocumentPath_(documentName) {
@@ -962,64 +955,43 @@ function buildMigration4MaterializeSelfTestCases_(cfg) {
       expected: { ok: false, violationContains: 'lock_version_mismatch', targetWritesExecuted: 0 }
     },
     {
-      id: 'blocks_missing_tenant',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({ source: { tenants: [] } }), props: createMigration4MaterializeTestProperties_({}), executeWrites: true }); },
-      expected: { ok: false, violationContains: 'materialize_error', targetWritesExecuted: 0, registryReads: 1, firestoreReads: 1 }
+      id: 'resolves_approved_frontend_tenant_namespace_without_registry_read',
+      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: { listDocuments: function (collectionPath, pageToken, pageSize) { if (String(collectionPath || '') === 'tenants') throw new Error('TENANTS_REGISTRY_MUST_NOT_BE_READ'); if (String(collectionPath || '') === 'patients') return { documents: [buildMigration4MaterializeFakeDoc_(cfg.firestoreProjectId, 'patients', 'A', { id: 'A' })], nextPageToken: '' }; return { documents: [], nextPageToken: '' }; }, getDocument: function () { return null; }, commit: function () {} }, props: createMigration4MaterializeTestProperties_({}), executeWrites: true, maxWrites: 5 }); },
+      expected: { ok: true, tenantId: 'farmacia-santa-venera-8xnoc', tenantSource: 'approved_frontend_tenant_namespace', registryReads: 0, targetWritesExecuted: 1 }
     },
     {
-      id: 'blocks_empty_db_owned_tenant_registry_even_with_script_property',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({ source: { tenants: [] } }), props: props, executeWrites: true }); },
-      expected: { ok: false, violationContains: 'materialize_error', targetWritesExecuted: 0, registryReads: 1, firestoreReads: 1 }
-    },
-    {
-      id: 'counts_failed_tenant_registry_fetch',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: { listDocuments: function (collectionPath) { if (String(collectionPath || '') === PHBOX_M4_MATERIALIZE_TENANTS_COLLECTION_) throw new Error('SIMULATED_REGISTRY_FETCH_FAILURE'); return { documents: [], nextPageToken: '' }; }, getDocument: function () { return null; }, commit: function () {} }, props: props, executeWrites: true }); },
-      expected: { ok: false, violationContains: 'materialize_error', targetWritesExecuted: 0, registryReads: 1, firestoreReads: 1 }
-    },
-
-    {
-      id: 'resolves_db_owned_tenant_from_tenants_collection',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({ source: { tenants: [{ id: 'farmacia-santa-venera-8xnoc', data: { name: 'Farmacia Santa Venera' } }], patients: [{ id: 'A', data: { id: 'A' } }] } }), props: createMigration4MaterializeTestProperties_({}), executeWrites: true, maxWrites: 5 }); },
-      expected: { ok: true, tenantId: 'farmacia-santa-venera-8xnoc', registryReads: 1, targetWritesExecuted: 1 }
-    },
-    {
-      id: 'blocks_unapproved_single_tenant_registry',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({ source: { tenants: [{ id: 'wrong-single-tenant', data: {} }] } }), props: createMigration4MaterializeTestProperties_({}), executeWrites: true }); },
-      expected: { ok: false, violationContains: 'materialize_error', targetWritesExecuted: 0, registryReads: 1, firestoreReads: 1 }
-    },
-    {
-      id: 'blocks_ambiguous_db_owned_tenant_registry',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({ source: { tenants: [{ id: 'tenant-a', data: {} }, { id: 'tenant-b', data: {} }] } }), props: createMigration4MaterializeTestProperties_({}), executeWrites: true }); },
-      expected: { ok: false, violationContains: 'materialize_error', targetWritesExecuted: 0, registryReads: 1, firestoreReads: 1 }
-    },
-    {
-      id: 'blocks_noncanonical_raw_script_property_tenant_with_registry',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({ source: { tenants: [{ id: 'farmacia-santa-venera-8xnoc', data: {} }] } }), props: createMigration4MaterializeTestProperties_({ PHBOX_TENANT_ID: ' farmacia-santa-venera-8xnoc ' }), executeWrites: true }); },
+      id: 'blocks_noncanonical_raw_script_property_tenant',
+      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({}), props: createMigration4MaterializeTestProperties_({ PHBOX_TENANT_ID: ' farmacia-santa-venera-8xnoc ' }), executeWrites: true }); },
       expected: { ok: false, violationContains: 'materialize_error', targetWritesExecuted: 0 }
     },
     {
-      id: 'blocks_noncanonical_raw_expected_tenant_with_registry',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({ source: { tenants: [{ id: 'farmacia-santa-venera-8xnoc', data: {} }] } }), props: createMigration4MaterializeTestProperties_({ PHBOX_EXPECTED_CANONICAL_TENANT_ID: ' farmacia-santa-venera-8xnoc ' }), executeWrites: true }); },
+      id: 'blocks_noncanonical_raw_expected_tenant',
+      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({}), props: createMigration4MaterializeTestProperties_({ PHBOX_EXPECTED_CANONICAL_TENANT_ID: ' farmacia-santa-venera-8xnoc ' }), executeWrites: true }); },
       expected: { ok: false, violationContains: 'materialize_error', targetWritesExecuted: 0 }
     },
     {
-      id: 'preserves_registry_read_counts_after_later_source_failure',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: { listDocuments: function (collectionPath) { if (String(collectionPath || '') === PHBOX_M4_MATERIALIZE_TENANTS_COLLECTION_) return { documents: [{ name: 'projects/phbox-test-project/databases/(default)/documents/tenants/' + PHBOX_M4_MATERIALIZE_APPROVED_TENANT_ID_, fields: {} }], nextPageToken: '' }; if (String(collectionPath || '') === 'patients') throw new Error('SIMULATED_SOURCE_FETCH_FAILURE'); return { documents: [], nextPageToken: '' }; }, getDocument: function () { return null; }, commit: function () {} }, props: props, executeWrites: true }); },
-      expected: { ok: false, violationContains: 'materialize_error', targetWritesExecuted: 0, registryReads: 1, firestoreReads: 1 }
+      id: 'blocks_script_property_tenant_mismatch',
+      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({}), props: createMigration4MaterializeTestProperties_({ PHBOX_TENANT_ID: 'wrong-tenant' }), executeWrites: true }); },
+      expected: { ok: false, violationContains: 'materialize_error', targetWritesExecuted: 0 }
     },
     {
-      id: 'writes_missing_target_patient',
+      id: 'writes_missing_target_patient_to_assistiti',
       run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({ source: { patients: [{ id: 'RSSMRA80A01H501U', data: { id: 'RSSMRA80A01H501U', name: 'Mario Rossi' } }] } }), props: props, executeWrites: true, maxWrites: 5 }); },
-      expected: { ok: true, targetWritesExecuted: 1, targetPathBuilt: true, tenantTargetPathBuilt: true, sourceWrites: 0 }
+      expected: { ok: true, targetWritesExecuted: 1, targetPathBuilt: true, tenantTargetPathBuilt: true, sourceWrites: 0, targetContract: 'TENANTS_ASSISTITI_v1' }
     },
     {
-      id: 'skips_same_signature_target',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({ source: { patients: [{ id: 'A', data: { id: 'A', name: 'A' } }] }, target: { 'tenants/farmacia-santa-venera-8xnoc/patients/A': { id: 'A', name: 'A' } } }), props: props, executeWrites: true, maxWrites: 5 }); },
+      id: 'skips_same_signature_target_assistiti',
+      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({ source: { patients: [{ id: 'A', data: { id: 'A', name: 'A' } }] }, target: { 'tenants/farmacia-santa-venera-8xnoc/assistiti/A': { id: 'A', name: 'A' } } }), props: props, executeWrites: true, maxWrites: 5 }); },
       expected: { ok: true, targetWritesExecuted: 0, targetWritesSkippedSameSignature: 1 }
     },
     {
-      id: 'updates_different_signature_target',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({ source: { patients: [{ id: 'A', data: { id: 'A', name: 'New' } }] }, target: { 'tenants/farmacia-santa-venera-8xnoc/patients/A': { id: 'A', name: 'Old' } } }), props: props, executeWrites: true, maxWrites: 5 }); },
+      id: 'updates_different_signature_target_assistiti',
+      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({ source: { patients: [{ id: 'A', data: { id: 'A', name: 'New' } }] }, target: { 'tenants/farmacia-santa-venera-8xnoc/assistiti/A': { id: 'A', name: 'Old' } } }), props: props, executeWrites: true, maxWrites: 5 }); },
+      expected: { ok: true, targetWritesExecuted: 1, targetWritesSkippedSameSignature: 0 }
+    },
+    {
+      id: 'does_not_skip_against_obsolete_tenant_patients_path',
+      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: {}, firestoreApi: createMigration4MaterializeFakeApi_({ source: { patients: [{ id: 'A', data: { id: 'A', name: 'A' } }] }, target: { 'tenants/farmacia-santa-venera-8xnoc/patients/A': { id: 'A', name: 'A' } } }), props: props, executeWrites: true, maxWrites: 5 }); },
       expected: { ok: true, targetWritesExecuted: 1, targetWritesSkippedSameSignature: 0 }
     },
     {
@@ -1039,7 +1011,7 @@ function buildMigration4MaterializeSelfTestCases_(cfg) {
     },
     {
       id: 'root_cursor_converges_after_refetching_cut_page',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: { lastCursor: { phase: 'root', collectionIndex: 0, pageToken: '' } }, firestoreApi: createMigration4MaterializeFakeApi_({ source: { patients: [{ id: 'A', data: { id: 'A' } }, { id: 'B', data: { id: 'B' } }] }, target: { 'tenants/farmacia-santa-venera-8xnoc/patients/A': { id: 'A' } } }), props: props, executeWrites: true, maxWrites: 1, pageSize: 20 }); },
+      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: { lastCursor: { phase: 'root', collectionIndex: 0, pageToken: '' } }, firestoreApi: createMigration4MaterializeFakeApi_({ source: { patients: [{ id: 'A', data: { id: 'A' } }, { id: 'B', data: { id: 'B' } }] }, target: { 'tenants/farmacia-santa-venera-8xnoc/assistiti/A': { id: 'A' } } }), props: props, executeWrites: true, maxWrites: 1, pageSize: 20 }); },
       expected: { ok: true, targetWritesExecuted: 1, targetWritesSkippedSameSignature: 1, lastCursorPhase: 'root', lastCursorCollectionIndex: 1, lastCursorPageToken: '' }
     },
     {
@@ -1048,32 +1020,7 @@ function buildMigration4MaterializeSelfTestCases_(cfg) {
       expected: { ok: true, targetWritesExecuted: 1, maxWritesReached: true, lastCursorPhase: 'patient_subcollections', lastCursorCurrentPatientId: 'CF1', lastCursorSubcollectionIndex: 0, lastCursorSubcollectionPageToken: '' }
     },
     {
-      id: 'materializes_doctor_links_path',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: { lastCursor: { phase: 'root', collectionIndex: 1 } }, firestoreApi: createMigration4MaterializeFakeApi_({ source: { doctor_patient_links: [{ id: 'CF__primary', data: { id: 'CF__primary' } }] } }), props: props, executeWrites: true, maxWrites: 5 }); },
-      expected: { ok: true, targetWritesExecuted: 1, targetPathBuilt: true }
-    },
-    {
-      id: 'materializes_families_path',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: { lastCursor: { phase: 'root', collectionIndex: 2 } }, firestoreApi: createMigration4MaterializeFakeApi_({ source: { families: [{ id: 'fam1', data: { id: 'fam1' } }] } }), props: props, executeWrites: true, maxWrites: 5 }); },
-      expected: { ok: true, targetWritesExecuted: 1 }
-    },
-    {
-      id: 'materializes_dashboard_index_path',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: { lastCursor: { phase: 'root', collectionIndex: 3 } }, firestoreApi: createMigration4MaterializeFakeApi_({ source: { patient_dashboard_index: [{ id: 'CF', data: { id: 'CF' } }] } }), props: props, executeWrites: true, maxWrites: 5 }); },
-      expected: { ok: true, targetWritesExecuted: 1 }
-    },
-    {
-      id: 'materializes_dashboard_totals_path',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: { lastCursor: { phase: 'root', collectionIndex: 4 } }, firestoreApi: createMigration4MaterializeFakeApi_({ source: { dashboard_totals: [{ id: 'main', data: { id: 'main' } }] } }), props: props, executeWrites: true, maxWrites: 5 }); },
-      expected: { ok: true, targetWritesExecuted: 1 }
-    },
-    {
-      id: 'materializes_drive_imports_path',
-      run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: { lastCursor: { phase: 'root', collectionIndex: 5 } }, firestoreApi: createMigration4MaterializeFakeApi_({ source: { drive_pdf_imports: [{ id: 'file1', data: { id: 'file1' } }] } }), props: props, executeWrites: true, maxWrites: 5 }); },
-      expected: { ok: true, targetWritesExecuted: 1 }
-    },
-    {
-      id: 'materializes_patient_subcollection_path',
+      id: 'materializes_patient_subcollection_under_assistiti',
       run: function () { return runMigration4MaterializeBatch_({ cfg: cfg, lockStatus: cleanLock, state: { lastCursor: { phase: 'patient_subcollections' } }, firestoreApi: createMigration4MaterializeFakeApi_({ source: { patients: [{ id: 'CF1', data: { id: 'CF1' } }], 'patients/CF1/debts': [{ id: 'debt1', data: { id: 'debt1' } }] } }), props: props, executeWrites: true, maxWrites: 5 }); },
       expected: { ok: true, targetWritesExecuted: 1, targetPathBuilt: true }
     },
@@ -1113,9 +1060,6 @@ function buildMigration4MaterializeSelfTestCases_(cfg) {
 function createMigration4MaterializeFakeApi_(data) {
   data = data || {};
   var source = data.source || {};
-  if (!Object.prototype.hasOwnProperty.call(source, PHBOX_M4_MATERIALIZE_TENANTS_COLLECTION_)) {
-    source[PHBOX_M4_MATERIALIZE_TENANTS_COLLECTION_] = [{ id: PHBOX_M4_MATERIALIZE_APPROVED_TENANT_ID_, data: { name: 'Tenant test' } }];
-  }
   var target = data.target || {};
   var commits = [];
   return {
